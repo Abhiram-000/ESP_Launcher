@@ -52,6 +52,39 @@ extern "C" {
 #define APP_OTA_ESP32_MAGIC     0xE9u
 
 /* --------------------------------------------------------------------------
+ * Game Store — Cloud ROM Downloader
+ * -------------------------------------------------------------------------- */
+#define GAME_STORE_PARTITION_LABEL  "games"
+#define GAME_STORE_MOUNT_POINT      "/games"
+#define GAME_STORE_ROMS_DIR         "/games/roms"
+#define GAME_STORE_CATALOG_LOCAL    "/games/catalog.json"
+#define GAME_STORE_CLOUD_CATALOG_URL \
+    "https://abhi1144.github.io/ESP32_Custom_Launcher/catalog.json"
+
+/* Maximum number of games that can be stored locally. */
+#define GAME_STORE_MAX_GAMES        15
+
+/* Download chunk buffer size (in PSRAM). Larger = fewer fwrite() calls. */
+#define GAME_STORE_DL_CHUNK_SIZE    (4 * 1024)
+
+/* HTTP timeout in ms for catalog fetch and ROM download. */
+#define GAME_STORE_HTTP_TIMEOUT_MS  10000
+
+/* Minimum valid NES ROM size (INES header = 16 bytes, smallest real ROM = 8KB). */
+#define GAME_STORE_ROM_MIN_SIZE     (8 * 1024)
+
+/* Maximum ROM size we will accept (512KB). */
+#define GAME_STORE_ROM_MAX_SIZE     (512 * 1024)
+
+/* Magic bytes for INES ROM validation: 'NES\x1A' */
+#define GAME_STORE_INES_MAGIC       {0x4E, 0x45, 0x53, 0x1A}
+
+/* NES emulator task stack size (runs on Core 0). */
+#define NES_EMU_TASK_STACK          (12 * 1024)
+#define NES_EMU_TASK_PRIORITY       5
+#define NES_EMU_TASK_CORE           0
+
+/* --------------------------------------------------------------------------
  * UI
  * -------------------------------------------------------------------------- */
 /* Depth of the inter-task UI message queue (OTA → UI task). */

@@ -13,6 +13,8 @@
 #include "apps/App_Settings.h"
 #include "apps/App_Torch.h"
 #include "apps/App_AICode.h"
+#include "apps/App_GameStore.h"
+#include "apps/App_NES.h"
 #include "theme_mgr.h"
 #include "nvs_flash.h"
 #include "nvs.h"
@@ -24,6 +26,7 @@
 #include "../assets/icons/settings.h"
 #include "../assets/icons/torch.h"
 #include "../assets/icons/aicode.h"
+#include "../assets/icons/games.h"
 
 static const char *TAG = "UI_TASK";
 
@@ -49,11 +52,12 @@ uint8_t ui_get_brightness(void) {
     return current_brightness;
 }
 
-static App_Grid app_grid;
-static App_OTA app_ota;
-static App_Settings app_settings;
-static App_Torch app_torch;
-static App_AICode app_aicode;
+static App_Grid      app_grid;
+static App_OTA       app_ota;
+static App_Settings  app_settings;
+static App_Torch     app_torch;
+static App_AICode    app_aicode;
+static App_GameStore app_gamestore;
 
 static IApp* current_app = nullptr;
 
@@ -95,10 +99,11 @@ static void ui_task_runner(void *arg) {
 
     // 2. Register apps with pre-converted RGB565 icon arrays (zero runtime decoding).
     //    Arrays are flash-resident 64x64 images; App_Grid downsamples to 32x32 on the stack.
-    app_grid.registerApp("OTA System", icon_ota,      &app_ota);
-    app_grid.registerApp("Torch",      icon_torch,    &app_torch);
-    app_grid.registerApp("AI Code",    icon_aicode,   &app_aicode);
-    app_grid.registerApp("Settings",   icon_settings,  &app_settings);
+    app_grid.registerApp("OTA System",  icon_ota,       &app_ota);
+    app_grid.registerApp("Torch",       icon_torch,     &app_torch);
+    app_grid.registerApp("AI Code",     icon_aicode,    &app_aicode);
+    app_grid.registerApp("Settings",    icon_settings,  &app_settings);
+    app_grid.registerApp("Game Store",  icon_games,     &app_gamestore);
 
     // Boot to Grid
     switch_to_grid();

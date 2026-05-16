@@ -26,6 +26,7 @@
 #include "services/wifi_mgr.h"
 #include "services/web_server.h"
 #include "services/idle_mgr.h"
+#include "services/game_store.h"
 #include "ui/ui_task.h"
 
 static const char* TAG = "MAIN";
@@ -59,10 +60,17 @@ extern "C" void app_main(void) {
     // 4. Initialize Unified Wi-Fi (AP + STA)
     wifi_mgr_init();
 
-    // 5. Start HTTP Server for OTA uploads
+    // 5. Initialize Game Store (mounts LittleFS 'games' partition, cleans temp files)
+    game_store_err_t gs_ret = game_store_init();
+    if (gs_ret != GAME_STORE_ERR_OK) {
+        ESP_LOGE(TAG, "Game Store init failed: %d", gs_ret);
+    }
+
+    // 6. Start HTTP Server for OTA uploads
     web_server_init();
 
-    // 6. Start Idle Manager
+
+    // 7. Start Idle Manager
     idle_mgr_init();
 
     /*
