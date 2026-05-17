@@ -65,6 +65,10 @@ void App_GameStore::init() {
 }
 
 void App_GameStore::exit() {
+    // NOTE: Do NOT call _nes_app->exit() here.
+    // _launch_game passes 'nes' directly to switch_to_app, keeping _nes_app = nullptr
+    // to prevent this exit() from deleting an object that init() hasn't called yet.
+    // _nes_app is only valid AFTER the game store is re-entered via init().
     if (_nes_app) { _nes_app->exit(); delete _nes_app; _nes_app = nullptr; }
 }
 
@@ -557,10 +561,21 @@ void App_GameStore::_launch_game(int catalog_idx) {
         return;
     }
 
-    if (_nes_app) { _nes_app->exit(); delete _nes_app; }
-    _nes_app = new App_NES();
-    _nes_app->setRomPath(path);
-    switch_to_app(_nes_app);
+    if (_nes_app) { _nes_app->exit(); delete _nes_app; _nes_app = nullptr; }
+
+    // CRITICAL FIX: Use local pointer 'nes', NOT _nes_app.
+    // switch_to_app() calls App_GameStore::exit() BEFORE App_NES::init().
+    // If _nes_app pointed to the new object, exit() would delete it before init() runs
+    // causing an InstructionFetchError (use-after-free through vtable).
+    App_NES* nes = new App_NES();
+    nes->setRomPath(path);
+    nes->onEmulatorExit = []() {
+        switch_to_grid();
+    };
+
+    // _nes_app stays nullptr — exit() cannot delete 'nes'.
+    switch_to_app(nes);
+    // 'nes' is now current_app and running its emulator task.
 }
 
 void App_GameStore::onNesExit() {

@@ -217,13 +217,54 @@ static game_store_err_t _gs_local_catalog_save(game_entry_t* catalog, int count)
     return GAME_STORE_ERR_OK;
 }
 
-static game_entry_t* _gs_local_catalog_find(const char* id) {
-    for (int i = 0; i < local_catalog_count; i++) {
-        if (strcmp(local_catalog[i].id, id) == 0) {
-            return &local_catalog[i];
-        }
+static game_entry_t* _gs_local_catalog_find(const char* id);  /* forward decl */
+
+/* Scan /games/roms/ for any .nes files not already in local_catalog.
+ * Registers them with is_installed=true so they show up in MyGames immediately,
+ * even if catalog.json is missing or was flashed before the ROM was added. */
+static void _gs_autodiscover_roms(void) {
+    DIR *dir = opendir(GAME_STORE_ROMS_DIR);
+    if (!dir) {
+        ESP_LOGW(TAG, "Auto-discover: cannot open %s", GAME_STORE_ROMS_DIR);
+        return;
     }
-    return NULL;
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        const char *fname = entry->d_name;
+        size_t len = strlen(fname);
+
+        /* Only handle .nes files, skip .tmp */
+        if (len <= 4 || strcmp(fname + len - 4, ".nes") != 0) continue;
+
+        /* Derive ID: strip the .nes suffix */
+        char id[32];
+        size_t id_len = (len - 4 < sizeof(id) - 1) ? (len - 4) : (sizeof(id) - 1);
+        strncpy(id, fname, id_len);
+        id[id_len] = '\0';
+
+        /* Already in catalog — skip */
+        if (_gs_local_catalog_find(id)) continue;
+
+        /* Add a new entry */
+        if (local_catalog_count >= GAME_STORE_MAX_GAMES) break;
+        game_entry_t *e = &local_catalog[local_catalog_count++];
+        memset(e, 0, sizeof(game_entry_t));
+        strncpy(e->id,      id, sizeof(e->id) - 1);
+        strncpy(e->name,    id, sizeof(e->name) - 1);  /* ID as display name */
+        strncpy(e->version, "1.0", sizeof(e->version) - 1);
+        strncpy(e->genre,   "Unknown", sizeof(e->genre) - 1);
+        e->is_installed = true;
+
+        /* Fill size from stat */
+        char full_path[128];
+        snprintf(full_path, sizeof(full_path), "%s/%s", GAME_STORE_ROMS_DIR, fname);
+        struct stat st;
+        if (stat(full_path, &st) == 0) e->size_bytes = (uint32_t)st.st_size;
+
+        ESP_LOGI(TAG, "Auto-discovered ROM: %s (%lu bytes)", id, (unsigned long)e->size_bytes);
+    }
+    closedir(dir);
 }
 
 /* --------------------------------------------------------------------------
@@ -240,13 +281,26 @@ game_store_err_t game_store_init(void) {
 
     _gs_ensure_dirs();
     _gs_cleanup_temp_files();
-    _gs_local_catalog_load();
+    _gs_local_catalog_load();    /* Load catalog.json first */
+    _gs_autodiscover_roms();     /* Then add any ROMs not in catalog */
 
+    ESP_LOGI(TAG, "Game Store ready — %d game(s) in catalog", local_catalog_count);
     return GAME_STORE_ERR_OK;
 }
 
+
 const game_store_status_t* game_store_get_status(void) {
     return &gs_status;
+}
+
+/* Actual definition (forward-declared above for autodiscover) */
+static game_entry_t* _gs_local_catalog_find(const char* id) {
+    for (int i = 0; i < local_catalog_count; i++) {
+        if (strcmp(local_catalog[i].id, id) == 0) {
+            return &local_catalog[i];
+        }
+    }
+    return NULL;
 }
 
 int game_store_get_catalog(game_entry_t* out, int max_count) {

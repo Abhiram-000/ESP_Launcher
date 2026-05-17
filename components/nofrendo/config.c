@@ -308,9 +308,11 @@ static int save_config(const char *filename)
 static bool open_config(void)
 {
     /* load_config returns -1 when the file doesn't exist (first boot).
-     * That's fine — we continue with defaults and save on close.     */
+     * That is fine — continue with defaults and save on close.
+     * NOTE: main_loop checks  if (config.open()) → non-zero = FAIL.
+     * We must return 0 (false) for success, same convention as osd_init/vid_init. */
     load_config(config.filename);
-    return true;  /* never fatal */
+    return false;  /* 0 = success, never fatal — missing cfg is normal on first boot */
 }
 
 static void close_config(void)

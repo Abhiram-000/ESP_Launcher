@@ -182,7 +182,8 @@ int main_loop(const char *filename, system_t type)
 {
    vidinfo_t video;
  
-   atexit(shutdown_everything);
+   /* NOTE: atexit() is NOT safe in FreeRTOS tasks — removed.
+    * shutdown_everything() is called directly before we return. */
    nofrendo_log_printf("[BOOT] main_loop start\n");
 
    nofrendo_log_printf("[BOOT] config.open...\n");
@@ -226,8 +227,15 @@ int main_loop(const char *filename, system_t type)
    while (false == console.quit)
    {
       if (internal_insert(console.nextfilename, console.nexttype))
+      {
+         nofrendo_log_printf("[BOOT] internal_insert FAILED — exiting\n");
+         shutdown_everything();
          return 1;
+      }
    }
 
+   nofrendo_log_printf("[BOOT] main_loop exiting cleanly\n");
+   shutdown_everything();
    return 0;
 }
+

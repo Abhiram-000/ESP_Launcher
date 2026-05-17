@@ -2,6 +2,8 @@
 #include "../../ui/theme_mgr.h"
 #include "esp_log.h"
 #include "sys_config.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 #include <string.h>
 
 static const char* TAG = "App_NES";
@@ -24,35 +26,84 @@ extern "C" {
     extern volatile uint32_t     nes_input_state;
     extern volatile bool         nes_should_exit;
 
-    // Nofrendo input struct (defined by nesinput.c as an extern extern)
     typedef struct { int type; int data; } nesinput_t;
     extern nesinput_t joypad_p1;
 
     int osd_main(int argc, char* argv[]);
 }
 
-// Nofrendo JOYPAD0 type constant
 #define INP_JOYPAD0 0x0001
+
+// ─── Mappers supported by this build of Nofrendo ─────────────────────────
+// Keep in sync with mmclist.c
+static const int s_supported_mappers[] = {
+    0, 1, 2, 3, 4, 5, 7, 8, 9, 11,
+    15, 16, 18, 19, 21, 22, 23, 24, 25,
+    32, 33, 34, 40, 64, 65, 66, 70,
+    75, 78, 79, 85, 94, 99, 231,
+    -1  // sentinel
+};
+
+static bool _is_mapper_supported(int mapper) {
+    for (int i = 0; s_supported_mappers[i] != -1; i++) {
+        if (s_supported_mappers[i] == mapper) return true;
+    }
+    return false;
+}
+
+// ─── Read iNES header mapper from ROM file ────────────────────────────────
+static int _read_rom_mapper(const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return -1;
+    uint8_t header[16];
+    if (fread(header, 1, 16, f) < 16) { fclose(f); return -1; }
+    fclose(f);
+    // iNES magic check: 'NES\x1A'
+    if (header[0] != 0x4E || header[1] != 0x45 || header[2] != 0x53 || header[3] != 0x1A)
+        return -1;
+    int mapper = ((header[6] >> 4) & 0x0F) | (header[7] & 0xF0);
+    return mapper;
+}
+
+// ─── Reset the boot-loop counter so a crash inside the emu doesn't
+//     trigger the OTA splash after 3 reboots. ─────────────────────────────
+static void _reset_boot_count(void) {
+    nvs_handle_t h;
+    if (nvs_open("boot_ctrl", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, "boot_cnt", 0);
+        nvs_commit(h);
+        nvs_close(h);
+        ESP_LOGI(TAG, "boot_cnt reset before emulator launch");
+    }
+}
 
 // ─── Emulator task ────────────────────────────────────────────────────────
 static void _emu_task_func(void* arg) {
-    ESP_LOGI(TAG, "Emulator task on Core %d", xPortGetCoreID());
+    App_NES* self = static_cast<App_NES*>(arg);
+    ESP_LOGI(TAG, "Emulator task started on Core %d, stack: %u bytes",
+             xPortGetCoreID(), NES_EMU_TASK_STACK);
 
-    char* argv[] = { (char*)"nofrendo", active_nes_rom_path, NULL };
-    osd_main(2, argv);          // blocks until emulator finishes
+    char* argv[] = { (char*)"nofrendo", active_nes_rom_path, nullptr };
+    osd_main(2, argv);   // Blocks until emulator exits (normally or via nes_should_exit)
 
-    ESP_LOGI(TAG, "osd_main returned — emulator done");
-    vTaskDelete(NULL);
+    ESP_LOGI(TAG, "osd_main returned — emulator done. Min free stack: %u bytes",
+             uxTaskGetStackHighWaterMark(nullptr));
+
+    // Signal the UI task that we are done
+    self->_emu_task_done = true;
+    vTaskDelete(nullptr);
 }
 
 // ─── Constructor / Destructor ─────────────────────────────────────────────
 App_NES::App_NES()
     : _front_buffer(nullptr), _back_buffer(nullptr),
       _emu_task(nullptr), _buffer_mutex(nullptr),
+      _emu_task_done(false),
       _nes_buttons(0), _select_held(false), _select_held_since(0),
       _exit_pending(false), _exit_prompt_shown_at(0)
 {
     _rom_path[0] = '\0';
+    onEmulatorExit = nullptr;
 }
 
 App_NES::~App_NES() {}
@@ -66,20 +117,43 @@ void App_NES::setRomPath(const char* path) {
 void App_NES::init() {
     ESP_LOGI(TAG, "init — ROM: %s", _rom_path);
 
-    // Allocate double-buffer in PSRAM (160×128 × 2 bytes = 40 KB each)
+    _emu_task_done = false;
+
+    // ── Validate ROM mapper before allocating anything ─────────────────
+    int mapper = _read_rom_mapper(_rom_path);
+    if (mapper < 0) {
+        ESP_LOGE(TAG, "Cannot read ROM header or invalid iNES file: %s", _rom_path);
+        _emu_task_done = true;  // Signal immediate exit
+        return;
+    }
+    if (!_is_mapper_supported(mapper)) {
+        ESP_LOGE(TAG, "Unsupported mapper %d for ROM: %s", mapper, _rom_path);
+        _emu_task_done = true;
+        return;
+    }
+    ESP_LOGI(TAG, "ROM mapper %d — supported. Launching emulator.", mapper);
+
+    // ── Allocate double-buffers in PSRAM (160x128 x 2 bytes = 40KB each) ─
     _front_buffer = (uint16_t*)heap_caps_malloc(160 * 128 * 2, MALLOC_CAP_SPIRAM);
     _back_buffer  = (uint16_t*)heap_caps_malloc(160 * 128 * 2, MALLOC_CAP_SPIRAM);
 
     if (!_front_buffer || !_back_buffer) {
-        ESP_LOGE(TAG, "Framebuffer allocation failed!");
+        ESP_LOGE(TAG, "Framebuffer alloc failed! PSRAM free: %u",
+                 heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        _emu_task_done = true;
         return;
     }
     memset(_front_buffer, 0, 160 * 128 * 2);
     memset(_back_buffer,  0, 160 * 128 * 2);
 
     _buffer_mutex = xSemaphoreCreateMutex();
+    if (!_buffer_mutex) {
+        ESP_LOGE(TAG, "Mutex creation failed");
+        _emu_task_done = true;
+        return;
+    }
 
-    // Set globals for OSD layer
+    // ── Set globals for OSD layer ────────────────────────────────────────
     strncpy(active_nes_rom_path, _rom_path, 255);
     nes_frame_buffer = _back_buffer;
     nes_frame_sem    = _buffer_mutex;
@@ -89,31 +163,45 @@ void App_NES::init() {
     joypad_p1.type = INP_JOYPAD0;
     joypad_p1.data = 0;
 
-    _nes_buttons        = 0;
-    _select_held        = false;
-    _exit_pending       = false;
+    _nes_buttons          = 0;
+    _select_held          = false;
+    _exit_pending         = false;
     _exit_prompt_shown_at = 0;
 
-    xTaskCreatePinnedToCore(
+    // ── Reset boot-loop counter so emulator crashes don't trigger OTA ───
+    _reset_boot_count();
+
+    // ── Spawn emulator on Core 0 ─────────────────────────────────────────
+    BaseType_t ret = xTaskCreatePinnedToCore(
         _emu_task_func,
         "emu_task",
         NES_EMU_TASK_STACK,
-        this,
+        this,                    // pass 'this' so task can set _emu_task_done
         NES_EMU_TASK_PRIORITY,
         &_emu_task,
         NES_EMU_TASK_CORE
     );
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create emulator task!");
+        _emu_task_done = true;
+    }
 }
 
 void App_NES::exit() {
     ESP_LOGI(TAG, "exit — stopping emulator");
     nes_should_exit = true;
 
-    // Give the emulator task ~150 ms to wrap up, then forcibly delete it
+    // Give emulator 200 ms to wrap up, then force-delete
     if (_emu_task) {
-        vTaskDelay(pdMS_TO_TICKS(150));
+        for (int i = 0; i < 20; i++) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            if (_emu_task_done) break;
+        }
         eTaskState st = eTaskGetState(_emu_task);
-        if (st != eDeleted) vTaskDelete(_emu_task);
+        if (st != eDeleted) {
+            ESP_LOGW(TAG, "Force-deleting emulator task (state=%d)", (int)st);
+            vTaskDelete(_emu_task);
+        }
         _emu_task = nullptr;
     }
 
@@ -126,86 +214,113 @@ void App_NES::exit() {
 }
 
 void App_NES::loop() {
-    // If SELECT has been held for 2 s, arm the exit confirmation
+    // ── Detect emulator task finishing naturally ─────────────────────────
+    // If the task has exited on its own (ROM finished, unsupported mapper,
+    // or OSD returned), fire the exit callback and let caller switch app.
+    if (_emu_task_done && onEmulatorExit) {
+        // Clear the flag first so we don't fire twice
+        _emu_task_done = false;
+        // Clean up resources before handing control back
+        if (_buffer_mutex) { vSemaphoreDelete(_buffer_mutex); _buffer_mutex = nullptr; }
+        if (_front_buffer) { heap_caps_free(_front_buffer);   _front_buffer = nullptr; }
+        if (_back_buffer)  { heap_caps_free(_back_buffer);    _back_buffer  = nullptr; }
+        nes_frame_buffer = nullptr;
+        nes_frame_sem    = nullptr;
+        _emu_task        = nullptr;
+        onEmulatorExit();   // <-- switches app (called on UI task / Core 1)
+        return;
+    }
+
+    // ── SELECT held for 2 s arms the exit confirmation overlay ──────────
     if (_select_held) {
         TickType_t held_for = xTaskGetTickCount() - _select_held_since;
         if (!_exit_pending && held_for > pdMS_TO_TICKS(2000)) {
-            _exit_pending        = true;
+            _exit_pending         = true;
             _exit_prompt_shown_at = xTaskGetTickCount();
         }
     }
 
-    // Auto-confirm exit after 3 s on the overlay (no input needed once armed)
+    // ── Auto-confirm exit after 3 s on the overlay ───────────────────────
     if (_exit_pending) {
         TickType_t shown_for = xTaskGetTickCount() - _exit_prompt_shown_at;
         if (shown_for > pdMS_TO_TICKS(3000)) {
-            // Trigger exit — the App_Grid switch must be called from ui_task
-            // We set a flag; ui_task.cpp checks it via nes_should_exit
             nes_should_exit = true;
         }
     }
 }
 
 void App_NES::render(LGFX_Sprite* canvas) {
-    if (!_buffer_mutex || !_front_buffer || !_back_buffer) return;
+    // If init() failed (bad mapper, OOM), show an error and return
+    if (!_buffer_mutex || !_front_buffer || !_back_buffer) {
+        canvas->fillScreen(canvas->color565(10, 0, 0));
+        canvas->setTextDatum(textdatum_t::middle_center);
+        canvas->setFont(&fonts::Font0);
+        canvas->setTextColor(canvas->color565(220, 60, 60));
+        canvas->drawString("ROM unsupported or", 80, 52);
+        canvas->drawString("failed to load.", 80, 64);
+        canvas->setTextColor(canvas->color565(100, 100, 100));
+        canvas->drawString("Press any key", 80, 84);
+        return;
+    }
 
-    // Try to swap buffers. Skip frame if emulator hasn't produced one yet.
+    // ── Swap buffers — try to get new frame, skip if emulator is slow ───
     if (xSemaphoreTake(_buffer_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
         uint16_t* tmp  = _front_buffer;
         _front_buffer  = _back_buffer;
         _back_buffer   = tmp;
-        nes_frame_buffer = _back_buffer;   // hand the empty back-buffer to OSD
+        nes_frame_buffer = _back_buffer;
         xSemaphoreGive(_buffer_mutex);
     }
 
-    // Blit NES frame to canvas (160×128, top-left aligned)
     canvas->pushImage(0, 0, 160, 128, _front_buffer);
 
-    // Exit-confirmation overlay
+    // ── Exit-confirmation overlay ─────────────────────────────────────────
     if (_exit_pending) {
         canvas->fillRoundRect(20, 44, 120, 40, 6, canvas->color565(5, 5, 20));
         canvas->drawRoundRect(20, 44, 120, 40, 6, theme_get_accent());
         canvas->setTextDatum(textdatum_t::middle_center);
         canvas->setFont(&fonts::Font0);
         canvas->setTextColor(theme_get_text());
-        canvas->drawString("HOLD: Exit Game", 80, 56);
+        canvas->drawString("Hold: Exit Game", 80, 56);
         canvas->setTextColor(theme_get_text_dim());
         canvas->drawString("SELECT to cancel", 80, 68);
     }
 }
 
 void App_NES::handleInput(input_event_t event) {
-    // ── D-Pad: always direct
+    // If ROM failed to load, any button returns to previous app
+    if (_emu_task_done && onEmulatorExit) {
+        onEmulatorExit();
+        return;
+    }
+
     uint32_t nes = 0;
     if (event == BTN_UP)    nes |= INP_PAD_UP;
     if (event == BTN_DOWN)  nes |= INP_PAD_DOWN;
     if (event == BTN_LEFT)  nes |= INP_PAD_LEFT;
     if (event == BTN_RIGHT) nes |= INP_PAD_RIGHT;
 
-    // ── SELECT: short press → NES A, hold → arm exit
     if (event == BTN_SELECT) {
         if (!_select_held) {
             _select_held       = true;
             _select_held_since = xTaskGetTickCount();
         }
         if (!_exit_pending) {
-            nes |= INP_PAD_A;   // Short-press behavior while not yet held 2 s
+            nes |= INP_PAD_A;
         } else {
-            // User pressed SELECT while exit overlay is showing → cancel exit
-            _exit_pending = false;
-            _select_held  = false;
+            // Cancel exit
+            _exit_pending   = false;
+            _select_held    = false;
             nes_should_exit = false;
         }
     } else {
-        // Any other button released the SELECT hold
         _select_held = false;
     }
 
-    // ── Shift layer: UP+SELECT → NES Start, DOWN+SELECT → NES Select
     if (_select_held && event == BTN_UP)   { nes = INP_PAD_START;  }
     if (_select_held && event == BTN_DOWN) { nes = INP_PAD_SELECT; }
 
-    _nes_buttons     = nes;
-    joypad_p1.data   = nes;
-    nes_input_state  = nes;
+    _nes_buttons    = nes;
+    joypad_p1.data  = nes;
+    nes_input_state = nes;
 }

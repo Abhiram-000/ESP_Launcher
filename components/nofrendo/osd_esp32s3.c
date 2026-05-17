@@ -62,14 +62,34 @@ static void _timer_isr(void *arg)
 /* ── Init / Shutdown ──────────────────────────────────────────────────────── */
 int osd_init(void)
 {
-    ESP_LOGI(TAG_OSD, "osd_init: heap=%u SPIRAM=%u",
-             esp_get_free_heap_size(),
-             heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    ESP_LOGI(TAG_OSD, "=== osd_init START ===");
+    ESP_LOGI(TAG_OSD, "  Free heap internal : %u bytes", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    ESP_LOGI(TAG_OSD, "  Free heap SPIRAM   : %u bytes", (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    ESP_LOGI(TAG_OSD, "  ROM path           : %s", active_nes_rom_path);
+
+    /* Verify ROM file is accessible before starting emulator */
+    FILE *test = fopen(active_nes_rom_path, "rb");
+    if (!test) {
+        ESP_LOGE(TAG_OSD, "  ROM file NOT accessible: %s", active_nes_rom_path);
+        return -1;
+    }
+    fseek(test, 0, SEEK_END);
+    long rom_size = ftell(test);
+    fclose(test);
+    ESP_LOGI(TAG_OSD, "  ROM file OK: %ld bytes", rom_size);
+
+    /* Clean up any bitmap leftover from a previous emulator run */
+    if (s_bitmap) {
+        ESP_LOGW(TAG_OSD, "  s_bitmap was not NULL on init — cleaning up stale bitmap");
+        bmp_destroy(&s_bitmap);
+        s_bitmap = NULL;
+    }
 
     joypad_p1.type = 1;  /* INP_JOYPAD0 */
     joypad_p1.data = 0;
     input_register(&joypad_p1);
 
+    ESP_LOGI(TAG_OSD, "=== osd_init OK ===");
     return 0;
 }
 
@@ -216,10 +236,18 @@ void nes_mem_free(void *ptr) {
 int vid_init(int width, int height, viddriver_t *driver)
 {
     (void)width; (void)height; (void)driver;
+    ESP_LOGI(TAG_OSD, "vid_init: creating 256x240 bitmap. PSRAM free: %u",
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     if (!s_bitmap) {
         s_bitmap = bmp_create(256, 240, 0);  /* 8-bit paletted */
     }
-    return (s_bitmap && s_bitmap->data) ? 0 : -1;
+    if (!s_bitmap || !s_bitmap->data) {
+        ESP_LOGE(TAG_OSD, "vid_init: bmp_create FAILED! PSRAM free: %u",
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        return -1;
+    }
+    ESP_LOGI(TAG_OSD, "vid_init: bitmap OK @ %p", (void*)s_bitmap);
+    return 0;
 }
 
 void vid_shutdown(void)
@@ -251,11 +279,16 @@ void IRAM_ATTR vid_flush(void)
 {
     /* Check exit flag every frame */
     if (nes_should_exit) {
-        main_quit();  /* Nofrendo's clean shutdown */
+        ESP_LOGI(TAG_OSD, "vid_flush: nes_should_exit set — calling main_quit");
+        main_quit();
         return;
     }
 
-    if (!s_bitmap || !nes_frame_buffer) return;
+    if (!s_bitmap || !nes_frame_buffer) {
+        ESP_LOGW(TAG_OSD, "vid_flush: s_bitmap=%p nes_frame_buffer=%p — skipping frame",
+                 (void*)s_bitmap, (void*)nes_frame_buffer);
+        return;
+    }
 
     uint16_t *dst   = nes_frame_buffer;
     uint32_t  y_acc = 0;
@@ -270,17 +303,15 @@ void IRAM_ATTR vid_flush(void)
             uint32_t src_x = x_acc >> 8;
             if (src_x > 255) src_x = 255;
             *dst++ = s_palette565[src_row[src_x]];
-            x_acc += 409;   /* = (256 << 8) / 160 */
+            x_acc += 409;
         }
-        y_acc += 480;       /* = (240 << 8) / 128 */
+        y_acc += 480;
     }
 
-    /* Signal UI task that a new frame is ready */
     if (nes_frame_sem) {
         xSemaphoreGive(nes_frame_sem);
     }
 
-    /* Yield for 1 ms so watchdog and idle hooks get CPU */
     vTaskDelay(pdMS_TO_TICKS(1));
 }
 

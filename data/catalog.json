@@ -1,0 +1,26 @@
+{
+  "games": [
+    {
+      "id": "smb3",
+      "name": "Super Mario Bros. 3",
+      "version": "1.0",
+      "genre": "Platformer",
+      "description": "Classic NES platformer adventure.",
+      "size_bytes": 393232,
+      "crc32": "00000000",
+      "url": "",
+      "mapper": 4
+    },
+    {
+      "id": "multipack",
+      "name": "1200-in-1 Multipack",
+      "version": "1.0",
+      "genre": "Collection",
+      "description": "Massive NES game collection.",
+      "size_bytes": 524304,
+      "crc32": "00000000",
+      "url": "",
+      "mapper": 14
+    }
+  ]
+}

@@ -4,21 +4,31 @@
 #include <stdlib.h>
 
 #include "esp_heap_caps.h"
+#include "esp_log.h"
 #include "noftypes.h"
 #include "bitmap.h"
 
 #pragma GCC optimize("O3")
 
+static const char *TAG_BMP = "NES_BMP";
+
 static void *esp32_bitmap_malloc(size_t size) {
+    /* Always use PSRAM for the 256x240 = 61440 byte NES framebuffer */
     void *ptr = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (ptr == NULL) {
-        ptr = malloc(size);
+        ESP_LOGW(TAG_BMP, "PSRAM malloc(%u) failed, trying internal heap", (unsigned)size);
+        ptr = heap_caps_malloc(size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     }
+    ESP_LOGI(TAG_BMP, "bitmap_malloc(%u) -> %p  PSRAM free: %u",
+             (unsigned)size, ptr,
+             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     return ptr;
 }
 
 static void esp32_bitmap_free(void *ptr) {
-    free(ptr);
+    /* MUST use heap_caps_free — ptr was allocated with heap_caps_malloc(SPIRAM) */
+    ESP_LOGI(TAG_BMP, "bitmap_free(%p)", ptr);
+    heap_caps_free(ptr);
 }
 
 void bmp_clear(const bitmap_t *bitmap, uint8 color)

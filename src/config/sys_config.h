@@ -79,10 +79,13 @@ extern "C" {
 /* Magic bytes for INES ROM validation: 'NES\x1A' */
 #define GAME_STORE_INES_MAGIC       {0x4E, 0x45, 0x53, 0x1A}
 
-/* NES emulator task stack size (runs on Core 0). */
-#define NES_EMU_TASK_STACK          (12 * 1024)
+/* NES emulator task — must be generous; nofrendo PPU/CPU use deep call stacks.
+ * 12KB causes guaranteed stack overflow. 48KB is safe with MMC3 + PPU. */
+#define NES_EMU_TASK_STACK          (48 * 1024)
 #define NES_EMU_TASK_PRIORITY       5
 #define NES_EMU_TASK_CORE           0
+/* Warn in serial log if free stack drops below this during emulation */
+#define NES_EMU_TASK_STACK_WARN_KB  4
 
 /* --------------------------------------------------------------------------
  * UI
