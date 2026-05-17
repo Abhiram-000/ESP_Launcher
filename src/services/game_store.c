@@ -2,7 +2,7 @@
 #include "sys_config.h"
 #include "wifi_mgr.h"
 #include "esp_log.h"
-#include "esp_spiffs.h"
+#include "esp_littlefs.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "esp_rom_crc.h"
@@ -34,37 +34,44 @@ static EventGroupHandle_t gs_event_group = NULL;
 
 static TaskHandle_t current_task_handle = NULL;
 
+/*
+ * Cooperative abort flag.  Set by game_store_abort() on the UI task (Core 1).
+ * Polled inside the download/fetch task (Core 0) on every chunk iteration.
+ * The task is responsible for its own cleanup before calling vTaskDelete(NULL).
+ * NEVER use vTaskDelete(external_handle) — it leaks buffers and sockets.
+ */
+static volatile bool s_abort_requested = false;
+
 /* --------------------------------------------------------------------------
  * LittleFS Lifecycle
  * -------------------------------------------------------------------------- */
 static game_store_err_t _gs_fs_mount(void) {
-    esp_vfs_spiffs_conf_t conf = {
+    esp_vfs_littlefs_conf_t conf = {
         .base_path = GAME_STORE_MOUNT_POINT,
         .partition_label = GAME_STORE_PARTITION_LABEL,
-        .max_files = 10,
         .format_if_mount_failed = true,
+        .dont_mount = false,
     };
 
-    esp_err_t ret = esp_vfs_spiffs_register(&conf);
+    esp_err_t ret = esp_vfs_littlefs_register(&conf);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to mount or format SPIFFS: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to mount or format LittleFS: %s", esp_err_to_name(ret));
         return GAME_STORE_ERR_FS_ERROR;
     }
 
-    ESP_LOGI(TAG, "SPIFFS mounted at %s", GAME_STORE_MOUNT_POINT);
+    ESP_LOGI(TAG, "LittleFS mounted at %s", GAME_STORE_MOUNT_POINT);
     return GAME_STORE_ERR_OK;
 }
 
 static void _gs_ensure_dirs(void) {
-    // SPIFFS uses a flat namespace — no real mkdir needed.
-    // Files with path-like names (e.g. /games/roms/x.nes) work directly.
-    // We still attempt mkdir so the code works if the FS is ever swapped to LittleFS.
+    // LittleFS supports real directories.
+    // Ensure the required directory structure exists.
     struct stat st;
     if (stat(GAME_STORE_MOUNT_POINT, &st) != 0) {
-        mkdir(GAME_STORE_MOUNT_POINT, 0777); // no-op on SPIFFS, fine
+        mkdir(GAME_STORE_MOUNT_POINT, 0777);
     }
     if (stat(GAME_STORE_ROMS_DIR, &st) != 0) {
-        mkdir(GAME_STORE_ROMS_DIR, 0777); // no-op on SPIFFS, fine
+        mkdir(GAME_STORE_ROMS_DIR, 0777);
     }
 }
 
@@ -319,7 +326,7 @@ bool game_store_get_rom_path(const char* id, char* path_out, size_t len) {
 
 size_t game_store_get_free_bytes(void) {
     size_t total, used;
-    if (esp_spiffs_info(GAME_STORE_PARTITION_LABEL, &total, &used) == ESP_OK) {
+    if (esp_littlefs_info(GAME_STORE_PARTITION_LABEL, &total, &used) == ESP_OK) {
         return total - used;
     }
     return 0;
@@ -327,7 +334,7 @@ size_t game_store_get_free_bytes(void) {
 
 size_t game_store_get_total_bytes(void) {
     size_t total, used;
-    if (esp_spiffs_info(GAME_STORE_PARTITION_LABEL, &total, &used) == ESP_OK) {
+    if (esp_littlefs_info(GAME_STORE_PARTITION_LABEL, &total, &used) == ESP_OK) {
         return total;
     }
     return 0;
@@ -555,6 +562,13 @@ static void _gs_download_task(void *pvParameters) {
         uint32_t crc = 0xFFFFFFFF;
         
         while ((read_len = esp_http_client_read(client, buffer, GAME_STORE_DL_CHUNK_SIZE)) > 0) {
+            /* ── Cooperative abort check ───────────────────────────── */
+            if (s_abort_requested) {
+                ESP_LOGW(TAG, "Download aborted cooperatively after %d bytes",
+                         (int)gs_status.bytes_done);
+                gs_status.last_error = GAME_STORE_ERR_ABORTED;
+                break;
+            }
             if (!wifi_mgr_is_connected()) {
                 gs_status.last_error = GAME_STORE_ERR_NO_WIFI;
                 break;
@@ -635,19 +649,49 @@ game_store_err_t game_store_delete(const char* id) {
 }
 
 game_store_err_t game_store_abort(void) {
-    if (gs_status.is_busy && current_task_handle) {
+    if (!gs_status.is_busy || !current_task_handle) {
+        return GAME_STORE_ERR_OK;  /* Nothing running — no-op */
+    }
+
+    ESP_LOGI(TAG, "Requesting cooperative download abort...");
+    s_abort_requested = true;
+
+    /*
+     * Wait up to 600 ms for the task to honour the flag and self-terminate.
+     * The task calls vTaskDelete(NULL) at its cleanup label, so
+     * current_task_handle will be set to NULL by the task itself.
+     * We poll instead of blocking so the UI task stays responsive.
+     */
+    const int POLL_INTERVAL_MS = 20;
+    const int MAX_POLLS        = 600 / POLL_INTERVAL_MS;  /* 600 ms total */
+    for (int i = 0; i < MAX_POLLS; i++) {
+        vTaskDelay(pdMS_TO_TICKS(POLL_INTERVAL_MS));
+        if (current_task_handle == NULL) {
+            ESP_LOGI(TAG, "Download task exited cleanly after %d ms", (i + 1) * POLL_INTERVAL_MS);
+            break;
+        }
+    }
+
+    /* Safety net: if the task still hasn't exited after 600 ms (should never
+     * happen with a well-behaved loop), force-delete as a last resort and
+     * manually clean up the temp file. */
+    if (current_task_handle != NULL) {
+        ESP_LOGE(TAG, "Task did not exit in 600 ms — force-deleting (last resort)");
         vTaskDelete(current_task_handle);
         current_task_handle = NULL;
-        gs_status.is_busy = false;
-        gs_status.last_error = GAME_STORE_ERR_ABORTED;
-        
-        // Clean up temp file if active
+
+        /* Best-effort temp file cleanup */
         if (gs_status.active_game_id[0] != '\0') {
             char temp_path[128];
-            snprintf(temp_path, sizeof(temp_path), "%s/%s.tmp", GAME_STORE_ROMS_DIR, gs_status.active_game_id);
+            snprintf(temp_path, sizeof(temp_path), "%s/%s.tmp",
+                     GAME_STORE_ROMS_DIR, gs_status.active_game_id);
             unlink(temp_path);
         }
     }
+
+    s_abort_requested    = false;
+    gs_status.is_busy    = false;
+    gs_status.last_error = GAME_STORE_ERR_ABORTED;
     return GAME_STORE_ERR_OK;
 }
 

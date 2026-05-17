@@ -232,55 +232,128 @@ static void display_deinit_splash(void) {
 static void draw_splash(float elapsed_ms, float total_ms) {
     if (!s_tft || !s_canvas) return;
 
-    const int W  = s_canvas->width();
-    const int H  = s_canvas->height();
-    const int cx = W / 2;
-    const int cy = H / 2 - 6;
+    const int W  = s_canvas->width();   /* 160 */
+    const int H  = s_canvas->height();  /* 128 + 4 overshoot = 132 actual */
+    const int cx = W / 2;              /* 80 */
+    const int cy = 46;                 /* logo centre — upper-mid area */
 
-    float frac   = elapsed_ms / total_ms;        /* 0.0 → 1.0 */
-    float remain = (total_ms - elapsed_ms) / 1000.0f;  /* seconds left */
+    float frac   = elapsed_ms / total_ms;           /* 0.0 → 1.0 */
+    float remain = (total_ms - elapsed_ms) / 1000.0f; /* seconds left */
+    if (frac > 1.0f) frac = 1.0f;
+    if (remain < 0.0f) remain = 0.0f;
 
-    /* ---- Background ---- */
-    s_canvas->fillSprite(s_canvas->color565(4, 6, 16));  /* Deep navy */
+    /* ─── Background ───────────────────────────────────────────────────── */
+    s_canvas->fillSprite(s_canvas->color565(3, 4, 12));  /* Near-black navy */
 
-    /* ---- Dot-grid wallpaper ---- */
-    uint16_t dot_col = s_canvas->color565(12, 18, 40);
-    for (int y = 8; y < H; y += 16)
-        for (int x = 8; x < W; x += 16)
+    /* Subtle dot-grid wallpaper */
+    const uint16_t dot_col = s_canvas->color565(10, 14, 32);
+    for (int y = 8; y < H; y += 14)
+        for (int x = 6; x < W; x += 14)
             s_canvas->drawPixel(x, y, dot_col);
 
-    /* ---- Countdown arc (shrinks clockwise, starts full) ---- */
-    float arc_deg   = 360.0f * (1.0f - frac); /* Full arc → 0 */
-    uint16_t arc_col = (arc_deg > 60.0f) ? s_canvas->color565(0, 190, 255) :
-                       (arc_deg > 20.0f) ? s_canvas->color565(255, 180, 0) :
-                                           s_canvas->color565(255, 60, 60);
+    /* ─── Progress bar colours (cyan → amber → red as time runs out) ────── */
+    uint16_t bar_col;
+    if (frac < 0.60f)       bar_col = s_canvas->color565(0,   200, 255);  /* cyan  */
+    else if (frac < 0.85f)  bar_col = s_canvas->color565(255, 180,   0);  /* amber */
+    else                    bar_col = s_canvas->color565(255,  50,  40);  /* red   */
 
-    s_canvas->drawArc(cx, cy, 28, 24, -90, -90 + (int)arc_deg, arc_col);
-    s_canvas->drawArc(cx, cy, 23, 22, -90, -90 + (int)arc_deg,
-        s_canvas->color565(0, 80, 120)); /* Inner dim trail */
+    /* ─── Neon progress bar ─────────────────────────────────────────────── */
+    const int BAR_X = 12;
+    const int BAR_Y = 100;
+    const int BAR_W = W - 24;   /* 136 px wide */
+    const int BAR_H = 7;
+    const int fill  = (int)(frac * (float)(BAR_W - 2));
 
-    /* ---- Center logo ---- */
+    /* Outer glow (1 px larger each side, low alpha via dimmed colour) */
+    s_canvas->drawRect(BAR_X - 1, BAR_Y - 1, BAR_W + 2, BAR_H + 2,
+                       s_canvas->color565(0, 60, 90));
+    /* Track */
+    s_canvas->drawRect(BAR_X, BAR_Y, BAR_W, BAR_H,
+                       s_canvas->color565(20, 30, 60));
+    /* Fill */
+    if (fill > 0) {
+        s_canvas->fillRect(BAR_X + 1, BAR_Y + 1, fill, BAR_H - 2, bar_col);
+
+        /* Bright leading-edge pixel for a 'hot tip' effect */
+        s_canvas->drawFastVLine(BAR_X + fill, BAR_Y + 1, BAR_H - 2,
+                                s_canvas->color565(255, 255, 255));
+    }
+
+    /* ─── Particle sparks at the leading edge ───────────────────────────── */
+    /* Uses a deterministic PRNG seeded on elapsed_ms bucket so sparks are
+     * stable within a 50 ms window but change across frames.              */
+    if (fill > 2) {
+        const int spark_x0 = BAR_X + fill;
+        const int spark_y0 = BAR_Y + BAR_H / 2;
+        unsigned seed = (unsigned)(elapsed_ms / 50.0f);  /* changes every 50 ms */
+
+        for (int s = 0; s < 6; s++) {
+            /* lcg-style mini PRNG */
+            seed = seed * 1664525u + 1013904223u;
+            int dx = (int)((seed & 0x0F)) - 4;          /* -4 … +11 to the right */
+            seed = seed * 1664525u + 1013904223u;
+            int dy = (int)((seed & 0x07)) - 3;          /* -3 … +3 vertical */
+            /* Bias sparks to fly right and slightly up */
+            dx = (dx < 0) ? -dx / 2 : dx + 2;
+            int px = spark_x0 + dx;
+            int py = spark_y0 + dy;
+            if (px >= 0 && px < W && py >= 0 && py < H) {
+                /* Alternate between full bright and half-bright */
+                uint16_t sc = (s & 1) ? bar_col : s_canvas->color565(255, 255, 255);
+                s_canvas->drawPixel(px, py, sc);
+            }
+        }
+    }
+
+    /* ─── Logo: pulsing glow rings + inner arc spinner ─────────────────── */
+    const float ring_r = 22.0f + 1.2f * sinf(elapsed_ms * 0.006f);
+    const int   ri     = (int)ring_r;
+
+    /* Outer soft glow */
+    s_canvas->drawCircle(cx, cy, ri + 3, s_canvas->color565(0, 40, 70));
+    s_canvas->drawCircle(cx, cy, ri + 2, s_canvas->color565(0, 80, 120));
+    /* Main ring */
+    s_canvas->drawCircle(cx, cy, ri,     bar_col);
+    s_canvas->drawCircle(cx, cy, ri - 1, s_canvas->color565(0, 100, 150));
+
+    /* Rotating spinner arcs (two opposing segments) */
+    float spin = fmodf(elapsed_ms * 0.18f, 360.0f);
+    s_canvas->drawArc(cx, cy, ri - 3, ri - 5,
+                      (int)spin,       (int)spin + 100, bar_col);
+    s_canvas->drawArc(cx, cy, ri - 3, ri - 5,
+                      (int)spin + 180, (int)spin + 280, bar_col);
+
+    /* Centre fill pulse */
+    uint8_t core_b = (uint8_t)(80 + 60 * sinf(elapsed_ms * 0.008f));
+    s_canvas->fillCircle(cx, cy, ri - 6, s_canvas->color565(0, core_b / 4, core_b));
+
+    /* ─── Logo text ─────────────────────────────────────────────────────── */
     s_canvas->setFont(&fonts::Font2);
     s_canvas->setTextDatum(textdatum_t::middle_center);
-    s_canvas->setTextColor(s_canvas->color565(0, 190, 255));
+    s_canvas->setTextColor(s_canvas->color565(220, 240, 255));
     s_canvas->drawString("ESP32", cx, cy);
 
-    /* ---- Seconds remaining ---- */
+    /* ─── Title & subtitle ──────────────────────────────────────────────── */
     s_canvas->setFont(&fonts::Font0);
-    s_canvas->setTextColor(s_canvas->color565(180, 180, 180));
-    char buf[8];
-    snprintf(buf, sizeof(buf), "%.1fs", remain > 0.0f ? remain : 0.0f);
-    s_canvas->drawString(buf, cx, cy + 20);
-
-    /* ---- Instructions ---- */
-    s_canvas->setTextColor(s_canvas->color565(80, 100, 140));
     s_canvas->setTextDatum(textdatum_t::top_center);
-    s_canvas->drawString("Hold SELECT", cx, 4);
-    s_canvas->drawString("to stay in Launcher", cx, 14);
+    s_canvas->setTextColor(s_canvas->color565(0, 200, 255));
+    s_canvas->drawString("LAUNCHER", cx, 5);
 
+    s_canvas->setTextColor(s_canvas->color565(50, 80, 120));
+    s_canvas->drawString("Custom Modular OS", cx, 16);
+
+    /* ─── Countdown label above bar ─────────────────────────────────────── */
+    char buf[12];
+    snprintf(buf, sizeof(buf), "%.1fs", remain);
+    s_canvas->setTextDatum(textdatum_t::middle_right);
+    s_canvas->setTextColor(bar_col);
+    s_canvas->drawString(buf, BAR_X + BAR_W, BAR_Y - 5);
+
+    /* ─── Footer hints ──────────────────────────────────────────────────── */
+    s_canvas->setFont(&fonts::Font0);
     s_canvas->setTextDatum(textdatum_t::bottom_center);
-    s_canvas->setTextColor(s_canvas->color565(50, 70, 100));
-    s_canvas->drawString("Release = User FW", cx, H - 2);
+    s_canvas->setTextColor(s_canvas->color565(0, 120, 180));
+    s_canvas->drawString("SELECT = Stay in Launcher", cx, H - 5);
 
     s_canvas->pushSprite(0, -4);
 }

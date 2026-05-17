@@ -25,6 +25,7 @@ extern "C" {
     extern SemaphoreHandle_t     nes_frame_sem;
     extern volatile uint32_t     nes_input_state;
     extern volatile bool         nes_should_exit;
+    extern volatile uint8_t      nes_state_cmd;
 
     typedef struct { int type; int data; } nesinput_t;
     extern nesinput_t joypad_p1;
@@ -297,32 +298,54 @@ void App_NES::handleInput(input_event_t event) {
     }
 
     uint32_t nes = 0;
+
+    // ── D-Pad (always pass through unless SELECT chord overrides below) ───
     if (event == BTN_UP)    nes |= INP_PAD_UP;
     if (event == BTN_DOWN)  nes |= INP_PAD_DOWN;
     if (event == BTN_LEFT)  nes |= INP_PAD_LEFT;
     if (event == BTN_RIGHT) nes |= INP_PAD_RIGHT;
 
+    // ── SELECT: smart tap vs. chord detection ─────────────────────────────
+    // A QUICK TAP  (SELECT released < 200 ms after press) → A button only.
+    // CHORD MODE   (SELECT held ≥ 200 ms, then another key pressed)
+    //              → START / SELECT-NES / Save / Load via combos.
+    // This stops accidental chord activation during fast button presses.
     if (event == BTN_SELECT) {
         if (!_select_held) {
             _select_held       = true;
             _select_held_since = xTaskGetTickCount();
         }
-        if (!_exit_pending) {
-            nes |= INP_PAD_A;
-        } else {
-            // Cancel exit
+
+        if (_exit_pending) {
+            // Any SELECT press during exit-overlay cancels the exit
             _exit_pending   = false;
             _select_held    = false;
             nes_should_exit = false;
+        } else {
+            // Always deliver A on the press frame so games feel responsive;
+            // chord override happens only when a SECOND key arrives while held
+            nes |= INP_PAD_A;
         }
+
+    } else if (_select_held) {
+        // Another key arrived while SELECT is still held → chord mode.
+        // Only activate chord if SELECT has been down ≥ 200 ms (intentional).
+        TickType_t held_ms = (xTaskGetTickCount() - _select_held_since) * portTICK_PERIOD_MS;
+        if (held_ms >= 200) {
+            // Override: cancel the A-button, deliver the mapped chord function
+            nes &= ~INP_PAD_A;
+            if (event == BTN_UP)    { nes  = INP_PAD_START;  }   // NES Start
+            if (event == BTN_DOWN)  { nes  = INP_PAD_SELECT; }   // NES Select
+            if (event == BTN_LEFT)  { nes_state_cmd = 1; nes = 0; } // Save state
+            if (event == BTN_RIGHT) { nes_state_cmd = 2; nes = 0; } // Load state
+        }
+        // If held < 200 ms, treat as independent A + D-pad press (normal play)
     } else {
+        // SELECT not involved — ensure held flag stays clear
         _select_held = false;
     }
 
-    if (_select_held && event == BTN_UP)   { nes = INP_PAD_START;  }
-    if (_select_held && event == BTN_DOWN) { nes = INP_PAD_SELECT; }
-
     _nes_buttons    = nes;
-    joypad_p1.data  = nes;
+    joypad_p1.data  = (int)nes;
     nes_input_state = nes;
 }

@@ -24,7 +24,8 @@ extern void switch_to_grid();
 App_OTA::App_OTA()
     : smooth_progress(0), last_progress(0), activity(0),
       anim_time(0), shockwave_r(0),
-      display_kbps(0), start_tick_ms(0), elapsed_ms(0) {
+      display_kbps(0), start_tick_ms(0), elapsed_ms(0),
+      reboot_countdown_ms(0) {
     local_msg.state    = OTA_STATE_IDLE;
     local_msg.progress = 0.0f;
     local_msg.kbps     = 0.0f;
@@ -34,14 +35,15 @@ App_OTA::App_OTA()
 App_OTA::~App_OTA() {}
 
 void App_OTA::init() {
-    smooth_progress = 0;
-    last_progress   = 0;
-    activity        = 0;
-    shockwave_r     = 0;
-    display_kbps    = 0;
-    start_tick_ms   = 0;
-    elapsed_ms      = 0;
-    anim_time       = 0;
+    smooth_progress     = 0;
+    last_progress       = 0;
+    activity            = 0;
+    shockwave_r         = 0;
+    display_kbps        = 0;
+    start_tick_ms       = 0;   /* Must reset so elapsed doesn't carry over */
+    elapsed_ms          = 0;
+    anim_time           = 0;
+    reboot_countdown_ms = 0;   /* Reset reboot countdown */
     local_msg.state    = OTA_STATE_IDLE;
     local_msg.progress = 0.0f;
     local_msg.kbps     = 0.0f;
@@ -59,10 +61,21 @@ void App_OTA::loop() {
         if (local_msg.state == OTA_STATE_FLASHING && start_tick_ms == 0) {
             start_tick_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;
         }
-        if (local_msg.state == OTA_STATE_SUCCESS ||
-            local_msg.state == OTA_STATE_FAILED) {
-            shockwave_r  = 0.0f;
+        if (local_msg.state == OTA_STATE_SUCCESS) {
+            shockwave_r          = 0.0f;
+            /* Start the visual reboot countdown at the configured delay */
+            if (reboot_countdown_ms == 0) {
+                reboot_countdown_ms = APP_OTA_REBOOT_DELAY_MS;
+            }
         }
+        if (local_msg.state == OTA_STATE_FAILED) {
+            shockwave_r = 0.0f;
+        }
+    }
+
+    /* Tick down the reboot countdown (25 ms per frame at 40 FPS) */
+    if (local_msg.state == OTA_STATE_SUCCESS && reboot_countdown_ms > 0) {
+        reboot_countdown_ms = (reboot_countdown_ms > 25) ? reboot_countdown_ms - 25 : 0;
     }
 
     /* Smooth progress interpolation */
@@ -96,8 +109,38 @@ void App_OTA::loop() {
 }
 
 void App_OTA::handleInput(input_event_t event) {
-    if (event == BTN_LEFT && local_msg.state == OTA_STATE_IDLE) {
-        switch_to_grid();
+    switch (local_msg.state) {
+        case OTA_STATE_IDLE:
+            /* Normal navigation: LEFT = back to grid */
+            if (event == BTN_LEFT) { switch_to_grid(); }
+            break;
+
+        case OTA_STATE_FAILED:
+            /* After a failed flash the user must be able to leave.
+             * BTN_LEFT = back to launcher grid.
+             * BTN_SELECT = reset to IDLE so they can try again without
+             *              having to exit and re-enter the OTA app.       */
+            if (event == BTN_LEFT)   { switch_to_grid(); }
+            if (event == BTN_SELECT) {
+                local_msg.state    = OTA_STATE_IDLE;
+                local_msg.progress = 0.0f;
+                local_msg.kbps     = 0.0f;
+                smooth_progress    = 0.0f;
+                start_tick_ms      = 0;
+                elapsed_ms         = 0;
+                shockwave_r        = 0.0f;
+                snprintf(local_msg.msg, sizeof(local_msg.msg), "Awaiting Upload");
+            }
+            break;
+
+        case OTA_STATE_SUCCESS:
+            /* Reboot is imminent — do not process input to avoid confusion */
+            break;
+
+        default:
+            /* During CONNECTED / FLASHING / VALIDATING — inputs are ignored.
+             * The upload is in progress; there is no safe cancel path.    */
+            break;
     }
 }
 
@@ -316,6 +359,25 @@ void App_OTA::render(LGFX_Sprite* canvas) {
         canvas->drawString(
             local_msg.state == OTA_STATE_SUCCESS ? "DONE" : "ERR",
             cx, tank_cy);
+
+        /* Live reboot countdown below DONE label */
+        if (local_msg.state == OTA_STATE_SUCCESS && reboot_countdown_ms > 0) {
+            char cntbuf[20];
+            snprintf(cntbuf, sizeof(cntbuf), "Reboot in %.1fs",
+                     reboot_countdown_ms / 1000.0f);
+            canvas->setFont(&fonts::Font0);
+            canvas->setTextDatum(textdatum_t::middle_center);
+            canvas->setTextColor(theme_get_text_dim());
+            canvas->drawString(cntbuf, cx, tank_cy + 16);
+        }
+
+        /* FAILED hint: press SELECT to retry or LEFT to exit */
+        if (local_msg.state == OTA_STATE_FAILED) {
+            canvas->setFont(&fonts::Font0);
+            canvas->setTextDatum(textdatum_t::middle_center);
+            canvas->setTextColor(theme_get_text_dim());
+            canvas->drawString("SEL=Retry  L=Back", cx, tank_cy + 16);
+        }
     }
 
     /* ---- Phase dot indicator ---- */

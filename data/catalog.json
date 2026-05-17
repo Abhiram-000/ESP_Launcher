@@ -1,12 +1,34 @@
 {
   "games": [
     {
+      "id": "castlevania",
+      "name": "Castlevania",
+      "version": "1.0",
+      "genre": "Action",
+      "description": "NES ROM - Mapper 2 (UNROM) ✓ PLAYABLE",
+      "size_bytes": 131088,
+      "crc32": "00000000",
+      "url": "",
+      "mapper": 2
+    },
+    {
       "id": "contra_force",
       "name": "Contra Force",
       "version": "1.0",
       "genre": "Action",
       "description": "NES ROM - Mapper 4 (MMC3) ✓ PLAYABLE",
       "size_bytes": 262160,
+      "crc32": "00000000",
+      "url": "",
+      "mapper": 4
+    },
+    {
+      "id": "kirby",
+      "name": "Kirby's Adventure",
+      "version": "1.0",
+      "genre": "Platform",
+      "description": "NES ROM - Mapper 4 (MMC3) ✓ PLAYABLE",
+      "size_bytes": 786448,
       "crc32": "00000000",
       "url": "",
       "mapper": 4
@@ -23,26 +45,15 @@
       "mapper": 1
     },
     {
-      "id": "multipack",
-      "name": "Multipack",
+      "id": "ninja_gaiden_2",
+      "name": "Ninja Gaiden II",
       "version": "1.0",
-      "genre": "Collection",
-      "description": "NES ROM - Mapper 227 ✗ NOT SUPPORTED",
-      "size_bytes": 524304,
+      "genre": "Action",
+      "description": "NES ROM - Mapper 4 (MMC3) ✓ PLAYABLE",
+      "size_bytes": 262160,
       "crc32": "00000000",
       "url": "",
-      "mapper": 227
-    },
-    {
-      "id": "pacmania",
-      "name": "Pacmania",
-      "version": "1.0",
-      "genre": "Arcade",
-      "description": "NES ROM - Mapper 206 ✗ NOT SUPPORTED",
-      "size_bytes": 98320,
-      "crc32": "00000000",
-      "url": "",
-      "mapper": 206
+      "mapper": 4
     },
     {
       "id": "smb3",

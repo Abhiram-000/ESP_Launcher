@@ -25,9 +25,10 @@ private:
     float shockwave_r;
 
     /* Throughput & time */
-    float    display_kbps;   /* Smoothed KB/s from UI message */
-    uint32_t start_tick_ms;  /* millis() at OTA_STATE_FLASHING entry */
-    uint32_t elapsed_ms;     /* Running elapsed time */
+    float    display_kbps;       /* Smoothed KB/s from UI message */
+    uint32_t start_tick_ms;      /* millis() at OTA_STATE_FLASHING entry */
+    uint32_t elapsed_ms;         /* Running elapsed time */
+    uint32_t reboot_countdown_ms;/* Counts down from APP_OTA_REBOOT_DELAY_MS on SUCCESS */
 
     /* Latest UI message from OTA service */
     ui_message_t local_msg;

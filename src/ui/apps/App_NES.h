@@ -17,6 +17,9 @@ public:
     void render(LGFX_Sprite* canvas) override;
     void handleInput(input_event_t event) override;
 
+    // Always heap-allocated by App_GameStore — must be deleted after transition.
+    bool isDynamic() const override { return true; }
+
     void setRomPath(const char* path);
 
     // Called by loop() when the emulator task exits (clean finish, error, or user quit).

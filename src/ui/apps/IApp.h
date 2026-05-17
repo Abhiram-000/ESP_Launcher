@@ -31,4 +31,18 @@ public:
      * @brief Handle user input cleanly.
      */
     virtual void handleInput(input_event_t event) = 0;
+
+    /**
+     * @brief Returns true if this instance was heap-allocated and MUST be
+     *        deleted by switch_to_app() after the transition completes.
+     *
+     *        All static singleton apps (App_Grid, App_OTA, App_Settings, …)
+     *        inherit the default 'false'.
+     *
+     *        App_NES overrides to 'true' — every game launch allocates a
+     *        fresh App_NES on the heap inside App_GameStore::_launch_game(),
+     *        and switch_to_app() is the only safe point to delete it (after
+     *        exit() has run and the new app's init() is in progress).
+     */
+    virtual bool isDynamic() const { return false; }
 };

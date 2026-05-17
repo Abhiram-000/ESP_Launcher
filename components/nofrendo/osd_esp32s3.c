@@ -14,6 +14,7 @@
 #include "bitmap.h"
 #include "nesinput.h"
 #include "vid_drv.h"
+#include "nesstate.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +34,7 @@ uint16_t         *nes_frame_buffer   = NULL; /* Back-buffer written by OSD      
 SemaphoreHandle_t nes_frame_sem      = NULL; /* Signals UI task: new frame ready  */
 volatile uint32_t nes_input_state    = 0;    /* NES button bits from App_NES      */
 volatile bool     nes_should_exit    = false;/* Set by App_NES to request quit    */
+volatile uint8_t  nes_state_cmd      = 0;    /* 0=Idle, 1=Save, 2=Load            */
 
 /* Internal nesinput structure – one player, joypad type 1 */
 nesinput_t joypad_p1 = { 1, 0 };  /* type=INP_JOYPAD0, data=0 */
@@ -284,6 +286,17 @@ void IRAM_ATTR vid_flush(void)
         ESP_LOGI(TAG_OSD, "vid_flush: nes_should_exit set — calling main_quit");
         main_quit();
         return;
+    }
+
+    if (nes_state_cmd) {
+        if (nes_state_cmd == 1) {
+            ESP_LOGI(TAG_OSD, "Saving state...");
+            state_save();
+        } else if (nes_state_cmd == 2) {
+            ESP_LOGI(TAG_OSD, "Loading state...");
+            state_load();
+        }
+        nes_state_cmd = 0;
     }
 
     if (!s_bitmap || !nes_frame_buffer) {

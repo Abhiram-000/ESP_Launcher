@@ -39,7 +39,7 @@ void ui_set_brightness(uint8_t val) {
     if (val < 10) val = 10;
     current_brightness = val;
     tft.setBrightness(val);
-    
+
     nvs_handle_t handle;
     if (nvs_open("ui_cfg", NVS_READWRITE, &handle) == ESP_OK) {
         nvs_set_u8(handle, "brightness", val);
@@ -61,13 +61,77 @@ static App_GameStore app_gamestore;
 
 static IApp* current_app = nullptr;
 
-void switch_to_app(IApp* app) {
-    if (current_app) {
-        current_app->exit();
+// ─── Slide transition ──────────────────────────────────────────────────────
+// Renders a smooth horizontal slide between two app frames.
+// old_snap: left sprite (the app we are leaving) — slides out left.
+// new_snap: right sprite (the app arriving)      — slides in from right.
+// Duration: SLIDE_FRAMES × 25 ms ≈ 10 × 25 ms = 250 ms at 40 FPS.
+static void _run_slide_transition(LGFX_Sprite* old_snap, LGFX_Sprite* new_snap) {
+    const int SLIDE_FRAMES = 10;
+    const int W = tft.width();
+
+    for (int i = 1; i <= SLIDE_FRAMES; i++) {
+        // Quadratic ease-out: t goes 0→1, offset goes 0→W
+        float t      = (float)i / (float)SLIDE_FRAMES;
+        float eased  = t * (2.0f - t);          // ease-out quad
+        int   offset = (int)(eased * (float)W);
+
+        // Draw old frame sliding left
+        old_snap->pushSprite(&tft, -offset, -4);
+        // Draw new frame entering from the right
+        new_snap->pushSprite(&tft, W - offset, -4);
+
+        vTaskDelay(pdMS_TO_TICKS(25));
     }
-    current_app = app;
-    if (current_app) {
-        current_app->init();
+}
+
+// ─── App switch with slide + safe dynamic-app deletion ────────────────────
+void switch_to_app(IApp* next_app) {
+    if (!next_app) return;
+
+    // ── Capture old frame for the slide animation ────────────────────────
+    // Allocate snapshot sprites in PSRAM to avoid touching internal SRAM.
+    LGFX_Sprite old_snap(&tft);
+    LGFX_Sprite new_snap(&tft);
+    old_snap.setPsram(true);
+    new_snap.setPsram(true);
+    bool transition_ok = old_snap.createSprite(tft.width(), tft.height() + 4)
+                      && new_snap.createSprite(tft.width(), tft.height() + 4);
+
+    // Render current state into old_snap
+    if (transition_ok && current_app) {
+        current_app->render(&old_snap);
+    }
+
+    // ── Exit current app ─────────────────────────────────────────────────
+    IApp* old_app = current_app;
+    if (old_app) {
+        old_app->exit();
+    }
+
+    // ── Bring in the new app ─────────────────────────────────────────────
+    current_app = next_app;
+    current_app->init();
+
+    // ── Render first frame of new app into new_snap ──────────────────────
+    if (transition_ok) {
+        theme_update();  // Ensure theme interpolation is current
+        current_app->render(&new_snap);
+
+        // Play the slide animation
+        _run_slide_transition(&old_snap, &new_snap);
+
+        old_snap.deleteSprite();
+        new_snap.deleteSprite();
+    }
+
+    // ── Delete dynamic (heap-allocated) old app AFTER transition is done ─
+    // This is the fix for the App_NES SRAM leak: safe because exit() has
+    // already run, the new app is fully initialised, and the transition
+    // sprites that referenced old_app's pixels have already been pushed.
+    if (old_app && old_app->isDynamic()) {
+        ESP_LOGI(TAG, "Deleting dynamic app instance (leak fix)");
+        delete old_app;
     }
 }
 
@@ -80,7 +144,7 @@ static void ui_task_runner(void *arg) {
 
     tft.init();
     tft.setRotation(1);
-    
+
     nvs_handle_t handle;
     if (nvs_open("ui_cfg", NVS_READONLY, &handle) == ESP_OK) {
         nvs_get_u8(handle, "brightness", &current_brightness);
@@ -100,7 +164,9 @@ static void ui_task_runner(void *arg) {
     app_grid.registerApp("Settings",    icon_settings,  &app_settings);
     app_grid.registerApp("Game Store",  icon_games,     &app_gamestore);
 
-    switch_to_grid();
+    // Use a direct init for the first launch — no slide needed at boot
+    current_app = &app_grid;
+    current_app->init();
 
     const TickType_t xFrameTime = pdMS_TO_TICKS(25); // 40 FPS target
     TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -108,8 +174,11 @@ static void ui_task_runner(void *arg) {
     while (1) {
         // Process input events (non-blocking)
         input_event_t ev = input_mgr_get_event();
-        if (ev != BTN_NONE && current_app) {
-            current_app->handleInput(ev);
+        if (ev != BTN_NONE) {
+            idle_mgr_feed();
+            if (current_app) {
+                current_app->handleInput(ev);
+            }
         }
 
         // Update animations
@@ -128,18 +197,18 @@ static void ui_task_runner(void *arg) {
             int rem = idle_mgr_get_countdown_remaining();
             int w = canvas.width();
             int h = canvas.height();
-            
+
             int bw = 140, bh = 60;
             int bx = (w - bw) / 2, by = (h - bh) / 2;
-            
+
             canvas.fillRoundRect(bx, by, bw, bh, 8, canvas.color565(5, 5, 15));
             canvas.drawRoundRect(bx, by, bw, bh, 8, theme_get_accent());
 
             int bar_w = 6, bar_max_h = bh - 20;
             int bar_x = bx + 12, bar_y = by + 10;
-            
+
             canvas.drawRect(bar_x, bar_y, bar_w, bar_max_h, theme_get_text_dim());
-            
+
             int fill_h = (int)(bar_max_h * (rem / 10.0f));
             if (fill_h > 0) {
                 canvas.fillRect(bar_x + 1, bar_y + (bar_max_h - fill_h), bar_w - 2, fill_h, theme_get_accent());
@@ -151,10 +220,10 @@ static void ui_task_runner(void *arg) {
             char buf[16];
             snprintf(buf, sizeof(buf), "%ds", rem);
             canvas.drawString(buf, bar_x + 15, bar_y + 8);
-            
+
             canvas.setFont(&fonts::Font0);
             canvas.drawString("SLEEPING SOON", bar_x + 15, bar_y + 22);
-            
+
             canvas.setTextColor(theme_get_text_dim());
             canvas.drawString("Any key to stay", bar_x + 15, bar_y + 34);
         }
