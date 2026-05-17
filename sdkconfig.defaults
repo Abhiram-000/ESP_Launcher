@@ -42,6 +42,9 @@ CONFIG_LOG_COLORS=y
 # ---- Optimization ----
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 
+# ---- Disable unused drivers to avoid compilation issues ----
+CONFIG_ESP_DRIVER_I2C_ENABLE=n
+
 # ---- PSRAM (8MB Octal ESP32-S3) ----
 CONFIG_ESP32S3_SPIRAM_SUPPORT=y
 CONFIG_SPIRAM=y

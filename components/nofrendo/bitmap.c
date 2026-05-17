@@ -26,7 +26,7 @@ static void *esp32_bitmap_malloc(size_t size) {
 }
 
 static void esp32_bitmap_free(void *ptr) {
-    /* MUST use heap_caps_free — ptr was allocated with heap_caps_malloc(SPIRAM) */
+    if (!ptr) return;
     ESP_LOGI(TAG_BMP, "bitmap_free(%p)", ptr);
     heap_caps_free(ptr);
 }

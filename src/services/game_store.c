@@ -257,7 +257,7 @@ static void _gs_autodiscover_roms(void) {
         e->is_installed = true;
 
         /* Fill size from stat */
-        char full_path[128];
+        char full_path[280];
         snprintf(full_path, sizeof(full_path), "%s/%s", GAME_STORE_ROMS_DIR, fname);
         struct stat st;
         if (stat(full_path, &st) == 0) e->size_bytes = (uint32_t)st.st_size;

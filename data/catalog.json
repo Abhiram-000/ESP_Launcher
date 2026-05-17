@@ -1,26 +1,70 @@
 {
   "games": [
     {
+      "id": "contra_force",
+      "name": "Contra Force",
+      "version": "1.0",
+      "genre": "Action",
+      "description": "NES ROM - Mapper 4 (MMC3) ✓ PLAYABLE",
+      "size_bytes": 262160,
+      "crc32": "00000000",
+      "url": "",
+      "mapper": 4
+    },
+    {
+      "id": "megaman2",
+      "name": "Mega Man 2",
+      "version": "1.0",
+      "genre": "Action",
+      "description": "NES ROM - Mapper 1 (MMC1) ✓ PLAYABLE",
+      "size_bytes": 262160,
+      "crc32": "00000000",
+      "url": "",
+      "mapper": 1
+    },
+    {
+      "id": "multipack",
+      "name": "Multipack",
+      "version": "1.0",
+      "genre": "Collection",
+      "description": "NES ROM - Mapper 227 ✗ NOT SUPPORTED",
+      "size_bytes": 524304,
+      "crc32": "00000000",
+      "url": "",
+      "mapper": 227
+    },
+    {
+      "id": "pacmania",
+      "name": "Pacmania",
+      "version": "1.0",
+      "genre": "Arcade",
+      "description": "NES ROM - Mapper 206 ✗ NOT SUPPORTED",
+      "size_bytes": 98320,
+      "crc32": "00000000",
+      "url": "",
+      "mapper": 206
+    },
+    {
       "id": "smb3",
       "name": "Super Mario Bros. 3",
       "version": "1.0",
-      "genre": "Platformer",
-      "description": "Classic NES platformer adventure.",
+      "genre": "Platform",
+      "description": "NES ROM - Mapper 4 (MMC3) ✓ PLAYABLE",
       "size_bytes": 393232,
       "crc32": "00000000",
       "url": "",
       "mapper": 4
     },
     {
-      "id": "multipack",
-      "name": "1200-in-1 Multipack",
+      "id": "smb3_usa",
+      "name": "Super Mario Bros. 3 (USA)",
       "version": "1.0",
-      "genre": "Collection",
-      "description": "Massive NES game collection.",
-      "size_bytes": 524304,
+      "genre": "Platform",
+      "description": "NES ROM - Mapper 4 (MMC3) ✓ PLAYABLE",
+      "size_bytes": 393232,
       "crc32": "00000000",
       "url": "",
-      "mapper": 14
+      "mapper": 4
     }
   ]
 }

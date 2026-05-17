@@ -11,8 +11,6 @@
 extern void switch_to_app(IApp* app);
 extern void switch_to_grid();
 
-static const char* TAG = "GameStore";
-
 // ─────────────────────────────────────────────────────────────────────────
 //  Colour palette (derived at runtime from theme_get_*)
 // ─────────────────────────────────────────────────────────────────────────

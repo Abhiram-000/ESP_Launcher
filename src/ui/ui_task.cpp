@@ -76,12 +76,11 @@ void switch_to_grid() {
 }
 
 static void ui_task_runner(void *arg) {
-    ESP_LOGI(TAG, "UI Task Started (Modular App Grid & Themes)");
+    ESP_LOGI(TAG, "UI Task Started (Event-Driven Architecture)");
 
     tft.init();
-    tft.setRotation(1); // Reverse Landscape
+    tft.setRotation(1);
     
-    // Attempt to load brightness from NVS
     nvs_handle_t handle;
     if (nvs_open("ui_cfg", NVS_READONLY, &handle) == ESP_OK) {
         nvs_get_u8(handle, "brightness", &current_brightness);
@@ -89,77 +88,63 @@ static void ui_task_runner(void *arg) {
     }
     tft.setBrightness(current_brightness);
 
-    // Allocate the large 16-bit display buffer in PSRAM to save internal heap
     canvas.setPsram(true);
     canvas.createSprite(tft.width(), tft.height() + 4);
     canvas.setColorDepth(16);
 
-    // 1. Initialize Global Theme Interpolator
     theme_init();
 
-    // 2. Register apps with pre-converted RGB565 icon arrays (zero runtime decoding).
-    //    Arrays are flash-resident 64x64 images; App_Grid downsamples to 32x32 on the stack.
     app_grid.registerApp("OTA System",  icon_ota,       &app_ota);
     app_grid.registerApp("Torch",       icon_torch,     &app_torch);
     app_grid.registerApp("AI Code",     icon_aicode,    &app_aicode);
     app_grid.registerApp("Settings",    icon_settings,  &app_settings);
     app_grid.registerApp("Game Store",  icon_games,     &app_gamestore);
 
-    // Boot to Grid
     switch_to_grid();
 
+    const TickType_t xFrameTime = pdMS_TO_TICKS(25); // 40 FPS target
     TickType_t xLastWakeTime = xTaskGetTickCount();
-    const TickType_t xFrequency = pdMS_TO_TICKS(25); // Target 40 FPS
 
     while (1) {
-        // - Core Mathematics and Dispatching - //
-        
+        // Process input events (non-blocking)
         input_event_t ev = input_mgr_get_event();
         if (ev != BTN_NONE && current_app) {
             current_app->handleInput(ev);
         }
 
-        theme_update(); // Smoothly animates colors across theme switches
-
+        // Update animations
+        theme_update();
         if (current_app) {
             current_app->loop();
         }
 
+        // Render
         if (current_app) {
             current_app->render(&canvas);
         }
 
-        // --- Deep Sleep Countdown Overlay ---
+        // Idle countdown overlay
         if (idle_mgr_get_state() == IDLE_STATE_COUNTDOWN) {
             int rem = idle_mgr_get_countdown_remaining();
             int w = canvas.width();
             int h = canvas.height();
             
-            // Professional centered box
-            int bw = 140;
-            int bh = 60;
-            int bx = (w - bw) / 2;
-            int by = (h - bh) / 2;
+            int bw = 140, bh = 60;
+            int bx = (w - bw) / 2, by = (h - bh) / 2;
             
             canvas.fillRoundRect(bx, by, bw, bh, 8, canvas.color565(5, 5, 15));
             canvas.drawRoundRect(bx, by, bw, bh, 8, theme_get_accent());
 
-            // Vertical Progress Bar on the left
-            int bar_w = 6;
-            int bar_max_h = bh - 20;
-            int bar_x = bx + 12;
-            int bar_y = by + 10;
+            int bar_w = 6, bar_max_h = bh - 20;
+            int bar_x = bx + 12, bar_y = by + 10;
             
-            // Background of bar
             canvas.drawRect(bar_x, bar_y, bar_w, bar_max_h, theme_get_text_dim());
             
-            // Filled part (decreasing)
             int fill_h = (int)(bar_max_h * (rem / 10.0f));
             if (fill_h > 0) {
                 canvas.fillRect(bar_x + 1, bar_y + (bar_max_h - fill_h), bar_w - 2, fill_h, theme_get_accent());
             }
 
-            // Text on the right
             canvas.setTextDatum(textdatum_t::middle_left);
             canvas.setTextColor(theme_get_text());
             canvas.setFont(&fonts::Font2);
@@ -174,10 +159,10 @@ static void ui_task_runner(void *arg) {
             canvas.drawString("Any key to stay", bar_x + 15, bar_y + 34);
         }
 
-        /* Global UI offset: push everything up by 4px to perfectly align with the bezel */
         canvas.pushSprite(0, -4);
 
-        vTaskDelayUntil(&xLastWakeTime, xFrequency); // Precise frame rate
+        // Precise frame timing
+        vTaskDelayUntil(&xLastWakeTime, xFrameTime);
     }
 }
 

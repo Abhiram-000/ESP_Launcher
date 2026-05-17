@@ -121,6 +121,15 @@ typedef struct {
     char        ip_addr[16];        /* For WiFi status */
 } ui_message_t;
 
+/* Compile-time size validation */
+#ifdef __cplusplus
+static_assert(sizeof(ui_message_t) <= 128, "ui_message_t too large for queue");
+#else
+_Static_assert(sizeof(ui_message_t) <= 128, "ui_message_t too large for queue");
+_Static_assert(sizeof(((ui_message_t*)0)->msg) >= 64, "msg buffer too small");
+_Static_assert(sizeof(((ui_message_t*)0)->ip_addr) >= 16, "ip_addr buffer too small");
+#endif
+
 #ifdef __cplusplus
 }
 #endif

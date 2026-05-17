@@ -226,7 +226,9 @@ void *nes_mem_malloc(size_t size) {
 }
 
 void nes_mem_free(void *ptr) {
-    heap_caps_free(ptr);
+    if (ptr) {
+        heap_caps_free(ptr);
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

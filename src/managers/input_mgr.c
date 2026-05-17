@@ -1,7 +1,7 @@
 #include "input_mgr.h"
 #include "esp_log.h"
 #include "../services/idle_mgr.h"
-#include "driver/gpio.h"
+#include "../hal/hal_gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -9,6 +9,9 @@
 #include "../platform/board.h"
 
 static const char *TAG = "INPUT_MGR";
+
+#define INPUT_QUEUE_SIZE 10
+#define DEBOUNCE_MS 30
 
 static QueueHandle_t s_input_queue = NULL;
 
@@ -28,16 +31,14 @@ static btn_state_t s_buttons[5] = {
 
 static void IRAM_ATTR gpio_isr_handler(void* arg) {
     btn_state_t* btn = (btn_state_t*) arg;
-    uint32_t now = esp_timer_get_time() / 1000; // ms
+    const uint32_t now = esp_timer_get_time() / 1000;
     
-    // Simple 30ms Debounce
-    if (now - btn->last_isr_time > 30) {
+    if (now - btn->last_isr_time > DEBOUNCE_MS) {
         btn->last_isr_time = now;
         
-        // falling edge -> press
-        if (gpio_get_level(btn->pin) == 0) {
+        if (hal_gpio_get_level(btn->pin) == 0) {
             BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-            input_event_t ev = btn->event;
+            const input_event_t ev = btn->event;
             xQueueSendFromISR(s_input_queue, &ev, &xHigherPriorityTaskWoken);
             if (xHigherPriorityTaskWoken) {
                 portYIELD_FROM_ISR();
@@ -47,31 +48,25 @@ static void IRAM_ATTR gpio_isr_handler(void* arg) {
 }
 
 void input_mgr_init(void) {
-    ESP_LOGI(TAG, "Initializing Input Manager (5 Buttons, ISR-based)");
+    ESP_LOGI(TAG, "Initializing Input Manager (HAL-based, ISR-driven)");
 
-    s_input_queue = xQueueCreate(10, sizeof(input_event_t));
+    s_input_queue = xQueueCreate(INPUT_QUEUE_SIZE, sizeof(input_event_t));
+    if (!s_input_queue) {
+        ESP_LOGE(TAG, "Failed to create input queue");
+        return;
+    }
 
-    uint64_t pin_mask = (1ULL << LAUNCHER_PIN_UP) | (1ULL << LAUNCHER_PIN_DOWN) | 
-                        (1ULL << LAUNCHER_PIN_LEFT) | (1ULL << LAUNCHER_PIN_RIGHT) | 
-                        (1ULL << LAUNCHER_PIN_SELECT);
-
-    gpio_config_t io_conf = {
-        .pin_bit_mask = pin_mask,
-        .mode         = GPIO_MODE_INPUT,
-        .pull_up_en   = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type    = GPIO_INTR_NEGEDGE // trigger on press
-    };
-    gpio_config(&io_conf);
-
-    // Install ISR service if not already installed
-    esp_err_t err = gpio_install_isr_service(0);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-        ESP_LOGE(TAG, "gpio_install_isr_service failed: %s", esp_err_to_name(err));
+    esp_err_t err = hal_gpio_install_isr_service();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "HAL GPIO ISR service failed: %s", esp_err_to_name(err));
+        return;
     }
 
     for (int i = 0; i < 5; i++) {
-        gpio_isr_handler_add(s_buttons[i].pin, gpio_isr_handler, (void*)&s_buttons[i]);
+        err = hal_gpio_add_isr_handler(s_buttons[i].pin, gpio_isr_handler, (void*)&s_buttons[i]);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to add ISR for pin %d: %s", s_buttons[i].pin, esp_err_to_name(err));
+        }
     }
 }
 

@@ -35,12 +35,14 @@ extern "C" {
 #define INP_JOYPAD0 0x0001
 
 // ─── Mappers supported by this build of Nofrendo ─────────────────────────
-// Keep in sync with mmclist.c
+// Keep in sync with mmclist.c and actual map*.c files in components/nofrendo/
 static const int s_supported_mappers[] = {
-    0, 1, 2, 3, 4, 5, 7, 8, 9, 11,
-    15, 16, 18, 19, 21, 22, 23, 24, 25,
-    32, 33, 34, 40, 64, 65, 66, 70,
-    75, 78, 79, 85, 94, 99, 231,
+    0, 1, 2, 3, 4, 5, 7, 8, 9, 10, 11,
+    15, 16, 18, 19, 24,
+    32, 33, 34, 40, 41, 42, 46, 50,
+    64, 65, 66, 70, 73, 75, 78, 79,
+    85, 87, 93, 94, 99,
+    160, 229, 231,
     -1  // sentinel
 };
 
@@ -96,9 +98,9 @@ static void _emu_task_func(void* arg) {
 
 // ─── Constructor / Destructor ─────────────────────────────────────────────
 App_NES::App_NES()
-    : _front_buffer(nullptr), _back_buffer(nullptr),
+    : _emu_task_done(false),
+      _front_buffer(nullptr), _back_buffer(nullptr),
       _emu_task(nullptr), _buffer_mutex(nullptr),
-      _emu_task_done(false),
       _nes_buttons(0), _select_held(false), _select_held_since(0),
       _exit_pending(false), _exit_prompt_shown_at(0)
 {
