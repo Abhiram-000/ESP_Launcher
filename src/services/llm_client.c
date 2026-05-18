@@ -8,6 +8,7 @@
 #include "../config/sys_config.h"
 #include "wifi_mgr.h"
 #include "esp_http_client.h"
+#include "esp_crt_bundle.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "nvs.h"
@@ -59,11 +60,19 @@ bool llm_client_set_api_key(const char* key) {
 
 bool llm_client_get_api_key(char* out, size_t max_len) {
     nvs_handle_t h;
-    if (nvs_open(AI_NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) return false;
-    size_t len = max_len;
-    bool ok = nvs_get_str(h, AI_NVS_KEY_APIKEY, out, &len) == ESP_OK;
-    nvs_close(h);
-    return ok;
+    if (nvs_open(AI_NVS_NAMESPACE, NVS_READONLY, &h) == ESP_OK) {
+        size_t len = max_len;
+        bool ok = nvs_get_str(h, AI_NVS_KEY_APIKEY, out, &len) == ESP_OK;
+        nvs_close(h);
+        if (ok && out[0] != '\0') return true;
+    }
+    
+    if (s_api_key[0] != '\0') {
+        strncpy(out, s_api_key, max_len - 1);
+        out[max_len - 1] = '\0';
+        return true;
+    }
+    return false;
 }
 
 /* ── History management ─────────────────────────────────────────────────── */
@@ -93,11 +102,30 @@ static void _trim_history(void) {
     heap_caps_free(buf);
 }
 
+static char* _escape_json(const char* input) {
+    if (!input) return NULL;
+    size_t len = strlen(input);
+    char* esc = (char*)heap_caps_malloc(len * 2 + 1, MALLOC_CAP_SPIRAM);
+    if (!esc) return NULL;
+    size_t j = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (input[i] == '"' || input[i] == '\\') esc[j++] = '\\';
+        if (input[i] == '\n') { esc[j++] = '\\'; esc[j++] = 'n'; }
+        else esc[j++] = input[i];
+    }
+    esc[j] = '\0';
+    return esc;
+}
+
 static void _append_history(const char* role, const char* content) {
+    char* esc = _escape_json(content);
+    if (!esc) return;
     FILE* f = fopen(AI_HISTORY_PATH, "a");
-    if (!f) return;
-    fprintf(f, "{\"role\":\"%s\",\"content\":\"%s\"}\n", role, content);
-    fclose(f);
+    if (f) {
+        fprintf(f, "{\"role\":\"%s\",\"content\":\"%s\"}\n", role, esc);
+        fclose(f);
+    }
+    heap_caps_free(esc);
     _trim_history();
 }
 
@@ -105,17 +133,12 @@ void llm_client_clear_history(void) { remove(AI_HISTORY_PATH); }
 
 void llm_client_commit_reply(const char* reply, size_t len) {
     if (!reply || len == 0) return;
-    char* esc = (char*)heap_caps_malloc(len * 2 + 1, MALLOC_CAP_SPIRAM);
-    if (!esc) return;
-    size_t j = 0;
-    for (size_t i = 0; i < len; i++) {
-        if (reply[i] == '"' || reply[i] == '\\') esc[j++] = '\\';
-        if (reply[i] == '\n') { esc[j++] = '\\'; esc[j++] = 'n'; }
-        else esc[j++] = reply[i];
-    }
-    esc[j] = '\0';
-    _append_history("assistant", esc);
-    heap_caps_free(esc);
+    char* temp = (char*)heap_caps_malloc(len + 1, MALLOC_CAP_SPIRAM);
+    if (!temp) return;
+    memcpy(temp, reply, len);
+    temp[len] = '\0';
+    _append_history("assistant", temp);
+    heap_caps_free(temp);
 }
 
 /* ── Build conversation JSON from history + new message ────────────────── */
@@ -128,15 +151,30 @@ static char* _build_payload(const char* user_msg) {
         s_model, AI_LLM_MAX_TOKENS);
 
     /* Load system prompt */
-    char sysprompt[512] = "You are an AI on an ESP32-S3 handheld. "
-        "Write Lua 5.4 scripts using: sys, gpio, i2c, uart, spi, adc, pwm, fs, net APIs.";
+    char sysprompt[1024] = "You are a helpful AI assistant on an ESP32-S3 handheld. "
+        "Your responses MUST be extremely concise, brief, and under 150 characters total. Keep explanations minimal. "
+        "For coding tasks, write clean, self-contained Lua 5.4 scripts using the available hardware libraries: "
+        "sys (sleep(ms), time(), heap(), reboot()), "
+        "gpio (mode(pin,mode), write(pin,val), read(pin), toggle(pin)), "
+        "i2c (write, read), uart, spi, "
+        "adc (read(pin)), pwm (setup, set), "
+        "fs (list(), read(file), write(file,data), delete(file)), "
+        "net (wifi_connect(ssid,pass), is_connected(), http_get(url)). "
+        "Always return ready-to-run Lua code without generic explanations.";
     FILE* fp = fopen(AI_SYSPROMPT_PATH, "r");
     if (fp) { fread(sysprompt, 1, sizeof(sysprompt) - 1, fp); fclose(fp); }
 
     char* payload = (char*)heap_caps_malloc(AI_CONTEXT_MAX_CHARS + 2048, MALLOC_CAP_SPIRAM);
     if (!payload) return NULL;
     int pos = 0;
-    pos += snprintf(payload + pos, 2048, "%s{\"role\":\"system\",\"content\":\"%s\"},", header, sysprompt);
+    
+    char* esc_sys = _escape_json(sysprompt);
+    if (esc_sys) {
+        pos += snprintf(payload + pos, 2048, "%s{\"role\":\"system\",\"content\":\"%s\"},", header, esc_sys);
+        heap_caps_free(esc_sys);
+    } else {
+        pos += snprintf(payload + pos, 2048, "%s{\"role\":\"system\",\"content\":\"%s\"},", header, sysprompt);
+    }
 
     /* Append history */
     FILE* hist = fopen(AI_HISTORY_PATH, "r");
@@ -145,13 +183,23 @@ static char* _build_payload(const char* user_msg) {
         while (fgets(line, sizeof(line), hist)) {
             int l = strlen(line);
             if (line[l-1] == '\n') line[l-1] = '\0';
+            l = strlen(line);
+            if (l < 5 || line[0] != '{' || line[l-1] != '}') {
+                continue; // Skip malformed or empty history lines
+            }
             pos += snprintf(payload + pos, AI_CONTEXT_MAX_CHARS - pos, "%s,", line);
         }
         fclose(hist);
     }
 
     /* Current user message */
-    pos += snprintf(payload + pos, 512, "{\"role\":\"user\",\"content\":\"%s\"}]}", user_msg);
+    char* esc_user = _escape_json(user_msg);
+    if (esc_user) {
+        pos += snprintf(payload + pos, 1024, "{\"role\":\"user\",\"content\":\"%s\"}]}", esc_user);
+        heap_caps_free(esc_user);
+    } else {
+        pos += snprintf(payload + pos, 512, "{\"role\":\"user\",\"content\":\"%s\"}]}", user_msg);
+    }
     return payload;
 }
 
@@ -236,6 +284,7 @@ llm_err_t llm_client_send(const char* user_msg, llm_chunk_cb_t on_chunk, void* u
         .user_data            = &ctx,
         .buffer_size_tx       = 4096,
         .buffer_size          = 1024,
+        .crt_bundle_attach    = esp_crt_bundle_attach,
     };
     esp_http_client_handle_t h = esp_http_client_init(&cfg);
     esp_http_client_set_header(h, "Content-Type", "application/json");

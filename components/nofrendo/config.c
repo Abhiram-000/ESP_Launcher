@@ -388,6 +388,6 @@ config_t config =
         read_string,
         write_int,
         write_string,
-        "/games/nes.cfg"   /* LittleFS path — replaces the old /sd/ path */
+        "/storage/games/nes.cfg"   /* LittleFS path — replaces the old /sd/ path */
     };
 

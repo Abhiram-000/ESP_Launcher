@@ -32,4 +32,12 @@ void theme_update(void);
 
 #ifdef __cplusplus
 }
+
+namespace lgfx {
+    inline namespace v1 {
+        class LGFX_Sprite;
+    }
+}
+void theme_draw_wallpaper(lgfx::v1::LGFX_Sprite* canvas, float time_offset);
+
 #endif

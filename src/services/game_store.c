@@ -70,6 +70,9 @@ static void _gs_ensure_dirs(void) {
     if (stat(GAME_STORE_MOUNT_POINT, &st) != 0) {
         mkdir(GAME_STORE_MOUNT_POINT, 0777);
     }
+    if (stat("/storage/games", &st) != 0) {
+        mkdir("/storage/games", 0777);
+    }
     if (stat(GAME_STORE_ROMS_DIR, &st) != 0) {
         mkdir(GAME_STORE_ROMS_DIR, 0777);
     }

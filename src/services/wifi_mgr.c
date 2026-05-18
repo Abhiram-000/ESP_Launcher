@@ -3,6 +3,7 @@
  * @brief Unified Wi_Fi Manager (AP + STA) for OTA and AI Code App.
  */
 #include "wifi_mgr.h"
+#include "dns_server.h"
 #include "esp_wifi.h"
 #include "esp_event.h"
 #include "esp_log.h"
@@ -20,6 +21,7 @@ static bool s_sta_connected = false;
 static char s_sta_ip[16] = "0.0.0.0";
 static char s_sta_ssid[33] = {0};
 static char s_sta_pass[65] = {0};
+static bool s_scan_done = false;
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                 int32_t event_id, void* event_data) {
@@ -44,6 +46,10 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                 s_sta_connected = false;
                 ESP_LOGI(TAG, "STA Disconnected");
                 sys_mgr_send_ui_msg(WIFI_STATE_DISCONNECTED, 0, 0, "WiFi Disconnected");
+                break;
+            case WIFI_EVENT_SCAN_DONE:
+                s_scan_done = true;
+                ESP_LOGI(TAG, "STA Scan Complete");
                 break;
             default:
                 break;
@@ -104,6 +110,9 @@ void wifi_mgr_init(void) {
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 
+    // Start Captive Portal DNS Server
+    dns_server_start();
+
     // Auto-reconnect from NVS
     nvs_handle_t h;
     if (nvs_open("wifi_creds", NVS_READONLY, &h) == ESP_OK) {
@@ -124,8 +133,13 @@ void wifi_mgr_init(void) {
 }
 
 void wifi_mgr_scan_start(void) {
+    s_scan_done = false;
     wifi_scan_config_t scan_config = { .show_hidden = false };
     esp_wifi_scan_start(&scan_config, false);
+}
+
+bool wifi_mgr_is_scan_done(void) {
+    return s_scan_done;
 }
 
 int wifi_mgr_get_scan_results(wifi_scan_info_t* results, int max_results) {

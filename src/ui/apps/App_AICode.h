@@ -47,6 +47,8 @@ public:
         WIFI_CONNECTING,  /* Attempting connection                       */
         API_KEY_ENTRY,    /* Enter / update OpenAI API key               */
         MAIN_MENU,        /* Top-level: Chat / IDE / Scripts / Settings  */
+        CHAT_SELECT,      /* Select: Inbuilt Keyboard / From Phone       */
+        CHAT_PHONE,       /* Info panel for Phone Chat                   */
         CHAT,             /* Chat view — streamed LLM response           */
         CHAT_INPUT,       /* Virtual keyboard for chat message           */
         IDE_EDITOR,       /* Lua script editor                          */
@@ -76,6 +78,7 @@ public:
     static const char* MENU_LABELS[MENU_ITEMS];
 
     /* ── Chat view ───────────────────────────────────────────────────── */
+    int         _chat_select_sel;      /* Choice index (Inbuilt / Phone)   */
     std::string _chat_input;           /* Being typed by user              */
     std::string _chat_display;         /* Scrolling display buffer         */
     volatile bool _llm_busy;
@@ -113,6 +116,8 @@ public:
     void draw_wifi_connecting(LGFX_Sprite* c);
     void draw_api_key_entry(LGFX_Sprite* c);
     void draw_main_menu(LGFX_Sprite* c);
+    void draw_chat_select(LGFX_Sprite* c);
+    void draw_chat_phone(LGFX_Sprite* c);
     void draw_chat(LGFX_Sprite* c);
     void draw_ide(LGFX_Sprite* c);
     void draw_script_list(LGFX_Sprite* c);

@@ -34,26 +34,59 @@ void App_AICode::draw_header(LGFX_Sprite* c, const char* title) {
 }
 
 // ─── Virtual keyboard (shared for Chat, IDE, API key) ────────────────────
-static const char* KB_ROWS[] = { "1234567890", "qwertyuiop", "asdfghjkl.", "[zxcvbnm<", "S>" };
-static const char* KB_SYM[]  = { "!@#$%^&*()", "QWERTYUIOP", "ASDFGHJKL_", "[ZXCVBNM<", "S>" };
+static const char* KB_ROWS[] = { "1234567890", "qwertyuiop", "asdfghjkl.", "[zxcvbnm<", "S>C" };
+static const char* KB_SYM[]  = { "!@#$%^&*()", "QWERTYUIOP", "ASDFGHJKL_", "[ZXCVBNM<", "S>C" };
 
-void App_AICode::draw_keyboard(LGFX_Sprite* c, std::string& /*target*/, bool /*allow_newline*/) {
+void App_AICode::draw_keyboard(LGFX_Sprite* c, std::string& target, bool allow_newline) {
     int W = c->width(), kh = 14, ky = c->height() - 5 * (kh + 2) - 4;
+
+    if (_screen == Screen::CHAT_INPUT || _screen == Screen::IDE_KEYBOARD) {
+        int py = ky - 16;
+        c->fillRect(4, py, W - 8, 14, blend(theme_get_accent(), theme_get_bg(), 0.08f));
+        c->drawRect(4, py, W - 8, 14, theme_get_accent());
+        
+        std::string preview = target;
+        if (preview.empty()) {
+            c->setFont(&fonts::Font0);
+            c->setTextColor(theme_get_text_dim());
+            c->setTextDatum(textdatum_t::middle_left);
+            c->drawString("Type here...", 8, py + 7);
+        } else {
+            if (preview.length() > 18) {
+                preview = "..." + preview.substr(preview.length() - 15);
+            }
+            if ((uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS) % 1000 < 500) {
+                preview += "|";
+            }
+            c->setFont(&fonts::Font0);
+            c->setTextColor(theme_get_text());
+            c->setTextDatum(textdatum_t::middle_left);
+            c->drawString(preview.c_str(), 8, py + 7);
+        }
+    }
+
     const char** layout = _kb_sym ? KB_SYM : KB_ROWS;
     for (int r = 0; r < 5; r++) {
         int rl = strlen(layout[r]);
-        int kw = (r == 4) ? (r == 4 && rl == 2 ? (W-16)/2 : 14) : (W - 8) / rl - 1;
+        int kw = (W - 8) / rl - 1;
         for (int col = 0; col < rl; col++) {
-            int kx = (r == 4) ? (4 + col * ((W-8)/2 + 1)) : (4 + col * (kw + 1));
+            int kx, w;
+            if (r == 4) {
+                w = (W - 12) / 3;
+                kx = 4 + col * (w + 2);
+            } else {
+                w = kw;
+                kx = 4 + col * (w + 1);
+            }
             bool sel = (r == _kb_row && col == _kb_col);
             uint16_t bg = sel ? theme_get_accent() : blend(theme_get_text_dim(), theme_get_bg(), 0.2f);
             uint16_t fg = sel ? theme_get_bg() : theme_get_text();
-            int w = (r == 4) ? (W-10)/2 : kw;
             c->fillRoundRect(kx, ky + r*(kh+2), w, kh, 2, bg);
             c->setTextDatum(textdatum_t::middle_center); c->setTextColor(fg);
             char lbl[8] = { layout[r][col], 0 };
             if (lbl[0] == 'S') strcpy(lbl, "SPC");
             if (lbl[0] == '>') strcpy(lbl, "ENT");
+            if (lbl[0] == 'C') strcpy(lbl, "CAN");
             if (lbl[0] == '<') strcpy(lbl, "DEL");
             if (lbl[0] == '[') strcpy(lbl, _kb_caps ? "CAP*" : "CAP");
             c->drawString(lbl, kx + w/2, ky + r*(kh+2) + kh/2);
@@ -70,6 +103,13 @@ void App_AICode::handle_keyboard_input(input_event_t ev, std::string& target, bo
     if (ev == BTN_RIGHT) { if (_kb_col < rl - 1) _kb_col++; }
     if (ev == BTN_SELECT) {
         char k = layout[_kb_row][_kb_col];
+        if (k == 'C') {
+            if (_screen == Screen::WIFI_PASSWORD) _screen = Screen::WIFI_PICK;
+            else if (_screen == Screen::API_KEY_ENTRY) _screen = Screen::MAIN_MENU;
+            else if (_screen == Screen::CHAT_INPUT) _screen = Screen::CHAT;
+            else if (_screen == Screen::IDE_KEYBOARD) _screen = Screen::IDE_EDITOR;
+            return;
+        }
         if (k == '<') { if (!target.empty()) target.pop_back(); }
         else if (k == 'S') target += ' ';
         else if (k == '>' && allow_newline) target += '\n';
@@ -129,15 +169,32 @@ void App_AICode::draw_wifi_scan(LGFX_Sprite* c) {
 
 void App_AICode::draw_wifi_pick(LGFX_Sprite* c) {
     draw_header(c, "SELECT NETWORK");
-    int y = 20, h = 16;
-    for (int i = 0; i < (int)_networks.size() && y < c->height() - 4; i++, y += h) {
+    int item_h = 16;
+    int max_visible = (c->height() - 24) / item_h;
+    if (max_visible <= 0) max_visible = 1;
+
+    int start_idx = 0;
+    if (_net_sel >= max_visible) {
+        start_idx = _net_sel - max_visible + 1;
+    }
+
+    int y = 20;
+    for (int i = start_idx; i < (int)_networks.size() && i < start_idx + max_visible; i++) {
         bool sel = i == _net_sel;
-        if (sel) c->fillRoundRect(4, y, c->width()-8, h-2, 3, blend(theme_get_accent(), theme_get_bg(), 0.25f));
+        if (sel) c->fillRoundRect(4, y, c->width()-8, item_h-2, 3, blend(theme_get_accent(), theme_get_bg(), 0.25f));
         c->setTextColor(sel ? theme_get_text() : theme_get_text_dim());
         c->setTextDatum(textdatum_t::middle_left);
-        c->drawString(_networks[i].ssid, 10, y + h/2 - 1);
+        
+        // Truncate SSID to fit comfortably on small screens without overlapping the RSSI dot
+        char ssid_truncated[16];
+        strncpy(ssid_truncated, _networks[i].ssid, sizeof(ssid_truncated)-1);
+        ssid_truncated[sizeof(ssid_truncated)-1] = '\0';
+        
+        c->drawString(ssid_truncated, 10, y + item_h/2 - 1);
+        
         uint16_t rssi_c = _networks[i].rssi > -60 ? theme_get_success() : theme_get_text_dim();
-        c->fillCircle(c->width() - 12, y + h/2 - 1, 3, rssi_c);
+        c->fillCircle(c->width() - 12, y + item_h/2 - 1, 3, rssi_c);
+        y += item_h;
     }
 }
 
@@ -190,6 +247,73 @@ void App_AICode::draw_main_menu(LGFX_Sprite* c) {
     c->setTextDatum(textdatum_t::bottom_left);
     c->setTextColor(theme_get_text_dim());
     c->drawString("L=Launcher", 4, c->height()-2);
+}
+
+void App_AICode::draw_chat_select(LGFX_Sprite* c) {
+    draw_header(c, "SELECT INPUT");
+    int W = c->width();
+    int cy = 30, h = 34;
+    const char* options[] = {"Inbuilt Keyboard", "From Phone"};
+    const char* subs[] = {"Type on device", "Connect via WiFi"};
+
+    for (int i = 0; i < 2; i++) {
+        bool sel = i == _chat_select_sel;
+        int y = cy + i * (h + 8);
+        if (sel) {
+            float pulse = 0.5f + 0.5f * sinf(_anim * 4.0f);
+            c->fillRoundRect(8, y, W-16, h, 6,
+                blend(theme_get_accent(), theme_get_bg(), 0.3f * pulse + 0.2f));
+            c->drawRoundRect(8, y, W-16, h, 6, theme_get_accent());
+        } else {
+            c->fillRoundRect(8, y, W-16, h, 6, blend(theme_get_text_dim(), theme_get_bg(), 0.1f));
+            c->drawRoundRect(8, y, W-16, h, 6, theme_get_text_dim());
+        }
+
+        c->setFont(&fonts::Font0);
+        c->setTextDatum(textdatum_t::top_left);
+        c->setTextColor(sel ? theme_get_text() : theme_get_text_dim());
+        c->drawString(options[i], 16, y + 4);
+
+        c->setTextColor(theme_get_text_dim());
+        c->drawString(subs[i], 16, y + 18);
+    }
+    c->setTextDatum(textdatum_t::bottom_center);
+    c->drawString("SELECT=Confirm  L=Back", W/2, c->height()-2);
+}
+
+void App_AICode::draw_chat_phone(LGFX_Sprite* c) {
+    draw_header(c, "PHONE CHAT");
+    int W = c->width();
+
+    c->setFont(&fonts::Font0);
+    c->setTextColor(theme_get_text());
+    c->setTextDatum(textdatum_t::top_left);
+
+    c->drawString("Connect your phone to:", 8, 20);
+
+    // Neon AP card
+    c->fillRoundRect(6, 32, W-12, 22, 4, blend(theme_get_accent(), theme_get_bg(), 0.15f));
+    c->drawRoundRect(6, 32, W-12, 22, 4, theme_get_accent());
+    c->setTextColor(theme_get_accent());
+    c->drawString(APP_WIFI_SSID, 12, 38);
+
+    c->setTextColor(theme_get_text());
+    c->drawString("Then open browser at:", 8, 60);
+
+    // Neon IP card
+    c->fillRoundRect(6, 72, W-12, 22, 4, blend(theme_get_accent(), theme_get_bg(), 0.15f));
+    c->drawRoundRect(6, 72, W-12, 22, 4, theme_get_accent());
+    c->setTextColor(theme_get_accent());
+    c->drawString("http://192.168.4.1/chat", 12, 78);
+
+    // Status pulse
+    float pulse = 0.6f + 0.4f * sinf(_anim * 5.0f);
+    c->fillCircle(12, 108, 4, blend(theme_get_success(), theme_get_bg(), pulse));
+    c->setTextColor(theme_get_text_dim());
+    c->drawString("Hosting local portal...", 22, 104);
+
+    c->setTextDatum(textdatum_t::bottom_center);
+    c->drawString("SELECT=Back", W/2, c->height()-2);
 }
 
 void App_AICode::draw_chat(LGFX_Sprite* c) {
@@ -324,7 +448,6 @@ void App_AICode::handle_wifi_pick_input(input_event_t ev) {
 }
 
 void App_AICode::handle_chat_input(input_event_t ev) {
-    if (ev == BTN_LEFT) { _screen = Screen::CHAT; return; }
     const char** layout = _kb_sym ? KB_SYM : KB_ROWS;
     handle_keyboard_input(ev, _chat_input, false);
     // ENTER key = send message
@@ -337,7 +460,6 @@ void App_AICode::handle_chat_input(input_event_t ev) {
 }
 
 void App_AICode::handle_ide_input(input_event_t ev) {
-    if (ev == BTN_LEFT) { _screen = Screen::IDE_EDITOR; return; }
     size_t before = _ide_buf.size();
     handle_keyboard_input(ev, _ide_buf, true);
     if (_ide_buf.size() != before) { _ide_dirty = true; }

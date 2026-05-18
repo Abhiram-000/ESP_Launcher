@@ -110,19 +110,7 @@ void App_Grid::handleInput(input_event_t event) {
 
 void App_Grid::render(LGFX_Sprite* canvas) {
     const uint16_t bg = theme_get_bg();
-    canvas->fillSprite(bg);
-
-    const uint16_t dot_color = theme_get_text_dim();
-    const uint16_t dr = ((dot_color >> 11) & 0x1F) / 2;
-    const uint16_t dg = ((dot_color >> 5) & 0x3F) / 2;
-    const uint16_t db = (dot_color & 0x1F) / 2;
-    const uint16_t dim_dot = (dr << 11) | (dg << 5) | db;
-    
-    for (int y = 8; y < canvas->height(); y += 16) {
-        for (int x = 8; x < canvas->width(); x += 16) {
-            canvas->drawPixel(x, y, dim_dot);
-        }
-    }
+    theme_draw_wallpaper(canvas, anim_time);
 
     if (app_count == 0) {
         canvas->setTextColor(theme_get_text_dim());

@@ -34,6 +34,11 @@ void wifi_mgr_scan_start(void);
 int wifi_mgr_get_scan_results(wifi_scan_info_t* results, int max_results);
 
 /**
+ * @brief Check if the Wi-Fi scan is complete.
+ */
+bool wifi_mgr_is_scan_done(void);
+
+/**
  * @brief Attempt to connect to a specific AP.
  */
 void wifi_mgr_connect(const char* ssid, const char* password);

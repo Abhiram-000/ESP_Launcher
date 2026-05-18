@@ -55,9 +55,9 @@ extern "C" {
  * Game Store — Cloud ROM Downloader
  * -------------------------------------------------------------------------- */
 #define GAME_STORE_PARTITION_LABEL  "games"
-#define GAME_STORE_MOUNT_POINT      "/games"
-#define GAME_STORE_ROMS_DIR         "/games/roms"
-#define GAME_STORE_CATALOG_LOCAL    "/games/catalog.json"
+#define GAME_STORE_MOUNT_POINT      "/storage"
+#define GAME_STORE_ROMS_DIR         "/storage/games/roms"
+#define GAME_STORE_CATALOG_LOCAL    "/storage/games/catalog.json"
 #define GAME_STORE_CLOUD_CATALOG_URL \
     "https://abhi1144.github.io/ESP32_Custom_Launcher/catalog.json"
 
@@ -98,11 +98,11 @@ extern "C" {
  * -------------------------------------------------------------------------- */
 
 /* LittleFS directory layout */
-#define AI_BASE_DIR             "/games/ai"
-#define AI_SCRIPTS_DIR          "/games/ai/scripts"
-#define AI_CONFIG_PATH          "/games/ai/config.json"
-#define AI_HISTORY_PATH         "/games/ai/history.jsonl"
-#define AI_SYSPROMPT_PATH       "/games/ai/sys_prompt.txt"
+#define AI_BASE_DIR             "/storage/ai"
+#define AI_SCRIPTS_DIR          "/storage/ai/scripts"
+#define AI_CONFIG_PATH          "/storage/ai/config.json"
+#define AI_HISTORY_PATH         "/storage/ai/history.jsonl"
+#define AI_SYSPROMPT_PATH       "/storage/ai/sys_prompt.txt"
 
 /* NVS namespace for sensitive config (API keys stored separately from LittleFS) */
 #define AI_NVS_NAMESPACE        "ai_cfg"

@@ -61,27 +61,41 @@ static App_GameStore app_gamestore;
 
 static IApp* current_app = nullptr;
 
-// ─── Slide transition ──────────────────────────────────────────────────────
-// Renders a smooth horizontal slide between two app frames.
-// old_snap: left sprite (the app we are leaving) — slides out left.
-// new_snap: right sprite (the app arriving)      — slides in from right.
-// Duration: SLIDE_FRAMES × 25 ms ≈ 10 × 25 ms = 250 ms at 40 FPS.
 static void _run_slide_transition(LGFX_Sprite* old_snap, LGFX_Sprite* new_snap) {
-    const int SLIDE_FRAMES = 10;
+    const int SLIDE_FRAMES = 15;
     const int W = tft.width();
 
     for (int i = 1; i <= SLIDE_FRAMES; i++) {
-        // Quadratic ease-out: t goes 0→1, offset goes 0→W
-        float t      = (float)i / (float)SLIDE_FRAMES;
-        float eased  = t * (2.0f - t);          // ease-out quad
-        int   offset = (int)(eased * (float)W);
+        float t = (float)i / (float)SLIDE_FRAMES;
+        
+        // Cubic ease-out: f(t) = 1 - (1-t)^3
+        float inv = 1.0f - t;
+        float eased = 1.0f - (inv * inv * inv);
+        
+        int offset = (int)(eased * (float)W);
 
-        // Draw old frame sliding left
-        old_snap->pushSprite(&tft, -offset, -4);
-        // Draw new frame entering from the right
-        new_snap->pushSprite(&tft, W - offset, -4);
+        // Clear canvas with black first to ensure no ghosting in edges
+        canvas.fillSprite(tft.color565(0, 0, 0));
 
-        vTaskDelay(pdMS_TO_TICKS(25));
+        // Parallax effect: old frame slides out at half speed drawn onto canvas (0-based Y offset)
+        int old_x = -(offset / 2);
+        old_snap->pushSprite(&canvas, old_x, 0);
+        
+        // Subtle edge shadow/separator drawn onto canvas
+        if (offset < W && W - offset > 0) {
+            canvas.drawFastVLine(W - offset - 1, 0, canvas.height(), canvas.color565(30, 30, 30));
+            if (W - offset > 1) {
+                canvas.drawFastVLine(W - offset - 2, 0, canvas.height(), canvas.color565(15, 15, 15));
+            }
+        }
+
+        // Draw new frame sliding in over the old one onto canvas (0-based Y offset)
+        new_snap->pushSprite(&canvas, W - offset, 0);
+
+        // Push the completely rendered composite canvas frame to physical display at -4 Y offset
+        canvas.pushSprite(&tft, 0, -4);
+
+        vTaskDelay(pdMS_TO_TICKS(20)); // ~50fps logic update
     }
 }
 

@@ -10,6 +10,9 @@ extern void switch_to_grid();
 
 App_Settings::App_Settings() {
     current_state = STATE_MENU;
+    previous_state = STATE_MENU;
+    is_transitioning = false;
+    transition_progress = 0.0f;
     menu_cursor = 0;
     theme_cursor = 0;
     temp_brightness = 255;
@@ -23,6 +26,10 @@ App_Settings::~App_Settings() {}
 
 void App_Settings::init() {
     current_state = STATE_MENU;
+    previous_state = STATE_MENU;
+    is_transitioning = false;
+    transition_progress = 0.0f;
+    
     menu_cursor = 0;
     theme_cursor = theme_get_current();
     temp_brightness = ui_get_brightness();
@@ -43,9 +50,26 @@ void App_Settings::loop() {
     if (current_state == STATE_SYS_INFO) {
         free_heap = esp_get_free_heap_size(); 
     }
+    
+    if (is_transitioning) {
+        transition_progress += 0.08f; // ~12 frames
+        if (transition_progress >= 1.0f) {
+            transition_progress = 1.0f;
+            is_transitioning = false;
+        }
+    }
+}
+
+void App_Settings::_change_state(State new_state) {
+    previous_state = current_state;
+    current_state = new_state;
+    is_transitioning = true;
+    transition_progress = 0.0f;
 }
 
 void App_Settings::handleInput(input_event_t event) {
+    if (is_transitioning) return; // Block input during animation
+
     if (current_state == STATE_MENU) {
         if (event == BTN_UP) {
             if (menu_cursor > 0) menu_cursor--;
@@ -54,14 +78,14 @@ void App_Settings::handleInput(input_event_t event) {
         } else if (event == BTN_LEFT) {
             switch_to_grid(); // Exit Settings
         } else if (event == BTN_SELECT || event == BTN_RIGHT) {
-            if (menu_cursor == 0) current_state = STATE_SYS_INFO;
-            else if (menu_cursor == 1) current_state = STATE_THEMES;
-            else if (menu_cursor == 2) current_state = STATE_BRIGHTNESS;
+            if (menu_cursor == 0) _change_state(STATE_SYS_INFO);
+            else if (menu_cursor == 1) _change_state(STATE_THEMES);
+            else if (menu_cursor == 2) _change_state(STATE_BRIGHTNESS);
         }
     } 
     else if (current_state == STATE_SYS_INFO) {
         if (event == BTN_LEFT || event == BTN_SELECT) {
-            current_state = STATE_MENU;
+            _change_state(STATE_MENU);
         }
     } 
     else if (current_state == STATE_THEMES) {
@@ -72,7 +96,7 @@ void App_Settings::handleInput(input_event_t event) {
             if (theme_cursor < THEME_COUNT - 1) theme_cursor++;
             theme_set((theme_type_t)theme_cursor);
         } else if (event == BTN_SELECT) {
-            current_state = STATE_MENU;
+            _change_state(STATE_MENU);
         }
     }
     else if (current_state == STATE_BRIGHTNESS) {
@@ -85,7 +109,7 @@ void App_Settings::handleInput(input_event_t event) {
             if (temp_brightness < 10) temp_brightness = 10;
             ui_set_brightness((uint8_t)temp_brightness);
         } else if (event == BTN_SELECT) {
-            current_state = STATE_MENU;
+            _change_state(STATE_MENU);
         }
     }
 }
@@ -101,74 +125,56 @@ static uint16_t blend_color(uint16_t fg, uint16_t bg, float alpha) {
            (uint16_t)(b2 + (b1 - b2) * alpha);
 }
 
-void App_Settings::render(LGFX_Sprite* canvas) {
+void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_offset) {
+    int cx = canvas->width() / 2 + x_offset;
     uint16_t bg = theme_get_bg();
-    canvas->fillSprite(bg);
-
-    int cx = canvas->width() / 2;
-    int header_y = 20;
-
-    // --- Premium Marvellous Cyber Header Elements ---
-    // Dynamic pulsing rings inspired by the OTA theme
     uint16_t accent = theme_get_accent();
-    float pulse = 12.0f + 2.5f * sinf(anim_time * 2.0f);
     
-    // Outer neon glow ring
-    canvas->drawArc(cx, header_y, (int)pulse + 4, (int)pulse + 2, 0, 360, blend_color(accent, bg, 0.4f));
-    canvas->drawArc(cx, header_y, (int)pulse + 2, (int)pulse, 0, 360, accent);
-    
-    // Inner spinner
-    float spin_angle = anim_time * 60.0f; // degrees
-    canvas->drawArc(cx, header_y, (int)pulse - 2, (int)pulse - 4, (int)spin_angle, (int)spin_angle + 120, theme_get_text());
-    canvas->drawArc(cx, header_y, (int)pulse - 2, (int)pulse - 4, (int)spin_angle + 180, (int)spin_angle + 300, theme_get_text());
-
-    // Center core
-    canvas->fillCircle(cx, header_y, 4, blend_color(accent, bg, 0.6f + 0.4f * sinf(anim_time * 3.0f)));
-
-    int list_y = 45;
+    int list_y = 35; // Moved up slightly to give more room
     canvas->setFont(&fonts::Font0); // 6x8
-    canvas->setTextDatum(textdatum_t::top_center);
-
-    if (current_state == STATE_MENU) {
-        canvas->setTextColor(theme_get_text_dim());
-        canvas->drawString("- SETTINGS -", cx, list_y);
-        list_y += 20;
-        
-        canvas->setTextDatum(textdatum_t::middle_center);
+    
+    if (state == STATE_MENU) {
         const char* options[] = {"SYSTEM INFO", "THEME SETUP", "BRIGHTNESS"};
         
         for (int i = 0; i < 3; i++) {
-            int item_y = list_y + i * 22;
+            int item_y = list_y + i * 26;
+            
+            // Draw rounded card
             if (i == menu_cursor) {
-                // Professional selection highlight pill
-                canvas->fillRoundRect(10, item_y - 9, canvas->width()-20, 18, 9, blend_color(accent, bg, 0.2f));
-                canvas->drawRoundRect(10, item_y - 9, canvas->width()-20, 18, 9, accent);
+                float pulse = 0.8f + 0.2f * sinf(anim_time * 4.0f);
+                canvas->fillRoundRect(x_offset + 10, item_y, canvas->width()-20, 22, 6, blend_color(accent, bg, 0.2f));
+                canvas->drawRoundRect(x_offset + 10, item_y, canvas->width()-20, 22, 6, blend_color(accent, bg, pulse));
                 canvas->setTextColor(theme_get_text());
                 
-                // Left/Right selection bouncing indicators
-                int bounce = (int)(2.0f * sinf(anim_time * 4.0f));
-                canvas->drawString(">", 18 + bounce, item_y);
-                canvas->drawString("<", canvas->width() - 18 - bounce, item_y);
+                // Animated chevron
+                int bounce = (int)(2.0f * sinf(anim_time * 5.0f));
+                canvas->setTextDatum(textdatum_t::middle_right);
+                canvas->drawString(">", x_offset + canvas->width() - 15 + bounce, item_y + 11);
             } else {
+                canvas->fillRoundRect(x_offset + 10, item_y, canvas->width()-20, 22, 6, blend_color(theme_get_text_dim(), bg, 0.1f));
+                canvas->drawRoundRect(x_offset + 10, item_y, canvas->width()-20, 22, 6, blend_color(theme_get_text_dim(), bg, 0.3f));
                 canvas->setTextColor(theme_get_text_dim());
             }
-            canvas->drawString(options[i], cx, item_y);
+            
+            canvas->setTextDatum(textdatum_t::middle_left);
+            canvas->drawString(options[i], x_offset + 20, item_y + 11);
         }
         
-    } else if (current_state == STATE_SYS_INFO) {
+    } else if (state == STATE_SYS_INFO) {
         canvas->setTextColor(accent);
+        canvas->setTextDatum(textdatum_t::top_center);
         canvas->drawString("SYSTEM CORE", cx, list_y);
-        list_y += 15;
+        list_y += 12;
         
         esp_chip_info_t chip_info;
         esp_chip_info(&chip_info);
         
         char buf[32];
         canvas->setTextColor(theme_get_text());
-        canvas->setTextDatum(textdatum_t::top_center);
         
         // Premium grouped info box
-        canvas->drawRoundRect(8, list_y, canvas->width()-16, 68, 4, blend_color(accent, bg, 0.3f));
+        canvas->fillRoundRect(x_offset + 8, list_y, canvas->width()-16, 68, 6, blend_color(theme_get_text_dim(), bg, 0.05f));
+        canvas->drawRoundRect(x_offset + 8, list_y, canvas->width()-16, 68, 6, blend_color(accent, bg, 0.3f));
         
         list_y += 6;
         snprintf(buf, sizeof(buf), "CPU: ESP32-S%d", (chip_info.model == CHIP_ESP32S3) ? 3 : 2);
@@ -183,68 +189,117 @@ void App_Settings::render(LGFX_Sprite* canvas) {
         snprintf(buf, sizeof(buf), "OS: %s", idf_version);
         canvas->drawString(buf, cx, list_y); list_y += 14;
         
-    } else if (current_state == STATE_THEMES) {
+    } else if (state == STATE_THEMES) {
         canvas->setTextColor(accent);
+        canvas->setTextDatum(textdatum_t::top_center);
         canvas->drawString("ACTIVE THEME", cx, list_y);
         list_y += 20;
-        
-        canvas->setTextDatum(textdatum_t::middle_center);
         
         // Draw Left/Right carousel arrows
         int bounce = (int)(2.0f * sinf(anim_time * 4.0f));
         canvas->setTextColor(theme_get_text());
-        canvas->drawString("<", 15 - bounce, list_y + 8);
-        canvas->drawString(">", canvas->width() - 15 + bounce, list_y + 8);
+        canvas->setTextDatum(textdatum_t::middle_center);
+        canvas->drawString("<", x_offset + 15 - bounce, list_y + 10);
+        canvas->drawString(">", x_offset + canvas->width() - 15 + bounce, list_y + 10);
 
         // Highlight box for current selection
-        canvas->fillRoundRect(25, list_y - 2, canvas->width()-50, 20, 4, blend_color(accent, bg, 0.15f));
-        canvas->drawRoundRect(25, list_y - 2, canvas->width()-50, 20, 4, accent);
+        canvas->fillRoundRect(x_offset + 25, list_y, canvas->width()-50, 20, 6, blend_color(accent, bg, 0.15f));
+        canvas->drawRoundRect(x_offset + 25, list_y, canvas->width()-50, 20, 6, accent);
         
         canvas->setTextColor(theme_get_text());
-        canvas->drawString(theme_get_name((theme_type_t)theme_cursor), cx, list_y + 8);
+        canvas->drawString(theme_get_name((theme_type_t)theme_cursor), cx, list_y + 10);
         
-        list_y += 35;
+        list_y += 40;
         // Mini preview swatches
-        canvas->fillCircle(cx - 15, list_y, 6, theme_get_bg());
-        canvas->drawCircle(cx - 15, list_y, 6, theme_get_text_dim());
+        canvas->fillRoundRect(cx - 24, list_y - 8, 16, 16, 4, theme_get_bg());
+        canvas->drawRoundRect(cx - 24, list_y - 8, 16, 16, 4, theme_get_text_dim());
         
-        canvas->fillCircle(cx, list_y, 6, theme_get_accent());
+        canvas->fillRoundRect(cx - 4, list_y - 8, 16, 16, 4, theme_get_accent());
+        canvas->drawRoundRect(cx - 4, list_y - 8, 16, 16, 4, blend_color(theme_get_text(), theme_get_accent(), 0.2f));
         
-        canvas->fillCircle(cx + 15, list_y, 6, theme_get_text());
+        canvas->fillRoundRect(cx + 16, list_y - 8, 16, 16, 4, theme_get_text());
         
-    } else if (current_state == STATE_BRIGHTNESS) {
+    } else if (state == STATE_BRIGHTNESS) {
         canvas->setTextColor(accent);
+        canvas->setTextDatum(textdatum_t::top_center);
         canvas->drawString("DISPLAY LUMA", cx, list_y);
         list_y += 25;
         
-        int bar_w = 100;
-        int bar_h = 8;
+        int bar_w = 110;
+        int bar_h = 10;
         int bar_x = cx - bar_w / 2;
         int bar_y = list_y;
         
-        // Cyberpunk Track
-        canvas->drawRect(bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4, theme_get_text_dim());
+        // Beautiful slider track
+        canvas->fillRoundRect(bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4, 6, blend_color(theme_get_text_dim(), bg, 0.2f));
+        canvas->drawRoundRect(bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4, 6, blend_color(theme_get_text_dim(), bg, 0.5f));
         
         int fill_w = (temp_brightness * bar_w) / 255;
-        if (fill_w < 2) fill_w = 2;
+        if (fill_w < 4) fill_w = 4;
         
         // Glowing fill
-        canvas->fillRect(bar_x, bar_y, fill_w, bar_h, accent);
+        canvas->fillRoundRect(bar_x, bar_y, fill_w, bar_h, 4, accent);
         
         // L/R indicators
         int bounce = (int)(2.0f * sinf(anim_time * 4.0f));
         canvas->setTextColor(theme_get_text_dim());
         canvas->setTextDatum(textdatum_t::middle_center);
-        canvas->drawString("-", 10 - bounce/2, bar_y + 4);
-        canvas->drawString("+", canvas->width() - 10 + bounce/2, bar_y + 4);
+        canvas->drawString("-", x_offset + 10 - bounce/2, bar_y + 5);
+        canvas->drawString("+", x_offset + canvas->width() - 10 + bounce/2, bar_y + 5);
         
         char buf[16];
         snprintf(buf, sizeof(buf), "%d%%", (temp_brightness * 100) / 255);
         canvas->setTextColor(theme_get_text());
-        canvas->drawString(buf, cx, bar_y + 22);
+        canvas->drawString(buf, cx, bar_y + 24);
     }
+}
 
-    // Footer
+void App_Settings::render(LGFX_Sprite* canvas) {
+    uint16_t bg = theme_get_bg();
+    theme_draw_wallpaper(canvas, anim_time);
+
+    int cx = canvas->width() / 2;
+    int header_y = 12;
+
+    // --- Modern Header ---
+    uint16_t accent = theme_get_accent();
+    
+    canvas->setFont(&fonts::Font0);
+    canvas->setTextDatum(textdatum_t::middle_center);
+    canvas->setTextColor(theme_get_text());
+    canvas->drawString("DEVICE SETTINGS", cx, header_y);
+    
+    // Glowing separator line
+    float pulse = 0.5f + 0.5f * sinf(anim_time * 3.0f);
+    int line_w = 100 + (int)(20.0f * pulse);
+    canvas->drawFastHLine(cx - line_w/2, header_y + 10, line_w, blend_color(accent, bg, 0.8f));
+    canvas->drawFastHLine(cx - line_w/2 + 10, header_y + 11, line_w - 20, blend_color(accent, bg, 0.4f));
+
+    // --- Content Area with Transitions ---
+    // Create a clipping window so content doesn't overwrite the header or footer
+    canvas->setClipRect(0, 25, canvas->width(), canvas->height() - 40);
+
+    if (is_transitioning) {
+        float t = transition_progress;
+        // Cubic ease out
+        float inv = 1.0f - t;
+        float eased = 1.0f - (inv * inv * inv);
+        
+        int w = canvas->width();
+        bool going_back = (current_state == STATE_MENU);
+        
+        int prev_x = going_back ? (int)(eased * w) : (int)(-eased * w);
+        int curr_x = going_back ? (int)(-w + eased * w) : (int)(w - eased * w);
+        
+        _draw_state_content(canvas, previous_state, prev_x);
+        _draw_state_content(canvas, current_state, curr_x);
+    } else {
+        _draw_state_content(canvas, current_state, 0);
+    }
+    
+    canvas->clearClipRect();
+
+    // --- Footer ---
     canvas->setTextColor(blend_color(theme_get_text_dim(), bg, 0.5f));
     canvas->setTextDatum(textdatum_t::bottom_center);
     if(current_state == STATE_MENU) {

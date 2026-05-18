@@ -63,6 +63,11 @@ public:
     /* Abort a running script (called from another task via atomic flag) */
     void request_abort();
 
+    /* Captured log buffer for Web IDE console output */
+    void        clear_log_buffer();
+    void        append_log(const char* text);
+    const char* get_log_buffer();
+
     /* PSRAM custom allocator — also used by the lua component's -include */
     static void* psram_alloc(void* ud, void* ptr, size_t osize, size_t nsize);
 

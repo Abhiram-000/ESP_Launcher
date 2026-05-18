@@ -23,6 +23,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <string>
 
 static const char* TAG = "LuaEngine";
 
@@ -143,8 +144,22 @@ static int l_sys_millis(lua_State* L) {
 static int l_sys_free_heap(lua_State* L) {
     lua_pushnumber(L, (lua_Number)heap_caps_get_free_size(MALLOC_CAP_SPIRAM)); return 1;
 }
+static std::string s_log_buffer;
+
+void LuaEngine::clear_log_buffer() { s_log_buffer.clear(); }
+void LuaEngine::append_log(const char* text) {
+    if (s_log_buffer.size() + strlen(text) < 4096) {
+        s_log_buffer += text;
+        s_log_buffer += "\n";
+    }
+}
+const char* LuaEngine::get_log_buffer() { return s_log_buffer.c_str(); }
+
 static int l_sys_print(lua_State* L) {
-    ESP_LOGI("LUA", "%s", luaL_checkstring(L, 1)); return 0;
+    const char* msg = luaL_checkstring(L, 1);
+    ESP_LOGI("LUA", "%s", msg);
+    LuaEngine::instance().append_log(msg);
+    return 0;
 }
 
 void LuaEngine::_bind_sys(lua_State* L) {
@@ -156,4 +171,25 @@ void LuaEngine::_bind_sys(lua_State* L) {
         {nullptr, nullptr}
     };
     luaL_newlib(L, m); lua_setglobal(L, "sys");
+}
+
+extern "C" {
+    void lua_engine_clear_logs(void) {
+        LuaEngine::instance().clear_log_buffer();
+    }
+    void lua_engine_append_log(const char* text) {
+        LuaEngine::instance().append_log(text);
+    }
+    const char* lua_engine_get_logs(void) {
+        return LuaEngine::instance().get_log_buffer();
+    }
+    int lua_engine_run_file(const char* path, char* err_out, int max_err_len, uint32_t* elapsed_ms) {
+        lua_engine_result_t res = LuaEngine::instance().exec_file(path);
+        if (err_out) {
+            strncpy(err_out, res.error, max_err_len - 1);
+            err_out[max_err_len - 1] = '\0';
+        }
+        if (elapsed_ms) *elapsed_ms = res.elapsed_ms;
+        return (int)res.status;
+    }
 }

@@ -33,6 +33,7 @@ App_AICode::App_AICode()
     : _screen(Screen::WIFI_CHECK), _anim(0),
       _net_sel(0), _conn_start_ms(0),
       _menu_sel(0),
+      _chat_select_sel(0),
       _llm_busy(false), _llm_done(false),
       _ide_cursor(0), _ide_scroll_line(0), _ide_dirty(false),
       _script_sel(0),
@@ -48,6 +49,7 @@ void App_AICode::init() {
     _screen        = Screen::WIFI_CHECK;
     _anim          = 0;
     _menu_sel      = 0;
+    _chat_select_sel = 0;
     _llm_busy      = false;
     _llm_done      = false;
     _chat_display  = "";
@@ -82,11 +84,13 @@ void App_AICode::loop() {
     _anim += 0.05f;
 
     if (_screen == Screen::WIFI_SCAN) {
-        wifi_scan_info_t tmp[MAX_WIFI_NETWORKS];
-        int n = wifi_mgr_get_scan_results(tmp, MAX_WIFI_NETWORKS);
-        if (n > 0) {
+        if (wifi_mgr_is_scan_done()) {
+            wifi_scan_info_t tmp[MAX_WIFI_NETWORKS];
+            int n = wifi_mgr_get_scan_results(tmp, MAX_WIFI_NETWORKS);
             _networks.clear();
-            for (int i = 0; i < n; i++) _networks.push_back(tmp[i]);
+            for (int i = 0; i < n; i++) {
+                _networks.push_back(tmp[i]);
+            }
             _net_sel = 0;
             _screen  = Screen::WIFI_PICK;
         }
@@ -114,6 +118,8 @@ void App_AICode::render(LGFX_Sprite* c) {
         case Screen::WIFI_CONNECTING: draw_wifi_connecting(c); break;
         case Screen::API_KEY_ENTRY:   draw_api_key_entry(c); break;
         case Screen::MAIN_MENU:       draw_main_menu(c);     break;
+        case Screen::CHAT_SELECT:     draw_chat_select(c);   break;
+        case Screen::CHAT_PHONE:      draw_chat_phone(c);    break;
         case Screen::CHAT:            draw_chat(c);          break;
         case Screen::CHAT_INPUT:      draw_chat(c); draw_keyboard(c, _chat_input, false); break;
         case Screen::IDE_EDITOR:      draw_ide(c);           break;
@@ -151,15 +157,37 @@ void App_AICode::handleInput(input_event_t ev) {
             if (ev == BTN_UP   && _menu_sel > 0) _menu_sel--;
             if (ev == BTN_DOWN && _menu_sel < MENU_ITEMS - 1) _menu_sel++;
             if (ev == BTN_SELECT) {
-                if (_menu_sel == 0) { _chat_display = ""; _screen = Screen::CHAT; }
+                if (_menu_sel == 0) {
+                    _chat_select_sel = 0;
+                    _screen = Screen::CHAT_SELECT;
+                }
                 if (_menu_sel == 1) { _screen = Screen::IDE_EDITOR; }
                 if (_menu_sel == 2) { _refresh_scripts(); _screen = Screen::SCRIPT_LIST; }
                 if (_menu_sel == 3) { _screen = Screen::SETTINGS; }
             }
             break;
 
-        case Screen::CHAT:
+        case Screen::CHAT_SELECT:
             if (ev == BTN_LEFT) { _screen = Screen::MAIN_MENU; }
+            if (ev == BTN_UP && _chat_select_sel > 0) _chat_select_sel--;
+            if (ev == BTN_DOWN && _chat_select_sel < 1) _chat_select_sel++;
+            if (ev == BTN_SELECT) {
+                if (_chat_select_sel == 0) {
+                    _chat_display = "";
+                    llm_client_clear_history();
+                    _screen = Screen::CHAT;
+                } else {
+                    _screen = Screen::CHAT_PHONE;
+                }
+            }
+            break;
+
+        case Screen::CHAT_PHONE:
+            if (ev == BTN_LEFT || ev == BTN_SELECT) { _screen = Screen::CHAT_SELECT; }
+            break;
+
+        case Screen::CHAT:
+            if (ev == BTN_LEFT) { _screen = Screen::CHAT_SELECT; }
             if (ev == BTN_SELECT && !_llm_busy) { _chat_input = ""; _screen = Screen::CHAT_INPUT; }
             break;
 

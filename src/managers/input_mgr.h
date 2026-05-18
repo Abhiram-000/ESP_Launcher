@@ -24,6 +24,12 @@ void input_mgr_init(void);
  */
 input_event_t input_mgr_get_event(void);
 
+/**
+ * @brief Inject an event into the input queue from a task context.
+ * @param ev The button event to inject.
+ */
+void input_mgr_inject_event(input_event_t ev);
+
 #ifdef __cplusplus
 }
 #endif

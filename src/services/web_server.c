@@ -23,8 +23,14 @@
 #include "wifi_mgr.h"
 #include "../config/sys_config.h"
 #include "../config/web_ui.h"
+#include "../config/web_remote_ui.h"
+#include "../config/web_chat_ui.h"
+#include "llm_client.h"
 #include "../system/sys_mgr.h"
+#include "../managers/input_mgr.h"
 #include "esp_http_server.h"
+#include <dirent.h>
+#include <sys/stat.h>
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_chip_info.h"
@@ -248,6 +254,346 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
 }
 
 /* --------------------------------------------------------------------------
+ * GET /remote — Serve the Virtual Gamepad Web UI
+ * -------------------------------------------------------------------------- */
+static esp_err_t remote_get_handler(httpd_req_t *req) {
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_send(req, WEB_REMOTE_UI_HTML, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+/* --------------------------------------------------------------------------
+ * GET /remote/input — Handle query parameters for virtual key injection
+ * -------------------------------------------------------------------------- */
+static esp_err_t remote_input_get_handler(httpd_req_t *req) {
+    size_t buf_len = httpd_req_get_url_query_len(req) + 1;
+    if (buf_len > 1) {
+        char *buf = malloc(buf_len);
+        if (buf && httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK) {
+            char btn_val[16];
+            if (httpd_query_key_value(buf, "btn", btn_val, sizeof(btn_val)) == ESP_OK) {
+                input_event_t ev = BTN_NONE;
+                if (strcmp(btn_val, "up") == 0) ev = BTN_UP;
+                else if (strcmp(btn_val, "down") == 0) ev = BTN_DOWN;
+                else if (strcmp(btn_val, "left") == 0) ev = BTN_LEFT;
+                else if (strcmp(btn_val, "right") == 0) ev = BTN_RIGHT;
+                else if (strcmp(btn_val, "select") == 0) ev = BTN_SELECT;
+                
+                if (ev != BTN_NONE) {
+                    input_mgr_inject_event(ev);
+                }
+            }
+        }
+        if (buf) free(buf);
+    }
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
+extern void lua_engine_clear_logs(void);
+extern void lua_engine_append_log(const char* text);
+extern const char* lua_engine_get_logs(void);
+extern int lua_engine_run_file(const char* path, char* err_out, int max_err_len, uint32_t* elapsed_ms);
+
+/* --------------------------------------------------------------------------
+ * GET /chat — Serve the Unified AI Chat & IDE Web UI
+ * -------------------------------------------------------------------------- */
+static esp_err_t chat_get_handler(httpd_req_t *req) {
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_send(req, WEB_CHAT_HTML, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+/* ─── SSE Chunk callback ────────────────────────────────────────────────── */
+static bool _web_llm_chunk(const char* token, size_t len, void* user) {
+    httpd_req_t* req = (httpd_req_t*)user;
+    if (!token || len == 0) return true;
+
+    char* esc = (char*)malloc(len * 2 + 1);
+    if (!esc) return false;
+    size_t j = 0;
+    for (size_t i = 0; i < len; i++) {
+        if (token[i] == '"' || token[i] == '\\') {
+            esc[j++] = '\\';
+            esc[j++] = token[i];
+        } else if (token[i] == '\n') {
+            esc[j++] = '\\';
+            esc[j++] = 'n';
+        } else if (token[i] == '\r') {
+            esc[j++] = '\\';
+            esc[j++] = 'r';
+        } else if (token[i] == '\t') {
+            esc[j++] = '\\';
+            esc[j++] = 't';
+        } else {
+            esc[j++] = token[i];
+        }
+    }
+    esc[j] = '\0';
+
+    char chunk[1024];
+    int n = snprintf(chunk, sizeof(chunk), "data: {\"token\":\"%s\"}\n\n", esc);
+    free(esc);
+
+    esp_err_t err = httpd_resp_send_chunk(req, chunk, n);
+    return err == ESP_OK;
+}
+
+/* --------------------------------------------------------------------------
+ * GET /chat/send — Handles SSE streaming user message prompts
+ * -------------------------------------------------------------------------- */
+static esp_err_t chat_send_get_handler(httpd_req_t *req) {
+    char query[512] = {};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Missing query string");
+    }
+    char msg[256] = {};
+    if (httpd_query_key_value(query, "msg", msg, sizeof(msg)) != ESP_OK) {
+        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Missing msg parameter");
+    }
+
+    char decoded[256] = {};
+    size_t dj = 0;
+    for (size_t i = 0; msg[i]; i++) {
+        if (msg[i] == '%') {
+            char hex[3] = { msg[i+1], msg[i+2], '\0' };
+            decoded[dj++] = (char)strtol(hex, NULL, 16);
+            i += 2;
+        } else if (msg[i] == '+') {
+            decoded[dj++] = ' ';
+        } else {
+            decoded[dj++] = msg[i];
+        }
+    }
+    decoded[dj] = '\0';
+
+    httpd_resp_set_type(req, "text/event-stream; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+    httpd_resp_set_hdr(req, "Connection", "keep-alive");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
+    llm_client_send(decoded, _web_llm_chunk, req);
+
+    httpd_resp_send_chunk(req, "data: [DONE]\n\n", 14);
+    httpd_resp_send_chunk(req, NULL, 0);
+    return ESP_OK;
+}
+
+/* --------------------------------------------------------------------------
+ * GET /chat/ide/files — Lists all script files in the LittleFS scripts dir
+ * -------------------------------------------------------------------------- */
+static esp_err_t chat_ide_files_get_handler(httpd_req_t *req) {
+    char* json = malloc(2048);
+    strcpy(json, "{\"files\":[");
+    DIR* d = opendir(AI_SCRIPTS_DIR);
+    if (d) {
+        struct dirent* e;
+        bool first = true;
+        while ((e = readdir(d))) {
+            if (strstr(e->d_name, ".lua")) {
+                if (!first) strcat(json, ",");
+                strcat(json, "\"");
+                strcat(json, e->d_name);
+                strcat(json, "\"");
+                first = false;
+            }
+        }
+        closedir(d);
+    }
+    strcat(json, "]}");
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_sendstr(req, json);
+    free(json);
+    return ESP_OK;
+}
+
+/* --------------------------------------------------------------------------
+ * GET /chat/ide/load — Loads content of a script file
+ * -------------------------------------------------------------------------- */
+static esp_err_t chat_ide_load_get_handler(httpd_req_t *req) {
+    char query[256] = {};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Missing query");
+    }
+    char file[64] = {};
+    if (httpd_query_key_value(query, "file", file, sizeof(file)) != ESP_OK) {
+        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Missing file parameter");
+    }
+    char path[128];
+    snprintf(path, sizeof(path), "%s/%s", AI_SCRIPTS_DIR, file);
+
+    FILE* f = fopen(path, "r");
+    if (!f) {
+        return _send_json_error(req, HTTPD_404_NOT_FOUND, "File not found");
+    }
+
+    char* buf = malloc(4096);
+    size_t n = fread(buf, 1, 4095, f);
+    buf[n] = '\0';
+    fclose(f);
+
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_send(req, buf, n);
+    free(buf);
+    return ESP_OK;
+}
+
+/* --------------------------------------------------------------------------
+ * POST /chat/ide/save — Saves content of a script file
+ * -------------------------------------------------------------------------- */
+static esp_err_t chat_ide_save_post_handler(httpd_req_t *req) {
+    int total_len = req->content_len;
+    char* buf = malloc(total_len + 1);
+    int received = 0;
+    while (received < total_len) {
+        int ret = httpd_req_recv(req, buf + received, total_len - received);
+        if (ret <= 0) {
+            if (ret == HTTPD_SOCK_ERR_TIMEOUT) continue;
+            free(buf);
+            return ESP_FAIL;
+        }
+        received += ret;
+    }
+    buf[total_len] = '\0';
+
+    char file[64] = {};
+    httpd_query_key_value(buf, "file", file, sizeof(file));
+
+    char* code_enc = malloc(total_len + 1);
+    char* code = malloc(total_len + 1);
+    code[0] = '\0';
+    if (httpd_query_key_value(buf, "code", code_enc, total_len) == ESP_OK) {
+        size_t j = 0;
+        for (size_t i = 0; code_enc[i]; i++) {
+            if (code_enc[i] == '%') {
+                char hex[3] = { code_enc[i+1], code_enc[i+2], '\0' };
+                code[j++] = (char)strtol(hex, NULL, 16);
+                i += 2;
+            } else if (code_enc[i] == '+') {
+                code[j++] = ' ';
+            } else {
+                code[j++] = code_enc[i];
+            }
+        }
+        code[j] = '\0';
+    }
+    free(code_enc);
+    free(buf);
+
+    if (!file[0]) {
+        free(code);
+        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Missing file parameter");
+    }
+
+    char path[128];
+    snprintf(path, sizeof(path), "%s/%s", AI_SCRIPTS_DIR, file);
+    FILE* f = fopen(path, "w");
+    if (f) {
+        fwrite(code, 1, strlen(code), f);
+        fclose(f);
+    }
+    free(code);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    return ESP_OK;
+}
+
+/* --------------------------------------------------------------------------
+ * GET /chat/ide/run — Executes a script file asynchronously & gets captured prints
+ * -------------------------------------------------------------------------- */
+static esp_err_t chat_ide_run_get_handler(httpd_req_t *req) {
+    char query[256] = {};
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
+        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Missing query");
+    }
+    char file[64] = {};
+    if (httpd_query_key_value(query, "file", file, sizeof(file)) != ESP_OK) {
+        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Missing file parameter");
+    }
+    char path[128];
+    snprintf(path, sizeof(path), "%s/%s", AI_SCRIPTS_DIR, file);
+
+    lua_engine_clear_logs();
+
+    char err[128] = {};
+    uint32_t elapsed = 0;
+    int status = lua_engine_run_file(path, err, sizeof(err), &elapsed);
+
+    const char* raw_logs = lua_engine_get_logs();
+    size_t logs_len = strlen(raw_logs);
+    char* esc_logs = malloc(logs_len * 2 + 1);
+    size_t j = 0;
+    for (size_t i = 0; i < logs_len; i++) {
+        if (raw_logs[i] == '"' || raw_logs[i] == '\\') {
+            esc_logs[j++] = '\\';
+            esc_logs[j++] = raw_logs[i];
+        } else if (raw_logs[i] == '\n') {
+            esc_logs[j++] = '\\';
+            esc_logs[j++] = 'n';
+        } else if (raw_logs[i] == '\r') {
+            esc_logs[j++] = '\\';
+            esc_logs[j++] = 'r';
+        } else {
+            esc_logs[j++] = raw_logs[i];
+        }
+    }
+    esc_logs[j] = '\0';
+
+    char* json = malloc(logs_len * 2 + 512);
+    snprintf(json, logs_len * 2 + 512,
+        "{\"ok\":%s,\"status\":%d,\"elapsed_ms\":%d,\"error\":\"%s\",\"logs\":\"%s\"}",
+        (status == 0) ? "true" : "false", status, (int)elapsed, err, esc_logs);
+
+    free(esc_logs);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    httpd_resp_sendstr(req, json);
+    free(json);
+    return ESP_OK;
+}
+
+/* --------------------------------------------------------------------------
+ * GET /error_404 — Captive Portal Redirection Handler for any unregistered URIs
+ * -------------------------------------------------------------------------- */
+static esp_err_t captive_portal_redirect_handler(httpd_req_t *req, httpd_err_code_t error) {
+    ESP_LOGI(TAG, "Captive portal redirect: %s (error %d)", req->uri, error);
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/chat");
+    httpd_resp_set_type(req, "text/html; charset=utf-8");
+    
+    static const char *redirect_html = 
+        "<!DOCTYPE html><html><head><meta charset=\"UTF-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\">"
+        "<title>ESP32 Launcher Portal</title><style>"
+        "body{background:#08090d;color:#f0f3f8;font-family:system-ui,-apple-system,sans-serif;"
+        "display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;overflow:hidden;}"
+        ".container{text-align:center;background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);"
+        "border-radius:16px;padding:32px;box-shadow:0 8px 32px 0 rgba(0,0,0,0.37);backdrop-filter:blur(8px);width:280px;}"
+        "h2{color:#00f2fe;margin:0 0 8px;font-weight:600;letter-spacing:1px;text-shadow:0 0 10px rgba(0,242,254,0.3);}"
+        "p{color:#8a99ad;font-size:13px;margin:0 0 24px;}"
+        ".spinner{border:3px solid rgba(255,255,255,0.05);border-top:3px solid #00f2fe;border-radius:50%;"
+        "width:32px;height:32px;animation:spin 1s linear infinite;margin:0 auto;box-shadow:0 0 15px rgba(0,242,254,0.2);}"
+        "@keyframes spin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}"
+        "</style><meta http-equiv=\"refresh\" content=\"0; url=http://192.168.4.1/chat\"></head>"
+        "<body><div class=\"container\"><h2>ESP32 PORTAL</h2><p>Initializing Wireless Interface...</p>"
+        "<div class=\"spinner\"></div></div><script>window.location.href=\"http://192.168.4.1/chat\";</script>"
+        "</body></html>";
+
+    httpd_resp_send(req, redirect_html, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+/* --------------------------------------------------------------------------
  * Server initialisation
  * -------------------------------------------------------------------------- */
 void web_server_init(void) {
@@ -271,15 +617,26 @@ void web_server_init(void) {
 
     /* Route table */
     static const httpd_uri_t routes[] = {
-        { .uri = "/",       .method = HTTP_GET,  .handler = index_get_handler  },
-        { .uri = "/status", .method = HTTP_GET,  .handler = status_get_handler },
-        { .uri = "/info",   .method = HTTP_GET,  .handler = info_get_handler   },
-        { .uri = "/upload", .method = HTTP_POST, .handler = upload_post_handler },
+        { .uri = "/",             .method = HTTP_GET,  .handler = index_get_handler  },
+        { .uri = "/status",       .method = HTTP_GET,  .handler = status_get_handler },
+        { .uri = "/info",         .method = HTTP_GET,  .handler = info_get_handler   },
+        { .uri = "/upload",       .method = HTTP_POST, .handler = upload_post_handler },
+        { .uri = "/remote",       .method = HTTP_GET,  .handler = remote_get_handler },
+        { .uri = "/remote/input", .method = HTTP_GET,  .handler = remote_input_get_handler },
+        { .uri = "/chat",          .method = HTTP_GET,  .handler = chat_get_handler          },
+        { .uri = "/chat/send",     .method = HTTP_GET,  .handler = chat_send_get_handler     },
+        { .uri = "/chat/ide/files",.method = HTTP_GET,  .handler = chat_ide_files_get_handler},
+        { .uri = "/chat/ide/load", .method = HTTP_GET,  .handler = chat_ide_load_get_handler },
+        { .uri = "/chat/ide/save", .method = HTTP_POST, .handler = chat_ide_save_post_handler},
+        { .uri = "/chat/ide/run",  .method = HTTP_GET,  .handler = chat_ide_run_get_handler  },
     };
 
     for (int i = 0; i < (int)(sizeof(routes) / sizeof(routes[0])); i++) {
         httpd_register_uri_handler(server, &routes[i]);
     }
 
-    ESP_LOGI(TAG, "HTTP server ready — %d routes registered", (int)(sizeof(routes)/sizeof(routes[0])));
+    // Register custom 404 handler for Captive Portal redirects
+    httpd_register_err_handler(server, HTTPD_404_NOT_FOUND, captive_portal_redirect_handler);
+
+    ESP_LOGI(TAG, "HTTP server ready — %d routes registered + captive portal redirect handler active", (int)(sizeof(routes)/sizeof(routes[0])));
 }

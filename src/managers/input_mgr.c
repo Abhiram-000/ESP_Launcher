@@ -80,3 +80,9 @@ input_event_t input_mgr_get_event(void) {
     }
     return BTN_NONE;
 }
+
+void input_mgr_inject_event(input_event_t ev) {
+    if (s_input_queue && ev != BTN_NONE) {
+        xQueueSend(s_input_queue, &ev, 0);
+    }
+}

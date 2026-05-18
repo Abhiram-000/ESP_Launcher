@@ -229,7 +229,7 @@
 
 #if !defined(LUA_PATH_DEFAULT)
 #define LUA_PATH_DEFAULT  \
-		"/games/ai/scripts/?.lua"
+		"/storage/ai/scripts/?.lua"
 #endif
 
 #if !defined(LUA_CPATH_DEFAULT)

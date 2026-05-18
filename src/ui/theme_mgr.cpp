@@ -2,6 +2,7 @@
 #include <math.h>
 #include "nvs_flash.h"
 #include "nvs.h"
+#include <LovyanGFX.hpp>
 
 typedef struct {
     uint16_t bg;
@@ -119,3 +120,43 @@ uint16_t theme_get_text(void) { return rgb_to_hex(s_dyn.text); }
 uint16_t theme_get_text_dim(void) { return rgb_to_hex(s_dyn.text_dim); }
 uint16_t theme_get_success(void) { return rgb_to_hex(s_dyn.success); }
 uint16_t theme_get_fail(void) { return rgb_to_hex(s_dyn.fail); }
+
+void theme_draw_wallpaper(lgfx::v1::LGFX_Sprite* canvas, float time_offset) {
+    uint16_t bg = theme_get_bg();
+    canvas->fillSprite(bg);
+
+    uint16_t accent = theme_get_accent();
+    
+    // Extract RGB565 to 888 for alpha blending
+    uint8_t ar = (accent >> 11) & 0x1F;
+    uint8_t ag = (accent >> 5) & 0x3F;
+    uint8_t ab = accent & 0x1F;
+    
+    uint8_t br = (bg >> 11) & 0x1F;
+    uint8_t bg_g = (bg >> 5) & 0x3F;
+    uint8_t bb = bg & 0x1F;
+
+    auto blend = [&](float alpha) -> uint16_t {
+        uint8_t r = br + (ar - br) * alpha;
+        uint8_t g = bg_g + (ag - bg_g) * alpha;
+        uint8_t b = bb + (ab - bb) * alpha;
+        return (r << 11) | (g << 5) | b;
+    };
+
+    // Draw a subtle, slow-moving parallax grid
+    uint16_t grid_col = blend(0.08f); // Very subtle
+    
+    int w = canvas->width();
+    int h = canvas->height();
+
+    int grid_size = 24;
+    int offset_x = (int)(time_offset * 12.0f) % grid_size;
+    int offset_y = (int)(time_offset * 6.0f) % grid_size;
+
+    for (int x = -offset_x; x < w; x += grid_size) {
+        canvas->drawFastVLine(x, 0, h, grid_col);
+    }
+    for (int y = -offset_y; y < h; y += grid_size) {
+        canvas->drawFastHLine(0, y, w, grid_col);
+    }
+}
