@@ -27,6 +27,7 @@
 #include "services/web_server.h"
 #include "services/idle_mgr.h"
 #include "services/game_store.h"
+#include "services/hack_store.h"
 #include "ui/ui_task.h"
 
 static const char* TAG = "MAIN";
@@ -65,6 +66,9 @@ extern "C" void app_main(void) {
     if (gs_ret != GAME_STORE_ERR_OK) {
         ESP_LOGE(TAG, "Game Store init failed: %d", gs_ret);
     }
+
+    // 5b. Initialize Hack Store
+    hack_store_init();
 
     // 6. Start HTTP Server for OTA uploads
     web_server_init();

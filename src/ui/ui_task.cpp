@@ -15,6 +15,7 @@
 #include "apps/App_AICode.h"
 #include "apps/App_GameStore.h"
 #include "apps/App_NES.h"
+#include "apps/App_HackStore.h"
 #include "theme_mgr.h"
 #include "nvs_flash.h"
 #include "nvs.h"
@@ -27,6 +28,7 @@
 #include "../assets/icons/torch.h"
 #include "../assets/icons/aicode.h"
 #include "../assets/icons/games.h"
+#include "../assets/icons/hackstore.h"
 
 static const char *TAG = "UI_TASK";
 
@@ -58,6 +60,7 @@ static App_Settings  app_settings;
 static App_Torch     app_torch;
 static App_AICode    app_aicode;
 static App_GameStore app_gamestore;
+static App_HackStore app_hackstore;
 
 static IApp* current_app = nullptr;
 
@@ -177,6 +180,7 @@ static void ui_task_runner(void *arg) {
     app_grid.registerApp("AI Code",     icon_aicode,    &app_aicode);
     app_grid.registerApp("Settings",    icon_settings,  &app_settings);
     app_grid.registerApp("Game Store",  icon_games,     &app_gamestore);
+    app_grid.registerApp("Hack Store",  icon_hackstore, &app_hackstore);
 
     // Use a direct init for the first launch — no slide needed at boot
     current_app = &app_grid;
