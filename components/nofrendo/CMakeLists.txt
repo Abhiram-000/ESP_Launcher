@@ -66,6 +66,5 @@ idf_component_register(SRCS "bitmap.c"
                     INCLUDE_DIRS "."
                     REQUIRES esp_timer freertos)
 
-# Optimise for size: the emulator core is large but doesn't need -O3
-target_compile_options(${COMPONENT_LIB} PRIVATE -Os)
+target_compile_options(${COMPONENT_LIB} PRIVATE -Os -Wno-error)
 

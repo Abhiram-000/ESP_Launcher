@@ -156,9 +156,12 @@ static int l_uart_setup(lua_State* L) {
     int tx   = luaL_checkinteger(L, 2);
     int rx   = luaL_checkinteger(L, 3);
     int baud = luaL_checkinteger(L, 4);
-    uart_config_t cfg = { .baud_rate=baud, .data_bits=UART_DATA_8_BITS,
-        .parity=UART_PARITY_DISABLE, .stop_bits=UART_STOP_BITS_1,
-        .flow_ctrl=UART_HW_FLOWCTRL_DISABLE };
+    uart_config_t cfg = {};
+    cfg.baud_rate = baud;
+    cfg.data_bits = UART_DATA_8_BITS;
+    cfg.parity = UART_PARITY_DISABLE;
+    cfg.stop_bits = UART_STOP_BITS_1;
+    cfg.flow_ctrl = UART_HW_FLOWCTRL_DISABLE;
     uart_param_config((uart_port_t)port, &cfg);
     uart_set_pin((uart_port_t)port, tx, rx, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
     esp_err_t e = uart_driver_install((uart_port_t)port, 256, 0, 0, nullptr, 0);
@@ -195,7 +198,8 @@ void LuaEngine::_bind_uart(lua_State* L) {
 static int l_adc_read(lua_State* L) {
     int ch = luaL_checkinteger(L, 1);
     adc_oneshot_unit_handle_t hdl;
-    adc_oneshot_unit_init_cfg_t unit_cfg = {.unit_id = ADC_UNIT_1};
+    adc_oneshot_unit_init_cfg_t unit_cfg = {};
+    unit_cfg.unit_id = ADC_UNIT_1;
     adc_oneshot_new_unit(&unit_cfg, &hdl);
     adc_oneshot_chan_cfg_t ch_cfg = {
         .atten   = ADC_ATTEN_DB_12,
@@ -219,12 +223,20 @@ static int l_pwm_setup(lua_State* L) {
     int freq = luaL_checkinteger(L, 2);
     int ch   = luaL_optinteger(L, 3, 0);
     if (!_pin_allowed(pin)) { lua_pushboolean(L, 0); return 1; }
-    ledc_timer_config_t t = {.speed_mode=LEDC_LOW_SPEED_MODE, .duty_resolution=LEDC_TIMER_10_BIT,
-        .timer_num=LEDC_TIMER_0, .freq_hz=(uint32_t)freq, .clk_cfg=LEDC_AUTO_CLK};
+    ledc_timer_config_t t = {};
+    t.speed_mode = LEDC_LOW_SPEED_MODE;
+    t.duty_resolution = LEDC_TIMER_10_BIT;
+    t.timer_num = LEDC_TIMER_0;
+    t.freq_hz = (uint32_t)freq;
+    t.clk_cfg = LEDC_AUTO_CLK;
     ledc_timer_config(&t);
-    ledc_channel_config_t c = {.gpio_num=pin, .speed_mode=LEDC_LOW_SPEED_MODE,
-        .channel=(ledc_channel_t)ch, .intr_type=LEDC_INTR_DISABLE,
-        .timer_sel=LEDC_TIMER_0, .duty=0, .hpoint=0};
+    ledc_channel_config_t c = {};
+    c.gpio_num = pin;
+    c.speed_mode = LEDC_LOW_SPEED_MODE;
+    c.channel = (ledc_channel_t)ch;
+    c.timer_sel = LEDC_TIMER_0;
+    c.duty = 0;
+    c.hpoint = 0;
     ledc_channel_config(&c);
     lua_pushboolean(L, 1); return 1;
 }

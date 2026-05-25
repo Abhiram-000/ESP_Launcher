@@ -9,8 +9,8 @@
 #include "../../services/wifi_mgr.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "sys/stat.h"
-#include "sys/dirent.h"
+#include <sys/stat.h>
+#include <dirent.h>
 #include <math.h>
 #include <string.h>
 

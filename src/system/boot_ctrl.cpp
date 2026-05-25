@@ -41,6 +41,7 @@
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "bootloader_common.h"
 
 #include <math.h>
 #include <string.h>
@@ -68,14 +69,12 @@ static const char *TAG = "BOOT_CTRL";
 #define BC_NVS_KEY_PREFCNT     "pref_cnt"  /* Consecutive launcher-preference counter */
 
 /*
- * Shared RTC_NOINIT variable with the bootloader hook.
- * The bootloader sets this to BOOT_FORCE_LAUNCHER_MAGIC when SELECT is held
- * at reset. We clear it after reading to prevent stale triggers.
- * Must remain as RTC_NOINIT_ATTR so linker places it in RTC slow memory,
- * which survives normal and watchdog resets.
+ * Bootloader–App communication via RTC retain memory.
+ * The bootloader's GPIO hook stores BOOT_FORCE_LAUNCHER_MAGIC in
+ * rtc_retain_mem.partition.offset when SELECT is held at reset.
+ * We read it here and clear it after consuming.
  */
 #define BOOT_FORCE_LAUNCHER_MAGIC  0xA5B4C3D2U
-RTC_NOINIT_ATTR uint32_t s_boot_force_launcher_flag;
 
 /* ---- Internal helpers ---- */
 
@@ -365,16 +364,21 @@ static void draw_splash(float elapsed_ms, float total_ms) {
 void boot_ctrl_check(void) {
     /*
      * Step 0: Check if the bootloader GPIO hook detected SELECT held at reset.
+     * The bootloader stores BOOT_FORCE_LAUNCHER_MAGIC in rtc_retain_mem.partition.offset.
      * If so, the user explicitly wants the Launcher — return immediately.
      * This is the hardware return path: User FW → (SELECT+RESET) → Launcher.
      */
-    if (s_boot_force_launcher_flag == BOOT_FORCE_LAUNCHER_MAGIC) {
-        s_boot_force_launcher_flag = 0; /* Consume the flag — prevent stale trigger */
+    rtc_retain_mem_t *rtc_mem = bootloader_common_get_rtc_retain_mem();
+    if (rtc_mem != NULL && rtc_mem->partition.offset == BOOT_FORCE_LAUNCHER_MAGIC) {
+        bootloader_common_reset_rtc_retain_mem(); /* Consume the flag */
         ESP_LOGI(TAG, "RTC flag set by bootloader hook — SELECT was held at reset, forcing Launcher");
         reset_boot_count();
         return;
     }
-    s_boot_force_launcher_flag = 0; /* Clear any garbage value from power-on */
+    /* Ensure retain mem is clean for subsequent boots */
+    if (rtc_mem != NULL) {
+        bootloader_common_reset_rtc_retain_mem();
+    }
 
     /* Step 1: Confirm we are in Launcher (ota_0). */
     const esp_partition_t *running = esp_ota_get_running_partition();

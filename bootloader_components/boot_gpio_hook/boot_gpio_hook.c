@@ -28,7 +28,7 @@
 #include "esp_rom_sys.h"
 #include "soc/gpio_reg.h"
 #include "soc/io_mux_reg.h"
-#include "soc/rtc_cntl_reg.h"
+#include "bootloader_common.h"
 
 /* ---- Configuration ---- */
 #define BOOT_SELECT_GPIO        16       /* Must match input_mgr.c and boot_ctrl.c */
@@ -37,17 +37,10 @@
 #define BOOT_SETTLE_US          5000    /* 5ms settle after GPIO init             */
 
 /*
- * Magic flag value written to RTC memory.
- * Chosen to be different from 0x00 (unset) and 0xFF (flash erase default).
+ * Magic flag value written to RTC retain memory.
+ * Chosen to be different from 0x00 (unset) and 0xFFFF (flash erase default).
  */
 #define BOOT_FORCE_LAUNCHER_MAGIC  0xA5B4C3D2U
-
-/*
- * RTC NOINIT memory — survives resets, cleared by power-off.
- * Placed in RTC_SLOW_MEM section; the linker script supports this in ESP-IDF.
- * The variable name must be unique to avoid collision with app symbols.
- */
-static RTC_NOINIT_ATTR uint32_t s_boot_force_launcher_flag;
 
 static const char *TAG = "BOOT_HOOK";
 
@@ -112,27 +105,28 @@ void bootloader_after_init(void) {
 
     if (select_held) {
         /*
-         * Write magic to RTC memory. This flag survives the reset but is
-         * cleared by boot_ctrl_check() in app_main immediately after reading.
+         * Store magic in RTC retain memory partition offset field.
+         * This memory is shared between bootloader and app, surviving resets.
+         * boot_ctrl.c will read and clear this flag immediately after startup.
          *
-         * boot_ctrl.c will see this flag and stay in Launcher regardless
-         * of what ota_data says — this is the hardware return path from
-         * user firmware back to Launcher.
+         * Using bootloader_common_update_rtc_retain_mem() sets the partition
+         * offset to our magic value and updates the CRC so the app's
+         * validity check passes.
          */
-        s_boot_force_launcher_flag = BOOT_FORCE_LAUNCHER_MAGIC;
+        esp_partition_pos_t fake_part = {
+            .offset = BOOT_FORCE_LAUNCHER_MAGIC,
+            .size   = 0
+        };
+        bootloader_common_update_rtc_retain_mem(&fake_part, false);
         ESP_LOGI(TAG, "SELECT held at reset — RTC flag set, Launcher will be forced");
     } else {
         /*
-         * Clear stale flags from previous cycles.
-         * Only set on a fresh deliberate press — not a watchdog reboot.
+         * If the retain memory has our magic from a previous boot,
+         * clear it (likely a watchdog reboot without the button held).
          */
-        if (s_boot_force_launcher_flag == BOOT_FORCE_LAUNCHER_MAGIC) {
-            /*
-             * If it was set from a PREVIOUS boot and we got here without
-             * the button pressed, it means the previous boot already consumed
-             * it (or the app forgot to clear it). Clear it to be safe.
-             */
-            s_boot_force_launcher_flag = 0;
+        rtc_retain_mem_t *mem = bootloader_common_get_rtc_retain_mem();
+        if (mem != NULL && mem->partition.offset == BOOT_FORCE_LAUNCHER_MAGIC) {
+            bootloader_common_reset_rtc_retain_mem();
         }
     }
 }
