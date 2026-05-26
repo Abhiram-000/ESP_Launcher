@@ -59,7 +59,7 @@ extern "C" {
 #define GAME_STORE_ROMS_DIR         "/storage/roms"
 #define GAME_STORE_CATALOG_LOCAL    "/storage/catalog.json"
 #define GAME_STORE_CLOUD_CATALOG_URL \
-    "https://abhi1144.github.io/ESP32_Custom_Launcher/catalog.json"
+    "https://raw.githubusercontent.com/Abhiram9641/ESP32_Store/main/games_catalog.json"
 
 /* Maximum number of games that can be stored locally. */
 #define GAME_STORE_MAX_GAMES        15
