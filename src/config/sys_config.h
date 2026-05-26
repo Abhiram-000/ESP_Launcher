@@ -56,8 +56,8 @@ extern "C" {
  * -------------------------------------------------------------------------- */
 #define GAME_STORE_PARTITION_LABEL  "games"
 #define GAME_STORE_MOUNT_POINT      "/storage"
-#define GAME_STORE_ROMS_DIR         "/storage/games/roms"
-#define GAME_STORE_CATALOG_LOCAL    "/storage/games/catalog.json"
+#define GAME_STORE_ROMS_DIR         "/storage/roms"
+#define GAME_STORE_CATALOG_LOCAL    "/storage/catalog.json"
 #define GAME_STORE_CLOUD_CATALOG_URL \
     "https://abhi1144.github.io/ESP32_Custom_Launcher/catalog.json"
 

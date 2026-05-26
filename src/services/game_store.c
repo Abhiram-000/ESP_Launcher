@@ -101,15 +101,18 @@ static void _gs_cleanup_temp_files(void) {
 static void _gs_local_catalog_load(void) {
     local_catalog_count = 0;
     
+    ESP_LOGI(TAG, "Attempting to load local catalog from %s", GAME_STORE_CATALOG_LOCAL);
     FILE *f = fopen(GAME_STORE_CATALOG_LOCAL, "r");
     if (!f) {
-        ESP_LOGI(TAG, "No local catalog found.");
+        ESP_LOGW(TAG, "No local catalog found at %s. (This is normal on first boot or missing data).", GAME_STORE_CATALOG_LOCAL);
         return;
     }
 
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
+
+    ESP_LOGI(TAG, "Local catalog opened, size: %ld bytes", size);
 
     if (size <= 0) {
         fclose(f);
@@ -233,9 +236,10 @@ static game_entry_t* _gs_local_catalog_find(const char* id);  /* forward decl */
  * Registers them with is_installed=true so they show up in MyGames immediately,
  * even if catalog.json is missing or was flashed before the ROM was added. */
 static void _gs_autodiscover_roms(void) {
+    ESP_LOGI(TAG, "Auto-discovering ROMs in %s...", GAME_STORE_ROMS_DIR);
     DIR *dir = opendir(GAME_STORE_ROMS_DIR);
     if (!dir) {
-        ESP_LOGW(TAG, "Auto-discover: cannot open %s", GAME_STORE_ROMS_DIR);
+        ESP_LOGW(TAG, "Auto-discover: cannot open directory %s. Check LittleFS layout.", GAME_STORE_ROMS_DIR);
         return;
     }
 
@@ -294,7 +298,39 @@ game_store_err_t game_store_init(void) {
     _gs_local_catalog_load();    /* Load catalog.json first */
     _gs_autodiscover_roms();     /* Then add any ROMs not in catalog */
 
-    ESP_LOGI(TAG, "Game Store ready — %d game(s) in catalog", local_catalog_count);
+    /* ── Boot diagnostic: dump every file found on the partition ── */
+    ESP_LOGI(TAG, "=== LittleFS scan at %s ===", GAME_STORE_MOUNT_POINT);
+    DIR *droot = opendir(GAME_STORE_MOUNT_POINT);
+    if (droot) {
+        struct dirent *de;
+        while ((de = readdir(droot)) != NULL) {
+            char fp[300];
+            snprintf(fp, sizeof(fp), "%s/%s", GAME_STORE_MOUNT_POINT, de->d_name);
+            struct stat st;
+            if (stat(fp, &st) == 0) {
+                if (S_ISDIR(st.st_mode)) {
+                    DIR *dsub = opendir(fp);
+                    if (dsub) {
+                        struct dirent *sub;
+                        while ((sub = readdir(dsub)) != NULL) {
+                            char sfp[560];
+                            snprintf(sfp, sizeof(sfp), "%s/%s", fp, sub->d_name);
+                            struct stat sst;
+                            if (stat(sfp, &sst) == 0)
+                                ESP_LOGI(TAG, "  [FILE] %s (%ld B)", sfp, (long)sst.st_size);
+                        }
+                        closedir(dsub);
+                    }
+                } else {
+                    ESP_LOGI(TAG, "  [FILE] %s (%ld B)", fp, (long)st.st_size);
+                }
+            }
+        }
+        closedir(droot);
+    } else {
+        ESP_LOGE(TAG, "  Cannot open %s — LittleFS mount failed!", GAME_STORE_MOUNT_POINT);
+    }
+    ESP_LOGI(TAG, "=== End scan — %d game(s) in catalog ===", local_catalog_count);
     return GAME_STORE_ERR_OK;
 }
 

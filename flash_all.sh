@@ -42,14 +42,10 @@ echo "[3/4] Flashing firmware..."
 pio run -t upload --upload-port "$PORT"
 
 # 4. Flash LittleFS (games partition)
+# Use PlatformIO's uploadfs target — it reads partitions.csv automatically
+# and calculates the correct flash address. No hardcoded offsets.
 echo "[4/4] Flashing LittleFS (games partition)..."
-~/.platformio/packages/tool-esptoolpy/esptool.py \
-    --chip esp32s3 \
-    --port "$PORT" \
-    --baud 921600 \
-    write_flash \
-    0x610000 \
-    .pio/build/esp32-s3-devkitc-1/littlefs.bin
+pio run -t uploadfs --upload-port "$PORT"
 
 echo ""
 echo "=== Done! Device is flashing and will reboot. ==="
