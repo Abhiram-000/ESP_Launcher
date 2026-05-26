@@ -2,6 +2,7 @@
 
 #include "IApp.h"
 #include "../../services/hack_store.h"
+#include "../components/UI_WifiScanner.h"
 
 class App_HackStore : public IApp {
 public:
@@ -34,6 +35,8 @@ private:
     int _list_sel;
     int _list_scroll;
     int _detail_idx;
+
+    UI_WifiScanner _wifi_scanner;
 
     hack_store_err_t _last_err;
     float _anim_time;

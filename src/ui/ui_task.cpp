@@ -28,7 +28,7 @@
 #include "../assets/icons/torch.h"
 #include "../assets/icons/aicode.h"
 #include "../assets/icons/games.h"
-#include "../assets/icons/hackstore.h"
+#include "../assets/icons/app_store.h"
 
 static const char *TAG = "UI_TASK";
 
@@ -180,7 +180,7 @@ static void ui_task_runner(void *arg) {
     app_grid.registerApp("AI Code",     icon_aicode,    &app_aicode);
     app_grid.registerApp("Settings",    icon_settings,  &app_settings);
     app_grid.registerApp("Game Store",  icon_games,     &app_gamestore);
-    app_grid.registerApp("Hack Store",  icon_hackstore, &app_hackstore);
+    app_grid.registerApp("Hack Store",  icon_app_store, &app_hackstore);
 
     // Use a direct init for the first launch — no slide needed at boot
     current_app = &app_grid;

@@ -56,6 +56,8 @@ void App_HackStore::loop() {
     _spinner_angle += 0.15f;
     if (_spinner_angle > 6.283f) _spinner_angle -= 6.283f;
 
+    _wifi_scanner.loop();
+
     const hack_store_status_t* st = hack_store_get_status();
 
     if (_screen == Screen::Downloading && !st->is_busy) {
@@ -81,6 +83,11 @@ void App_HackStore::loop() {
 }
 
 void App_HackStore::handleInput(input_event_t ev) {
+    if (_wifi_scanner.isActive()) {
+        _wifi_scanner.handleInput(ev);
+        return;
+    }
+
     switch (_screen) {
     case Screen::LocalList: {
         bool has_installed = hack_store_get_installed_id(_installed_id, sizeof(_installed_id));
@@ -128,10 +135,18 @@ void App_HackStore::handleInput(input_event_t ev) {
     }
 
     case Screen::Error:
+        if (ev == BTN_LEFT) { _screen = Screen::LocalList; }
+        if (ev == BTN_SELECT) { _screen = Screen::LocalList; }
+        break;
+
     case Screen::NoWifi:
         if (ev == BTN_LEFT) { _screen = Screen::LocalList; }
-        if (ev == BTN_SELECT && _screen == Screen::Error) {
-            _screen = Screen::LocalList;
+        if (ev == BTN_RIGHT || ev == BTN_SELECT) {
+            _wifi_scanner.begin([this](bool success) {
+                if (success) {
+                    this->_screen = Screen::LocalList;
+                }
+            });
         }
         break;
 
@@ -156,6 +171,10 @@ void App_HackStore::render(LGFX_Sprite* c) {
         case Screen::CloudLoading: _render_cloud_loading(c); break;
         case Screen::Error:        _render_error(c);         break;
         case Screen::NoWifi:       _render_no_wifi(c);       break;
+    }
+    
+    if (_wifi_scanner.isActive()) {
+        _wifi_scanner.render(c);
     }
 }
 
@@ -345,8 +364,7 @@ void App_HackStore::_render_no_wifi(LGFX_Sprite* c) {
     c->setTextColor(C_TEXT());
     c->drawString("Connect to Wi-Fi first.", 80, 50);
     c->setTextColor(C_DIM());
-    c->drawString("Use Settings -> Wi-Fi", 80, 65);
-    c->drawString("L=Back", 80, 90);
+    c->drawString("SEL/R=Scan  L=Back", 80, 75);
 }
 
 void App_HackStore::_refresh_catalog_local() {

@@ -4,7 +4,23 @@
 # Run this from the project root with your device connected
 # ============================================================
 
-PORT=${1:-/dev/ttyUSB0}   # Override: ./flash_all.sh /dev/ttyACM0
+if [ -n "$1" ]; then
+    PORT="$1"
+else
+    # Auto-detect port (Linux)
+    for p in /dev/ttyACM* /dev/ttyUSB*; do
+        if [ -e "$p" ]; then
+            PORT="$p"
+            break
+        fi
+    done
+    
+    if [ -z "$PORT" ] || [ ! -e "$PORT" ]; then
+        echo "Error: No ESP32 device found automatically."
+        echo "Please connect the device or specify the port manually: ./flash_all.sh /dev/ttyUSB0"
+        exit 1
+    fi
+fi
 
 set -e
 

@@ -16,6 +16,8 @@
 #include "../../services/wifi_mgr.h"
 #include "../../services/llm_client.h"
 #include "../../services/lua_engine.h"
+#include "../components/UI_WifiScanner.h"
+#include "../components/UI_Keyboard.h"
 #include <string>
 #include <vector>
 #include <stdint.h>
@@ -40,19 +42,15 @@ public:
 
     /* ── Top-level state machine ─────────────────────────────────────── */
     enum class Screen {
-        WIFI_CHECK,       /* Check / start Wi-Fi scan                    */
-        WIFI_SCAN,        /* Scanning for networks                       */
-        WIFI_PICK,        /* List of networks to pick from               */
-        WIFI_PASSWORD,    /* Enter Wi-Fi password                        */
-        WIFI_CONNECTING,  /* Attempting connection                       */
+        WIFI_CHECK,       /* Check / prompt Wi-Fi scan via component     */
         API_KEY_ENTRY,    /* Enter / update OpenAI API key               */
         MAIN_MENU,        /* Top-level: Chat / IDE / Scripts / Settings  */
         CHAT_SELECT,      /* Select: Inbuilt Keyboard / From Phone       */
         CHAT_PHONE,       /* Info panel for Phone Chat                   */
         CHAT,             /* Chat view — streamed LLM response           */
-        CHAT_INPUT,       /* Virtual keyboard for chat message           */
+        CHAT_INPUT,       /* Keyboard overlay for chat message           */
         IDE_EDITOR,       /* Lua script editor                          */
-        IDE_KEYBOARD,     /* Virtual keyboard for IDE text entry         */
+        IDE_KEYBOARD,     /* Keyboard overlay for IDE text entry         */
         SCRIPT_LIST,      /* Browse /games/ai/scripts/                   */
         LUA_RUNNING,      /* Script execution in progress               */
         LUA_RESULT,       /* Show script output / error                  */
@@ -62,12 +60,9 @@ public:
     Screen _screen;
     float  _anim;
 
-    /* ── Wi-Fi flow ──────────────────────────────────────────────────── */
-    std::vector<wifi_scan_info_t> _networks;
-    int    _net_sel;
-    std::string _target_ssid;
-    std::string _wifi_pass;
-    uint32_t    _conn_start_ms;
+    /* ── Reusable UI components (overlay) ───────────────────────────── */
+    UI_WifiScanner _wifi_scanner;
+    UI_Keyboard    _keyboard;
 
     /* ── API key entry ───────────────────────────────────────────────── */
     std::string _api_key_buf;
@@ -100,20 +95,10 @@ public:
     std::string _lua_output;
     lua_engine_result_t _lua_result;
 
-    /* ── Virtual keyboard (shared by Chat input + IDE + API key) ────── */
-    int  _kb_row, _kb_col;
-    bool _kb_caps;
-    bool _kb_sym;
-
     /* ── Rendering helpers ───────────────────────────────────────────── */
     uint16_t blend(uint16_t fg, uint16_t bg, float a);
     void draw_header(LGFX_Sprite* c, const char* title);
-    void draw_keyboard(LGFX_Sprite* c, std::string& target, bool allow_newline);
     void draw_wifi_check(LGFX_Sprite* c);
-    void draw_wifi_scan(LGFX_Sprite* c);
-    void draw_wifi_pick(LGFX_Sprite* c);
-    void draw_wifi_password(LGFX_Sprite* c);
-    void draw_wifi_connecting(LGFX_Sprite* c);
     void draw_api_key_entry(LGFX_Sprite* c);
     void draw_main_menu(LGFX_Sprite* c);
     void draw_chat_select(LGFX_Sprite* c);
@@ -126,10 +111,6 @@ public:
     void draw_settings(LGFX_Sprite* c);
 
     /* ── Input helpers ───────────────────────────────────────────────── */
-    void handle_keyboard_input(input_event_t ev, std::string& target, bool allow_newline);
-    void handle_chat_input(input_event_t ev);
-    void handle_ide_input(input_event_t ev);
-    void handle_wifi_pick_input(input_event_t ev);
     void handle_script_list_input(input_event_t ev);
 
     /* ── Action helpers ──────────────────────────────────────────────── */
