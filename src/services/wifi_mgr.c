@@ -44,8 +44,9 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                 break;
             case WIFI_EVENT_STA_DISCONNECTED:
                 s_sta_connected = false;
+                strncpy(s_sta_ip, "0.0.0.0", sizeof(s_sta_ip) - 1);
+                s_sta_ip[sizeof(s_sta_ip) - 1] = '\0';
                 ESP_LOGI(TAG, "STA Disconnected");
-                sys_mgr_send_ui_msg(WIFI_STATE_DISCONNECTED, 0, 0, "WiFi Disconnected");
                 break;
             case WIFI_EVENT_SCAN_DONE:
                 s_scan_done = true;
@@ -69,8 +70,6 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
             nvs_close(h);
             ESP_LOGI(TAG, "STA Credentials saved to NVS");
         }
-
-        sys_mgr_send_ui_msg(WIFI_STATE_SUCCESS, 100, 0, "Connected");
     }
 }
 
@@ -143,6 +142,8 @@ bool wifi_mgr_is_scan_done(void) {
 }
 
 int wifi_mgr_get_scan_results(wifi_scan_info_t* results, int max_results) {
+    if (!results || max_results <= 0) return 0;
+
     uint16_t number = max_results;
     wifi_ap_record_t ap_info[max_results];
     if (esp_wifi_scan_get_ap_records(&number, ap_info) != ESP_OK) return 0;

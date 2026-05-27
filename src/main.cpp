@@ -55,17 +55,17 @@ extern "C" void app_main(void) {
     // 2. Start GPIO Hardware Pollers
     input_mgr_init();
 
-    // 3. Start Heavy UI Renderer
-    ui_task_init();
-
-    // 4. Initialize Unified Wi-Fi (AP + STA)
-    wifi_mgr_init();
-
-    // 5. Initialize Game Store (mounts LittleFS 'games' partition, cleans temp files)
+    // 3. Initialize storage-backed services before UI/web entry points can touch them
     game_store_err_t gs_ret = game_store_init();
     if (gs_ret != GAME_STORE_ERR_OK) {
         ESP_LOGE(TAG, "Game Store init failed: %d", gs_ret);
     }
+
+    // 4. Start Heavy UI Renderer
+    ui_task_init();
+
+    // 5. Initialize Unified Wi-Fi (AP + STA)
+    wifi_mgr_init();
 
     // 5b. Initialize Hack Store
     hack_store_init();

@@ -17,13 +17,17 @@
 #include <sys/stat.h>
 #include <sys/unistd.h>
 #include <dirent.h>
+#include <inttypes.h>
 
 
 static const char* TAG = "GameStore";
+static const TickType_t GS_WAIT_TIMEOUT = pdMS_TO_TICKS(15000);
+static const size_t GS_CATALOG_BUFFER_SIZE = 32 * 1024;
 
 static game_store_status_t gs_status;
 static game_entry_t local_catalog[GAME_STORE_MAX_GAMES];
 static int local_catalog_count = 0;
+static SemaphoreHandle_t gs_mutex = NULL;
 
 static EventGroupHandle_t gs_event_group = NULL;
 #define GS_EVT_CATALOG_DONE (1 << 0)
@@ -41,6 +45,50 @@ static TaskHandle_t current_task_handle = NULL;
  * NEVER use vTaskDelete(external_handle) — it leaks buffers and sockets.
  */
 static volatile bool s_abort_requested = false;
+
+static void _gs_lock(void) {
+    if (gs_mutex) {
+        xSemaphoreTake(gs_mutex, portMAX_DELAY);
+    }
+}
+
+static void _gs_unlock(void) {
+    if (gs_mutex) {
+        xSemaphoreGive(gs_mutex);
+    }
+}
+
+static void _gs_status_snapshot(game_store_status_t *out) {
+    if (!out) return;
+    _gs_lock();
+    *out = gs_status;
+    _gs_unlock();
+}
+
+static void _gs_status_reset_transfer(const char *id) {
+    _gs_lock();
+    gs_status.last_error = GAME_STORE_ERR_OK;
+    gs_status.progress_pct = 0;
+    gs_status.bytes_done = 0;
+    gs_status.bytes_total = 0;
+    memset(gs_status.active_game_id, 0, sizeof(gs_status.active_game_id));
+    if (id) {
+        strncpy(gs_status.active_game_id, id, sizeof(gs_status.active_game_id) - 1);
+    }
+    _gs_unlock();
+}
+
+static void _gs_status_set_busy(bool busy) {
+    _gs_lock();
+    gs_status.is_busy = busy;
+    _gs_unlock();
+}
+
+static void _gs_status_set_error(game_store_err_t err) {
+    _gs_lock();
+    gs_status.last_error = err;
+    _gs_unlock();
+}
 
 /* --------------------------------------------------------------------------
  * LittleFS Lifecycle
@@ -194,7 +242,7 @@ static game_store_err_t _gs_local_catalog_save(game_entry_t* catalog, int count)
         cJSON_AddNumberToObject(game, "size_bytes", catalog[i].size_bytes);
         
         char crc_str[9];
-        snprintf(crc_str, sizeof(crc_str), "%08lX", catalog[i].crc32);
+        snprintf(crc_str, sizeof(crc_str), "%08" PRIX32, catalog[i].crc32);
         cJSON_AddStringToObject(game, "crc32", crc_str);
         
         cJSON_AddStringToObject(game, "url", catalog[i].url);
@@ -289,6 +337,11 @@ game_store_err_t game_store_init(void) {
     if (gs_event_group == NULL) {
         gs_event_group = xEventGroupCreate();
     }
+    if (gs_mutex == NULL) {
+        gs_mutex = xSemaphoreCreateMutex();
+    }
+    configASSERT(gs_event_group != NULL);
+    configASSERT(gs_mutex != NULL);
     
     game_store_err_t err = _gs_fs_mount();
     if (err != GAME_STORE_ERR_OK) return err;
@@ -335,8 +388,8 @@ game_store_err_t game_store_init(void) {
 }
 
 
-const game_store_status_t* game_store_get_status(void) {
-    return &gs_status;
+void game_store_get_status(game_store_status_t* out) {
+    _gs_status_snapshot(out);
 }
 
 /* Actual definition (forward-declared above for autodiscover) */
@@ -350,14 +403,22 @@ static game_entry_t* _gs_local_catalog_find(const char* id) {
 }
 
 int game_store_get_catalog(game_entry_t* out, int max_count) {
+    if (!out || max_count <= 0) return 0;
+    _gs_lock();
     int count = local_catalog_count;
     if (count > max_count) count = max_count;
     memcpy(out, local_catalog, count * sizeof(game_entry_t));
+    _gs_unlock();
     return count;
 }
 
 bool game_store_get_rom_path(const char* id, char* path_out, size_t len) {
-    if (!_gs_local_catalog_find(id)) return false;
+    if (!id || !path_out || len == 0) return false;
+    _gs_lock();
+    game_entry_t *entry = _gs_local_catalog_find(id);
+    bool is_installed = (entry != NULL) && entry->is_installed;
+    _gs_unlock();
+    if (!is_installed) return false;
     snprintf(path_out, len, "%s/%s.nes", GAME_STORE_ROMS_DIR, id);
     struct stat st;
     return (stat(path_out, &st) == 0);
@@ -386,14 +447,18 @@ static esp_err_t _http_event_handle(esp_http_client_event_t *evt) {
     switch(evt->event_id) {
         case HTTP_EVENT_ON_HEADER:
             if (strcasecmp(evt->header_key, "Content-Length") == 0) {
+                _gs_lock();
                 gs_status.bytes_total = atoi(evt->header_value);
+                _gs_unlock();
             }
             break;
         case HTTP_EVENT_ON_DATA:
+            _gs_lock();
             if (gs_status.bytes_total > 0) {
                 gs_status.bytes_done += evt->data_len;
                 gs_status.progress_pct = (gs_status.bytes_done * 100) / gs_status.bytes_total;
             }
+            _gs_unlock();
             break;
         default:
             break;
@@ -405,12 +470,13 @@ static esp_err_t _http_event_handle(esp_http_client_event_t *evt) {
  * Cloud Catalog Task
  * -------------------------------------------------------------------------- */
 static void _gs_cloud_fetch_task(void *pvParameters) {
-    gs_status.is_busy = true;
-    gs_status.last_error = GAME_STORE_ERR_OK;
+    (void)pvParameters;
+    _gs_status_set_error(GAME_STORE_ERR_OK);
     
     if (!wifi_mgr_is_connected()) {
-        gs_status.last_error = GAME_STORE_ERR_NO_WIFI;
-        gs_status.is_busy = false;
+        _gs_status_set_error(GAME_STORE_ERR_NO_WIFI);
+        _gs_status_set_busy(false);
+        current_task_handle = NULL;
         xEventGroupSetBits(gs_event_group, GS_EVT_CATALOG_FAIL);
         vTaskDelete(NULL);
         return;
@@ -423,12 +489,13 @@ static void _gs_cloud_fetch_task(void *pvParameters) {
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
     
-    char *buffer = heap_caps_malloc(32 * 1024, MALLOC_CAP_SPIRAM);
+    char *buffer = heap_caps_malloc(GS_CATALOG_BUFFER_SIZE, MALLOC_CAP_SPIRAM);
     if (!buffer) {
         ESP_LOGE(TAG, "Failed to allocate buffer for catalog");
-        gs_status.last_error = GAME_STORE_ERR_FS_ERROR;
+        _gs_status_set_error(GAME_STORE_ERR_FS_ERROR);
         esp_http_client_cleanup(client);
-        gs_status.is_busy = false;
+        _gs_status_set_busy(false);
+        current_task_handle = NULL;
         xEventGroupSetBits(gs_event_group, GS_EVT_CATALOG_FAIL);
         vTaskDelete(NULL);
         return;
@@ -437,27 +504,57 @@ static void _gs_cloud_fetch_task(void *pvParameters) {
     esp_err_t err = esp_http_client_open(client, 0);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to open HTTP connection: %s", esp_err_to_name(err));
-        gs_status.last_error = GAME_STORE_ERR_NETWORK;
+        _gs_status_set_error(GAME_STORE_ERR_NETWORK);
         goto fetch_cleanup;
     }
 
-    esp_http_client_fetch_headers(client);
+    int content_len = esp_http_client_fetch_headers(client);
+    if (content_len < 0) {
+        _gs_status_set_error(GAME_STORE_ERR_NETWORK);
+        goto fetch_cleanup;
+    }
+    if (content_len >= (int)GS_CATALOG_BUFFER_SIZE) {
+        ESP_LOGE(TAG, "Catalog too large: %d bytes", content_len);
+        _gs_status_set_error(GAME_STORE_ERR_BAD_METADATA);
+        goto fetch_cleanup;
+    }
+
     int read_len = 0;
     int total_read = 0;
     
-    while ((read_len = esp_http_client_read(client, buffer + total_read, 32768 - total_read - 1)) > 0) {
+    while ((read_len = esp_http_client_read(client, buffer + total_read, GS_CATALOG_BUFFER_SIZE - total_read - 1)) > 0) {
+        if (s_abort_requested) {
+            _gs_status_set_error(GAME_STORE_ERR_ABORTED);
+            break;
+        }
         total_read += read_len;
+        if (total_read >= (int)GS_CATALOG_BUFFER_SIZE - 1) {
+            ESP_LOGE(TAG, "Catalog buffer exhausted");
+            _gs_status_set_error(GAME_STORE_ERR_BAD_METADATA);
+            break;
+        }
     }
     buffer[total_read] = '\0';
     
+    game_store_status_t status;
+    _gs_status_snapshot(&status);
+    if (read_len < 0 && status.last_error == GAME_STORE_ERR_OK) {
+        _gs_status_set_error(GAME_STORE_ERR_NETWORK);
+        _gs_status_snapshot(&status);
+    }
+
+    if (status.last_error != GAME_STORE_ERR_OK) {
+        goto fetch_cleanup;
+    }
+
     if (total_read <= 0) {
-        gs_status.last_error = GAME_STORE_ERR_NETWORK;
+        _gs_status_set_error(GAME_STORE_ERR_NETWORK);
         goto fetch_cleanup;
     }
 
     cJSON *root = cJSON_Parse(buffer);
     if (!root) {
-        gs_status.last_error = GAME_STORE_ERR_BAD_METADATA;
+        _gs_status_set_error(GAME_STORE_ERR_BAD_METADATA);
         goto fetch_cleanup;
     }
 
@@ -471,6 +568,7 @@ static void _gs_cloud_fetch_task(void *pvParameters) {
             if (!cJSON_IsString(id_item)) continue;
             
             const char* gid = id_item->valuestring;
+            _gs_lock();
             game_entry_t *entry = _gs_local_catalog_find(gid);
             
             // Just a simple parsing logic for demonstration
@@ -500,12 +598,19 @@ static void _gs_cloud_fetch_task(void *pvParameters) {
                 if (cJSON_IsString(url)) strncpy(entry->url, url->valuestring, sizeof(entry->url)-1);
                 if (cJSON_IsNumber(mapper)) entry->mapper = mapper->valueint;
             }
+            _gs_unlock();
         }
     }
     cJSON_Delete(root);
     
     // Save merged catalog
-    _gs_local_catalog_save(local_catalog, local_catalog_count);
+    _gs_lock();
+    game_store_err_t save_err = _gs_local_catalog_save(local_catalog, local_catalog_count);
+    _gs_unlock();
+    if (save_err != GAME_STORE_ERR_OK) {
+        _gs_status_set_error(save_err);
+        goto fetch_cleanup;
+    }
     
     xEventGroupSetBits(gs_event_group, GS_EVT_CATALOG_DONE);
 
@@ -513,24 +618,44 @@ fetch_cleanup:
     free(buffer);
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
-    gs_status.is_busy = false;
-    if (gs_status.last_error != GAME_STORE_ERR_OK) {
+    _gs_status_set_busy(false);
+    game_store_status_t final_status;
+    _gs_status_snapshot(&final_status);
+    if (final_status.last_error != GAME_STORE_ERR_OK) {
         xEventGroupSetBits(gs_event_group, GS_EVT_CATALOG_FAIL);
     }
+    s_abort_requested = false;
     current_task_handle = NULL;
     vTaskDelete(NULL);
 }
 
 game_store_err_t game_store_refresh_catalog(void) {
-    if (gs_status.is_busy) return GAME_STORE_ERR_ABORTED;
+    game_store_status_t status;
+    _gs_status_snapshot(&status);
+    if (status.is_busy) return GAME_STORE_ERR_ABORTED;
     
     xEventGroupClearBits(gs_event_group, GS_EVT_CATALOG_DONE | GS_EVT_CATALOG_FAIL);
-    xTaskCreatePinnedToCore(_gs_cloud_fetch_task, "gs_cat", 8192, NULL, 5, &current_task_handle, 0);
+    s_abort_requested = false;
+    _gs_status_set_busy(true);
+    _gs_status_set_error(GAME_STORE_ERR_OK);
+    BaseType_t rc = xTaskCreatePinnedToCore(_gs_cloud_fetch_task, "gs_cat", 8192, NULL, 5, &current_task_handle, 0);
+    if (rc != pdPASS) {
+        current_task_handle = NULL;
+        _gs_status_set_busy(false);
+        _gs_status_set_error(GAME_STORE_ERR_NETWORK);
+        return GAME_STORE_ERR_NETWORK;
+    }
     
-    EventBits_t bits = xEventGroupWaitBits(gs_event_group, GS_EVT_CATALOG_DONE | GS_EVT_CATALOG_FAIL, pdTRUE, pdFALSE, portMAX_DELAY);
+    EventBits_t bits = xEventGroupWaitBits(gs_event_group, GS_EVT_CATALOG_DONE | GS_EVT_CATALOG_FAIL, pdTRUE, pdFALSE, GS_WAIT_TIMEOUT);
+    if (bits == 0) {
+        s_abort_requested = true;
+        _gs_status_set_error(GAME_STORE_ERR_NETWORK);
+        return GAME_STORE_ERR_NETWORK;
+    }
     
     if (bits & GS_EVT_CATALOG_DONE) return GAME_STORE_ERR_OK;
-    return gs_status.last_error;
+    _gs_status_snapshot(&status);
+    return status.last_error;
 }
 
 /* --------------------------------------------------------------------------
@@ -538,26 +663,24 @@ game_store_err_t game_store_refresh_catalog(void) {
  * -------------------------------------------------------------------------- */
 static void _gs_download_task(void *pvParameters) {
     const char *id = (const char*)pvParameters;
-    gs_status.is_busy = true;
-    gs_status.last_error = GAME_STORE_ERR_OK;
-    gs_status.progress_pct = 0;
-    gs_status.bytes_done = 0;
-    gs_status.bytes_total = 0;
-    strncpy(gs_status.active_game_id, id, sizeof(gs_status.active_game_id)-1);
+    game_store_status_t status;
+    _gs_status_reset_transfer(id);
     
+    _gs_lock();
     game_entry_t *entry = _gs_local_catalog_find(id);
+    _gs_unlock();
     if (!entry) {
-        gs_status.last_error = GAME_STORE_ERR_BAD_METADATA;
+        _gs_status_set_error(GAME_STORE_ERR_BAD_METADATA);
         goto dl_abort;
     }
 
     if (!wifi_mgr_is_connected()) {
-        gs_status.last_error = GAME_STORE_ERR_NO_WIFI;
+        _gs_status_set_error(GAME_STORE_ERR_NO_WIFI);
         goto dl_abort;
     }
 
     if (game_store_get_free_bytes() < entry->size_bytes + (entry->size_bytes / 10)) {
-        gs_status.last_error = GAME_STORE_ERR_NO_SPACE;
+        _gs_status_set_error(GAME_STORE_ERR_NO_SPACE);
         goto dl_abort;
     }
 
@@ -566,7 +689,7 @@ static void _gs_download_task(void *pvParameters) {
         snprintf(temp_path, sizeof(temp_path), "%s/%s.tmp", GAME_STORE_ROMS_DIR, id);
         FILE *f = fopen(temp_path, "wb");
         if (!f) {
-            gs_status.last_error = GAME_STORE_ERR_FS_ERROR;
+            _gs_status_set_error(GAME_STORE_ERR_FS_ERROR);
             goto dl_abort;
         }
 
@@ -583,7 +706,7 @@ static void _gs_download_task(void *pvParameters) {
             fclose(f);
             unlink(temp_path);
             esp_http_client_cleanup(client);
-            gs_status.last_error = GAME_STORE_ERR_FS_ERROR;
+            _gs_status_set_error(GAME_STORE_ERR_FS_ERROR);
             goto dl_abort;
         }
 
@@ -592,7 +715,7 @@ static void _gs_download_task(void *pvParameters) {
             fclose(f);
             unlink(temp_path);
             esp_http_client_cleanup(client);
-            gs_status.last_error = GAME_STORE_ERR_NETWORK;
+            _gs_status_set_error(GAME_STORE_ERR_NETWORK);
             goto dl_abort;
         }
         
@@ -603,13 +726,14 @@ static void _gs_download_task(void *pvParameters) {
         while ((read_len = esp_http_client_read(client, buffer, GAME_STORE_DL_CHUNK_SIZE)) > 0) {
             /* ── Cooperative abort check ───────────────────────────── */
             if (s_abort_requested) {
+                _gs_status_snapshot(&status);
                 ESP_LOGW(TAG, "Download aborted cooperatively after %d bytes",
-                         (int)gs_status.bytes_done);
-                gs_status.last_error = GAME_STORE_ERR_ABORTED;
+                         (int)status.bytes_done);
+                _gs_status_set_error(GAME_STORE_ERR_ABORTED);
                 break;
             }
             if (!wifi_mgr_is_connected()) {
-                gs_status.last_error = GAME_STORE_ERR_NO_WIFI;
+                _gs_status_set_error(GAME_STORE_ERR_NO_WIFI);
                 break;
             }
             fwrite(buffer, 1, read_len, f);
@@ -621,16 +745,17 @@ static void _gs_download_task(void *pvParameters) {
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
 
-        if (gs_status.last_error != GAME_STORE_ERR_OK || read_len < 0) {
+        _gs_status_snapshot(&status);
+        if (status.last_error != GAME_STORE_ERR_OK || read_len < 0) {
             unlink(temp_path);
-            if (gs_status.last_error == GAME_STORE_ERR_OK) gs_status.last_error = GAME_STORE_ERR_NETWORK;
+            if (status.last_error == GAME_STORE_ERR_OK) _gs_status_set_error(GAME_STORE_ERR_NETWORK);
             goto dl_abort;
         }
 
         // Validate CRC32
         if (crc != entry->crc32 && entry->crc32 != 0) {
             unlink(temp_path);
-            gs_status.last_error = GAME_STORE_ERR_CORRUPT_ROM;
+            _gs_status_set_error(GAME_STORE_ERR_CORRUPT_ROM);
             goto dl_abort;
         }
 
@@ -639,56 +764,91 @@ static void _gs_download_task(void *pvParameters) {
         snprintf(final_path, sizeof(final_path), "%s/%s.nes", GAME_STORE_ROMS_DIR, id);
         if (rename(temp_path, final_path) != 0) {
             unlink(temp_path);
-            gs_status.last_error = GAME_STORE_ERR_FS_ERROR;
+            _gs_status_set_error(GAME_STORE_ERR_FS_ERROR);
             goto dl_abort;
         }
 
+        _gs_lock();
         entry->is_installed = true;
-        _gs_local_catalog_save(local_catalog, local_catalog_count);
+        game_store_err_t save_err = _gs_local_catalog_save(local_catalog, local_catalog_count);
+        _gs_unlock();
+        if (save_err != GAME_STORE_ERR_OK) {
+            _gs_status_set_error(save_err);
+            goto dl_abort;
+        }
         xEventGroupSetBits(gs_event_group, GS_EVT_DL_DONE);
-        gs_status.is_busy = false;
+        _gs_status_set_busy(false);
+        s_abort_requested = false;
         current_task_handle = NULL;
         vTaskDelete(NULL);
         return;
     }
 
 dl_abort:
-    gs_status.is_busy = false;
+    _gs_status_set_busy(false);
+    s_abort_requested = false;
     xEventGroupSetBits(gs_event_group, GS_EVT_DL_FAIL);
     current_task_handle = NULL;
     vTaskDelete(NULL);
 }
 
 game_store_err_t game_store_install(const char* id) {
-    if (gs_status.is_busy) return GAME_STORE_ERR_ABORTED;
+    if (!id || id[0] == '\0') return GAME_STORE_ERR_BAD_METADATA;
+    game_store_status_t status;
+    _gs_status_snapshot(&status);
+    if (status.is_busy) return GAME_STORE_ERR_ABORTED;
     
     xEventGroupClearBits(gs_event_group, GS_EVT_DL_DONE | GS_EVT_DL_FAIL);
-    xTaskCreatePinnedToCore(_gs_download_task, "gs_dl", 8192, (void*)id, 5, &current_task_handle, 0);
+    s_abort_requested = false;
+    _gs_status_set_busy(true);
+    _gs_status_reset_transfer(id);
+    BaseType_t rc = xTaskCreatePinnedToCore(_gs_download_task, "gs_dl", 8192, (void*)id, 5, &current_task_handle, 0);
+    if (rc != pdPASS) {
+        current_task_handle = NULL;
+        _gs_status_set_busy(false);
+        _gs_status_set_error(GAME_STORE_ERR_NETWORK);
+        return GAME_STORE_ERR_NETWORK;
+    }
     
     // We could make this non-blocking by not waiting for bits, but the interface says it's blocking
-    EventBits_t bits = xEventGroupWaitBits(gs_event_group, GS_EVT_DL_DONE | GS_EVT_DL_FAIL, pdTRUE, pdFALSE, portMAX_DELAY);
+    EventBits_t bits = xEventGroupWaitBits(gs_event_group, GS_EVT_DL_DONE | GS_EVT_DL_FAIL, pdTRUE, pdFALSE, GS_WAIT_TIMEOUT);
+    if (bits == 0) {
+        s_abort_requested = true;
+        _gs_status_set_error(GAME_STORE_ERR_NETWORK);
+        return GAME_STORE_ERR_NETWORK;
+    }
     
     if (bits & GS_EVT_DL_DONE) return GAME_STORE_ERR_OK;
-    return gs_status.last_error;
+    _gs_status_snapshot(&status);
+    return status.last_error;
 }
 
 game_store_err_t game_store_delete(const char* id) {
-    if (gs_status.is_busy) return GAME_STORE_ERR_ABORTED;
+    if (!id || id[0] == '\0') return GAME_STORE_ERR_BAD_METADATA;
+    game_store_status_t status;
+    _gs_status_snapshot(&status);
+    if (status.is_busy) return GAME_STORE_ERR_ABORTED;
     
+    _gs_lock();
     game_entry_t *entry = _gs_local_catalog_find(id);
+    _gs_unlock();
     if (!entry) return GAME_STORE_ERR_BAD_METADATA;
 
     char final_path[128];
     snprintf(final_path, sizeof(final_path), "%s/%s.nes", GAME_STORE_ROMS_DIR, id);
     unlink(final_path);
     
+    _gs_lock();
     entry->is_installed = false;
-    _gs_local_catalog_save(local_catalog, local_catalog_count);
-    return GAME_STORE_ERR_OK;
+    game_store_err_t err = _gs_local_catalog_save(local_catalog, local_catalog_count);
+    _gs_unlock();
+    return err;
 }
 
 game_store_err_t game_store_abort(void) {
-    if (!gs_status.is_busy || !current_task_handle) {
+    game_store_status_t status;
+    _gs_status_snapshot(&status);
+    if (!status.is_busy || !current_task_handle) {
         return GAME_STORE_ERR_OK;  /* Nothing running — no-op */
     }
 
@@ -707,30 +867,10 @@ game_store_err_t game_store_abort(void) {
         vTaskDelay(pdMS_TO_TICKS(POLL_INTERVAL_MS));
         if (current_task_handle == NULL) {
             ESP_LOGI(TAG, "Download task exited cleanly after %d ms", (i + 1) * POLL_INTERVAL_MS);
-            break;
+            _gs_status_set_error(GAME_STORE_ERR_ABORTED);
+            return GAME_STORE_ERR_OK;
         }
     }
-
-    /* Safety net: if the task still hasn't exited after 600 ms (should never
-     * happen with a well-behaved loop), force-delete as a last resort and
-     * manually clean up the temp file. */
-    if (current_task_handle != NULL) {
-        ESP_LOGE(TAG, "Task did not exit in 600 ms — force-deleting (last resort)");
-        vTaskDelete(current_task_handle);
-        current_task_handle = NULL;
-
-        /* Best-effort temp file cleanup */
-        if (gs_status.active_game_id[0] != '\0') {
-            char temp_path[128];
-            snprintf(temp_path, sizeof(temp_path), "%s/%s.tmp",
-                     GAME_STORE_ROMS_DIR, gs_status.active_game_id);
-            unlink(temp_path);
-        }
-    }
-
-    s_abort_requested    = false;
-    gs_status.is_busy    = false;
-    gs_status.last_error = GAME_STORE_ERR_ABORTED;
+    _gs_status_set_error(GAME_STORE_ERR_ABORTED);
     return GAME_STORE_ERR_OK;
 }
-

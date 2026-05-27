@@ -21,6 +21,10 @@ extern void switch_to_grid();
 /* Hardcoded background for the liquid tank — matches the Cyberpunk theme */
 #define COLOR_BG  0x0821u
 
+static bool is_ota_ui_state(ota_state_t state) {
+    return state >= OTA_STATE_IDLE && state <= OTA_STATE_FAILED;
+}
+
 App_OTA::App_OTA()
     : smooth_progress(0), last_progress(0), activity(0),
       anim_time(0), shockwave_r(0),
@@ -55,8 +59,13 @@ void App_OTA::exit() {}
 void App_OTA::loop() {
     /* Drain queue — take newest message (non-blocking) */
     QueueHandle_t q = sys_mgr_get_ui_queue();
+    if (q == NULL) return;
+
     ui_message_t tmp;
     while (xQueueReceive(q, &tmp, 0) == pdTRUE) {
+        if (!is_ota_ui_state(tmp.state)) {
+            continue;
+        }
         local_msg = tmp;
         if (local_msg.state == OTA_STATE_FLASHING && start_tick_ms == 0) {
             start_tick_ms = xTaskGetTickCount() * portTICK_PERIOD_MS;

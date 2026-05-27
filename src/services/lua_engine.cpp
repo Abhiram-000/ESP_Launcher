@@ -36,7 +36,9 @@ LuaEngine& LuaEngine::instance() {
     return s;
 }
 
-LuaEngine::LuaEngine() : m_L(nullptr), _abort_requested(false), _start_ms(0) {}
+LuaEngine::LuaEngine()
+    : m_L(nullptr), m_exec_mutex(nullptr), m_log_mutex(nullptr),
+      _abort_requested(false), _start_ms(0) {}
 LuaEngine::~LuaEngine() { shutdown(); }
 
 // ─── PSRAM Allocator (satisfies LUA_ALLOC_FUNC) ──────────────────────────────
@@ -58,18 +60,49 @@ void LuaEngine::_vm_hook(lua_State* L, lua_Debug* /*ar*/) {
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────────
 bool LuaEngine::init() {
-    if (m_L) return true;
+    if (!m_exec_mutex) {
+        m_exec_mutex = xSemaphoreCreateRecursiveMutex();
+    }
+    if (!m_log_mutex) {
+        m_log_mutex = xSemaphoreCreateMutex();
+    }
+    if (!m_exec_mutex || !m_log_mutex) {
+        ESP_LOGE(TAG, "LuaEngine mutex allocation failed");
+        return false;
+    }
+    xSemaphoreTakeRecursive(m_exec_mutex, portMAX_DELAY);
+    if (m_L) {
+        xSemaphoreGiveRecursive(m_exec_mutex);
+        return true;
+    }
     m_L = lua_newstate(lua_psram_alloc, nullptr);
-    if (!m_L) { ESP_LOGE(TAG, "lua_newstate failed — OOM in PSRAM"); return false; }
+    if (!m_L) {
+        xSemaphoreGiveRecursive(m_exec_mutex);
+        ESP_LOGE(TAG, "lua_newstate failed — OOM in PSRAM");
+        return false;
+    }
     _open_safe_libs();
     _register_bindings();
     lua_sethook(m_L, _vm_hook, LUA_MASKCOUNT, AI_LUA_HOOK_INTERVAL);
     ESP_LOGI(TAG, "Lua 5.4.8 runtime ready (PSRAM)");
+    xSemaphoreGiveRecursive(m_exec_mutex);
     return true;
 }
 
 void LuaEngine::shutdown() {
+    if (m_exec_mutex) {
+        xSemaphoreTakeRecursive(m_exec_mutex, portMAX_DELAY);
+    }
     if (m_L) { lua_close(m_L); m_L = nullptr; }
+    if (m_exec_mutex) {
+        xSemaphoreGiveRecursive(m_exec_mutex);
+        vSemaphoreDelete(m_exec_mutex);
+        m_exec_mutex = nullptr;
+    }
+    if (m_log_mutex) {
+        vSemaphoreDelete(m_log_mutex);
+        m_log_mutex = nullptr;
+    }
 }
 
 void LuaEngine::request_abort() { _abort_requested = true; }
@@ -93,6 +126,8 @@ void LuaEngine::_open_safe_libs() {
 // ─── Execution ────────────────────────────────────────────────────────────────
 lua_engine_result_t LuaEngine::exec_string(const char* code) {
     lua_engine_result_t r = {};
+    if (!m_exec_mutex && !init()) { r.status = LUA_ENGINE_ERR_INIT; return r; }
+    xSemaphoreTakeRecursive(m_exec_mutex, portMAX_DELAY);
     if (!m_L && !init()) { r.status = LUA_ENGINE_ERR_INIT; return r; }
     _start_ms = (uint32_t)(esp_timer_get_time() / 1000);
     _abort_requested = false;
@@ -101,6 +136,7 @@ lua_engine_result_t LuaEngine::exec_string(const char* code) {
         const char* e = lua_tostring(m_L, -1);
         if (e) snprintf(r.error, sizeof(r.error), "%s", e);
         lua_settop(m_L, 0);
+        xSemaphoreGiveRecursive(m_exec_mutex);
         return r;
     }
     if (lua_pcall(m_L, 0, 0, 0) != LUA_OK) {
@@ -108,29 +144,40 @@ lua_engine_result_t LuaEngine::exec_string(const char* code) {
         const char* e = lua_tostring(m_L, -1);
         if (e) snprintf(r.error, sizeof(r.error), "%s", e);
         lua_settop(m_L, 0);
+        xSemaphoreGiveRecursive(m_exec_mutex);
         return r;
     }
     r.status = LUA_ENGINE_OK;
     r.elapsed_ms = (uint32_t)(esp_timer_get_time() / 1000) - _start_ms;
     lua_gc(m_L, LUA_GCCOLLECT, 0);
+    xSemaphoreGiveRecursive(m_exec_mutex);
     return r;
 }
 
 lua_engine_result_t LuaEngine::exec_file(const char* path) {
     lua_engine_result_t r = {};
+    if (!m_exec_mutex && !init()) { r.status = LUA_ENGINE_ERR_INIT; return r; }
+    xSemaphoreTakeRecursive(m_exec_mutex, portMAX_DELAY);
     FILE* f = fopen(path, "r");
     if (!f) {
         r.status = LUA_ENGINE_ERR_COMPILE;
         snprintf(r.error, sizeof(r.error), "cannot open: %s", path);
+        xSemaphoreGiveRecursive(m_exec_mutex);
         return r;
     }
     char* buf = (char*)heap_caps_malloc(AI_LUA_MAX_SCRIPT_BYTES, MALLOC_CAP_SPIRAM);
-    if (!buf) { fclose(f); r.status = LUA_ENGINE_ERR_INIT; return r; }
+    if (!buf) {
+        fclose(f);
+        r.status = LUA_ENGINE_ERR_INIT;
+        xSemaphoreGiveRecursive(m_exec_mutex);
+        return r;
+    }
     size_t n = fread(buf, 1, AI_LUA_MAX_SCRIPT_BYTES - 1, f);
     buf[n] = '\0';
     fclose(f);
     r = exec_string(buf);
     heap_caps_free(buf);
+    xSemaphoreGiveRecursive(m_exec_mutex);
     return r;
 }
 
@@ -146,11 +193,25 @@ static int l_sys_free_heap(lua_State* L) {
 }
 static std::string s_log_buffer;
 
-void LuaEngine::clear_log_buffer() { s_log_buffer.clear(); }
+void LuaEngine::clear_log_buffer() {
+    if (m_log_mutex) {
+        xSemaphoreTake(m_log_mutex, portMAX_DELAY);
+    }
+    s_log_buffer.clear();
+    if (m_log_mutex) {
+        xSemaphoreGive(m_log_mutex);
+    }
+}
 void LuaEngine::append_log(const char* text) {
+    if (m_log_mutex) {
+        xSemaphoreTake(m_log_mutex, portMAX_DELAY);
+    }
     if (s_log_buffer.size() + strlen(text) < 4096) {
         s_log_buffer += text;
         s_log_buffer += "\n";
+    }
+    if (m_log_mutex) {
+        xSemaphoreGive(m_log_mutex);
     }
 }
 const char* LuaEngine::get_log_buffer() { return s_log_buffer.c_str(); }

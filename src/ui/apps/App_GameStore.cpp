@@ -75,29 +75,30 @@ void App_GameStore::loop() {
     _spinner_angle += 0.15f;
     if (_spinner_angle > 6.283f) _spinner_angle -= 6.283f;
 
-    const game_store_status_t* st = game_store_get_status();
+    game_store_status_t st = {};
+    game_store_get_status(&st);
 
     // Watch for completed downloads while on the downloading screen
-    if (_screen == Screen::Downloading && !st->is_busy) {
-        if (st->last_error == GAME_STORE_ERR_OK) {
+    if (_screen == Screen::Downloading && !st.is_busy) {
+        if (st.last_error == GAME_STORE_ERR_OK) {
             _refresh_catalog_local();
             _screen = Screen::LocalList;
-        } else if (st->last_error == GAME_STORE_ERR_NO_SPACE) {
+        } else if (st.last_error == GAME_STORE_ERR_NO_SPACE) {
             _build_delete_candidates(_catalog[_pending_install_idx].size_bytes);
             _screen = Screen::SpaceWarn;
         } else {
-            _last_err = st->last_error;
+            _last_err = st.last_error;
             _screen   = Screen::Error;
         }
     }
 
     // Watch cloud-loading completion
-    if (_screen == Screen::CloudLoading && !st->is_busy) {
-        if (st->last_error == GAME_STORE_ERR_OK) {
+    if (_screen == Screen::CloudLoading && !st.is_busy) {
+        if (st.last_error == GAME_STORE_ERR_OK) {
             _refresh_catalog_local();
             _screen = Screen::StoreList;
         } else {
-            _last_err = st->last_error;
+            _last_err = st.last_error;
             _screen   = Screen::Error;
         }
     }
@@ -420,7 +421,8 @@ void App_GameStore::_render_detail(LGFX_Sprite* c) {
 }
 
 void App_GameStore::_render_downloading(LGFX_Sprite* c) {
-    const game_store_status_t* st = game_store_get_status();
+    game_store_status_t st = {};
+    game_store_get_status(&st);
 
     _draw_header(c, "DOWNLOADING", C_ACCENT());
 
@@ -432,18 +434,18 @@ void App_GameStore::_render_downloading(LGFX_Sprite* c) {
         c->drawString(_catalog[_pending_install_idx].name, 80, 34);
 
     // Liquid progress bar (large)
-    _draw_progress_bar(c, 8, 46, 144, 20, st->progress_pct, C_ACCENT());
+    _draw_progress_bar(c, 8, 46, 144, 20, st.progress_pct, C_ACCENT());
 
     // Percentage
     char pct_str[8];
-    snprintf(pct_str, sizeof(pct_str), "%d%%", st->progress_pct);
+    snprintf(pct_str, sizeof(pct_str), "%d%%", st.progress_pct);
     c->setTextColor(C_TEXT());
     c->drawString(pct_str, 80, 76);
 
     // KB done / total
     char kb[32];
     snprintf(kb, sizeof(kb), "%dKB / %dKB",
-             st->bytes_done / 1024, st->bytes_total / 1024);
+             st.bytes_done / 1024, st.bytes_total / 1024);
     c->setTextColor(C_DIM());
     c->drawString(kb, 80, 90);
 

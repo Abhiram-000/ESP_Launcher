@@ -58,25 +58,26 @@ void App_HackStore::loop() {
 
     _wifi_scanner.loop();
 
-    const hack_store_status_t* st = hack_store_get_status();
+    hack_store_status_t st = {};
+    hack_store_get_status(&st);
 
-    if (_screen == Screen::Downloading && !st->is_busy) {
-        if (st->last_error == HACK_STORE_ERR_OK) {
+    if (_screen == Screen::Downloading && !st.is_busy) {
+        if (st.last_error == HACK_STORE_ERR_OK) {
             // Success triggers a reboot, we shouldn't really get here if it succeeds
             _refresh_catalog_local();
             _screen = Screen::LocalList;
         } else {
-            _last_err = st->last_error;
+            _last_err = st.last_error;
             _screen   = Screen::Error;
         }
     }
 
-    if (_screen == Screen::CloudLoading && !st->is_busy) {
-        if (st->last_error == HACK_STORE_ERR_OK) {
+    if (_screen == Screen::CloudLoading && !st.is_busy) {
+        if (st.last_error == HACK_STORE_ERR_OK) {
             _refresh_catalog_local();
             _screen = Screen::StoreList;
         } else {
-            _last_err = st->last_error;
+            _last_err = st.last_error;
             _screen   = Screen::Error;
         }
     }
@@ -309,7 +310,8 @@ void App_HackStore::_render_detail(LGFX_Sprite* c) {
 }
 
 void App_HackStore::_render_downloading(LGFX_Sprite* c) {
-    const hack_store_status_t* st = hack_store_get_status();
+    hack_store_status_t st = {};
+    hack_store_get_status(&st);
 
     _draw_header(c, "FLASHING", COLOR_RED);
 
@@ -319,16 +321,16 @@ void App_HackStore::_render_downloading(LGFX_Sprite* c) {
     if (_pending_install_idx >= 0)
         c->drawString(_catalog[_pending_install_idx].name, 80, 34);
 
-    _draw_progress_bar(c, 8, 46, 144, 20, st->progress_pct, COLOR_RED);
+    _draw_progress_bar(c, 8, 46, 144, 20, st.progress_pct, COLOR_RED);
 
     char pct_str[8];
-    snprintf(pct_str, sizeof(pct_str), "%d%%", st->progress_pct);
+    snprintf(pct_str, sizeof(pct_str), "%d%%", st.progress_pct);
     c->setTextColor(C_TEXT());
     c->drawString(pct_str, 80, 76);
 
     char kb[32];
     snprintf(kb, sizeof(kb), "%dKB / %dKB",
-             (int)(st->bytes_done / 1024), (int)(st->bytes_total / 1024));
+             (int)(st.bytes_done / 1024), (int)(st.bytes_total / 1024));
     c->setTextColor(C_DIM());
     c->drawString(kb, 80, 90);
 

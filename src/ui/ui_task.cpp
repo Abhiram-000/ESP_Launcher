@@ -112,8 +112,16 @@ void switch_to_app(IApp* next_app) {
     LGFX_Sprite new_snap(&tft);
     old_snap.setPsram(true);
     new_snap.setPsram(true);
-    bool transition_ok = old_snap.createSprite(tft.width(), tft.height() + 4)
-                      && new_snap.createSprite(tft.width(), tft.height() + 4);
+    old_snap.setColorDepth(16);
+    new_snap.setColorDepth(16);
+    bool old_snap_ok = old_snap.createSprite(tft.width(), tft.height() + 4);
+    bool new_snap_ok = new_snap.createSprite(tft.width(), tft.height() + 4);
+    bool transition_ok = old_snap_ok && new_snap_ok;
+    if (!transition_ok) {
+        if (old_snap_ok) old_snap.deleteSprite();
+        if (new_snap_ok) new_snap.deleteSprite();
+        ESP_LOGW(TAG, "Skipping app transition animation due to sprite allocation failure");
+    }
 
     // Render current state into old_snap
     if (transition_ok && current_app) {
@@ -169,9 +177,13 @@ static void ui_task_runner(void *arg) {
     }
     tft.setBrightness(current_brightness);
 
-    canvas.setPsram(true);
-    canvas.createSprite(tft.width(), tft.height() + 4);
     canvas.setColorDepth(16);
+    canvas.setPsram(true);
+    if (!canvas.createSprite(tft.width(), tft.height() + 4)) {
+        ESP_LOGE(TAG, "Failed to create main UI canvas");
+        vTaskDelete(nullptr);
+        return;
+    }
 
     theme_init();
 

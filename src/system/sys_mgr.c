@@ -39,8 +39,11 @@ void sys_mgr_send_ui_msg(ota_state_t state, float progress, float kbps, const ch
         ui_msg.msg[sizeof(ui_msg.msg) - 1] = '\0';
     }
 
-    if (xQueueSend(s_ui_queue, &ui_msg, pdMS_TO_TICKS(10)) != pdTRUE) {
-        ESP_LOGW(TAG, "UI queue full, message dropped");
+    if (xQueueSend(s_ui_queue, &ui_msg, 0) != pdTRUE) {
+        ui_message_t dropped_msg;
+        (void)xQueueReceive(s_ui_queue, &dropped_msg, 0);
+        if (xQueueSend(s_ui_queue, &ui_msg, 0) != pdTRUE) {
+            ESP_LOGW(TAG, "UI queue full, latest message dropped");
+        }
     }
 }
-

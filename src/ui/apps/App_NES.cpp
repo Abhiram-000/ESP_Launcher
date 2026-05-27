@@ -111,6 +111,15 @@ App_NES::App_NES()
 
 App_NES::~App_NES() {}
 
+void App_NES::_cleanup_resources() {
+    if (_buffer_mutex) { vSemaphoreDelete(_buffer_mutex); _buffer_mutex = nullptr; }
+    if (_front_buffer) { heap_caps_free(_front_buffer);   _front_buffer = nullptr; }
+    if (_back_buffer)  { heap_caps_free(_back_buffer);    _back_buffer  = nullptr; }
+
+    nes_frame_buffer = nullptr;
+    nes_frame_sem    = nullptr;
+}
+
 void App_NES::setRomPath(const char* path) {
     strncpy(_rom_path, path, sizeof(_rom_path) - 1);
     _rom_path[sizeof(_rom_path) - 1] = '\0';
@@ -143,6 +152,7 @@ void App_NES::init() {
     if (!_front_buffer || !_back_buffer) {
         ESP_LOGE(TAG, "Framebuffer alloc failed! PSRAM free: %u",
                  heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        _cleanup_resources();
         _emu_task_done = true;
         return;
     }
@@ -152,6 +162,7 @@ void App_NES::init() {
     _buffer_mutex = xSemaphoreCreateMutex();
     if (!_buffer_mutex) {
         ESP_LOGE(TAG, "Mutex creation failed");
+        _cleanup_resources();
         _emu_task_done = true;
         return;
     }
@@ -186,6 +197,7 @@ void App_NES::init() {
     );
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create emulator task!");
+        _cleanup_resources();
         _emu_task_done = true;
     }
 }
@@ -200,20 +212,15 @@ void App_NES::exit() {
             vTaskDelay(pdMS_TO_TICKS(10));
             if (_emu_task_done) break;
         }
-        eTaskState st = eTaskGetState(_emu_task);
-        if (st != eDeleted) {
+        if (!_emu_task_done) {
+            eTaskState st = eTaskGetState(_emu_task);
             ESP_LOGW(TAG, "Force-deleting emulator task (state=%d)", (int)st);
             vTaskDelete(_emu_task);
         }
         _emu_task = nullptr;
     }
 
-    if (_buffer_mutex) { vSemaphoreDelete(_buffer_mutex); _buffer_mutex = nullptr; }
-    if (_front_buffer) { heap_caps_free(_front_buffer);   _front_buffer = nullptr; }
-    if (_back_buffer)  { heap_caps_free(_back_buffer);    _back_buffer  = nullptr; }
-
-    nes_frame_buffer = nullptr;
-    nes_frame_sem    = nullptr;
+    _cleanup_resources();
 }
 
 void App_NES::loop() {
@@ -224,11 +231,7 @@ void App_NES::loop() {
         // Clear the flag first so we don't fire twice
         _emu_task_done = false;
         // Clean up resources before handing control back
-        if (_buffer_mutex) { vSemaphoreDelete(_buffer_mutex); _buffer_mutex = nullptr; }
-        if (_front_buffer) { heap_caps_free(_front_buffer);   _front_buffer = nullptr; }
-        if (_back_buffer)  { heap_caps_free(_back_buffer);    _back_buffer  = nullptr; }
-        nes_frame_buffer = nullptr;
-        nes_frame_sem    = nullptr;
+        _cleanup_resources();
         _emu_task        = nullptr;
         onEmulatorExit();   // <-- switches app (called on UI task / Core 1)
         return;

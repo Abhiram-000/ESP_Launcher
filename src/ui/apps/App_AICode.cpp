@@ -20,11 +20,17 @@ const char* App_AICode::MENU_LABELS[App_AICode::MENU_ITEMS] = {
 // ─── LLM streaming callback (called from background task) ─────────────────
 bool App_AICode::_on_llm_chunk(const char* token, size_t len, void* user) {
     App_AICode* self = (App_AICode*)user;
+    if (self->_state_mutex) {
+        xSemaphoreTake(self->_state_mutex, portMAX_DELAY);
+    }
     self->_llm_reply_acc.append(token, len);
     // Append to display buffer (trim if too long)
     self->_chat_display.append(token, len);
     if (self->_chat_display.size() > AIAPP_MAX_RESPONSE_LEN)
         self->_chat_display.erase(0, self->_chat_display.size() - AIAPP_MAX_RESPONSE_LEN);
+    if (self->_state_mutex) {
+        xSemaphoreGive(self->_state_mutex);
+    }
     return true;
 }
 
@@ -34,12 +40,18 @@ App_AICode::App_AICode()
       _menu_sel(0),
       _chat_select_sel(0),
       _llm_busy(false), _llm_done(false),
+      _state_mutex(nullptr),
       _ide_cursor(0), _ide_scroll_line(0), _ide_dirty(false),
-      _script_sel(0)
+      _script_sel(0),
+      _lua_done(false)
 {}
 
 App_AICode::~App_AICode() {
     LuaEngine::instance().shutdown();
+    if (_state_mutex) {
+        vSemaphoreDelete(_state_mutex);
+        _state_mutex = nullptr;
+    }
 }
 
 // ─── Lifecycle ────────────────────────────────────────────────────────────
@@ -57,6 +69,12 @@ void App_AICode::init() {
     _ide_cursor    = 0;
     _ide_scroll_line = 0;
     _ide_dirty     = false;
+    _lua_done      = false;
+
+    if (_state_mutex == nullptr) {
+        _state_mutex = xSemaphoreCreateMutex();
+    }
+    configASSERT(_state_mutex != nullptr);
 
     _ensure_ai_dirs();
     llm_client_init();
@@ -72,13 +90,53 @@ void App_AICode::init() {
 }
 
 void App_AICode::exit() {
-    _llm_busy = false;
+    if (_state_mutex) {
+        xSemaphoreTake(_state_mutex, portMAX_DELAY);
+        _llm_busy = false;
+        xSemaphoreGive(_state_mutex);
+    } else {
+        _llm_busy = false;
+    }
+}
+
+void App_AICode::_mark_llm_finished() {
+    if (_state_mutex) {
+        xSemaphoreTake(_state_mutex, portMAX_DELAY);
+        _llm_busy = false;
+        _llm_done = true;
+        xSemaphoreGive(_state_mutex);
+    } else {
+        _llm_busy = false;
+        _llm_done = true;
+    }
+}
+
+void App_AICode::_publish_lua_result(const lua_engine_result_t& result) {
+    if (_state_mutex) {
+        xSemaphoreTake(_state_mutex, portMAX_DELAY);
+        _lua_result = result;
+        _lua_done = true;
+        xSemaphoreGive(_state_mutex);
+    } else {
+        _lua_result = result;
+        _lua_done = true;
+    }
 }
 
 // ─── Loop ────────────────────────────────────────────────────────────────
 void App_AICode::loop() {
     _anim += 0.05f;
     _wifi_scanner.loop();
+
+    if (_state_mutex) {
+        xSemaphoreTake(_state_mutex, portMAX_DELAY);
+        if (_lua_done) {
+            _lua_done = false;
+            _screen = Screen::LUA_RESULT;
+        }
+        _llm_done = false;
+        xSemaphoreGive(_state_mutex);
+    }
 
     // After scanner completes connection, proceed to API key or main menu
     if (_screen == Screen::WIFI_CHECK && !_wifi_scanner.isActive()) {
@@ -149,7 +207,7 @@ void App_AICode::handleInput(input_event_t ev) {
                     [this]() { this->_screen = Screen::MAIN_MENU; }
                 );
             }
-            if (ev == BTN_LEFT) { switch_to_grid(); }
+            if (ev == BTN_LEFT) { _screen = Screen::MAIN_MENU; }
             break;
 
         case Screen::MAIN_MENU:
@@ -183,7 +241,14 @@ void App_AICode::handleInput(input_event_t ev) {
 
         case Screen::CHAT:
             if (ev == BTN_LEFT) { _screen = Screen::CHAT_SELECT; }
-            if (ev == BTN_SELECT && !_llm_busy) {
+            {
+                bool llm_busy = _llm_busy;
+                if (_state_mutex) {
+                    xSemaphoreTake(_state_mutex, portMAX_DELAY);
+                    llm_busy = _llm_busy;
+                    xSemaphoreGive(_state_mutex);
+                }
+                if (ev == BTN_SELECT && !llm_busy) {
                 _chat_input = "";
                 _screen = Screen::CHAT_INPUT;
                 _keyboard.begin("Message:",
@@ -196,6 +261,7 @@ void App_AICode::handleInput(input_event_t ev) {
                     },
                     [this]() { this->_screen = Screen::CHAT; }
                 );
+            }
             }
             break;
 

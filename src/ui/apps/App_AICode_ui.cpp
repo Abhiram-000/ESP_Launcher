@@ -168,8 +168,18 @@ void App_AICode::draw_chat(LGFX_Sprite* c) {
     c->setFont(&fonts::Font0); c->setTextColor(theme_get_text());
     c->setTextDatum(textdatum_t::top_left);
     int y = 18, line_h = 10;
-    const char* txt = _chat_display.c_str();
-    int start = (int)_chat_display.size() - (H - 50) / line_h * 20;
+    std::string chat_display;
+    bool llm_busy = _llm_busy;
+    if (_state_mutex) {
+        xSemaphoreTake(_state_mutex, portMAX_DELAY);
+        chat_display = _chat_display;
+        llm_busy = _llm_busy;
+        xSemaphoreGive(_state_mutex);
+    } else {
+        chat_display = _chat_display;
+    }
+    const char* txt = chat_display.c_str();
+    int start = (int)chat_display.size() - (H - 50) / line_h * 20;
     if (start < 0) start = 0;
     char line[24] = {};
     int lp = 0;
@@ -180,13 +190,13 @@ void App_AICode::draw_chat(LGFX_Sprite* c) {
     }
     if (lp) { line[lp] = '\0'; c->drawString(line, 4, y); }
 
-    if (_llm_busy) {
+    if (llm_busy) {
         float a = fmodf(_anim * 5.0f, 360.0f);
         c->drawArc(W - 12, H - 22, 6, 4, (int)a, (int)a+120, theme_get_accent());
     }
     c->setTextColor(theme_get_text_dim());
     c->setTextDatum(textdatum_t::bottom_center);
-    c->drawString(_llm_busy ? "Responding..." : "SELECT=Type  L=Back", W/2, H-2);
+    c->drawString(llm_busy ? "Responding..." : "SELECT=Type  L=Back", W/2, H-2);
 }
 
 void App_AICode::draw_ide(LGFX_Sprite* c) {
@@ -251,14 +261,26 @@ void App_AICode::draw_lua_running(LGFX_Sprite* c) {
 }
 
 void App_AICode::draw_lua_result(LGFX_Sprite* c) {
-    bool ok = _lua_result.status == LUA_ENGINE_OK;
+    lua_engine_result_t lua_result = _lua_result;
+    if (_state_mutex) {
+        xSemaphoreTake(_state_mutex, portMAX_DELAY);
+        lua_result = _lua_result;
+        xSemaphoreGive(_state_mutex);
+    }
+    bool ok = lua_result.status == LUA_ENGINE_OK;
     draw_header(c, ok ? "SCRIPT OK" : "SCRIPT ERROR");
     uint16_t col = ok ? theme_get_success() : theme_get_fail();
     c->setFont(&fonts::Font0); c->setTextColor(col);
     c->setTextDatum(textdatum_t::top_left);
     int y = 20;
-    const char* msg = ok ? ("Done in " + std::to_string(_lua_result.elapsed_ms) + "ms").c_str()
-                         : _lua_result.error;
+    std::string ok_msg;
+    const char* msg = nullptr;
+    if (ok) {
+        ok_msg = "Done in " + std::to_string(lua_result.elapsed_ms) + "ms";
+        msg = ok_msg.c_str();
+    } else {
+        msg = lua_result.error;
+    }
     c->drawString(msg, 4, y);
     c->setTextColor(theme_get_text_dim()); c->setTextDatum(textdatum_t::bottom_center);
     c->drawString("SELECT=Back", c->width()/2, c->height()-2);
@@ -332,22 +354,54 @@ struct _LLMSendArgs { App_AICode* self; char msg[AIAPP_MAX_INPUT_LEN]; };
 static void _llm_task(void* arg) {
     auto* a = (_LLMSendArgs*)arg;
     llm_client_send(a->msg, App_AICode::_on_llm_chunk, a->self);
-    a->self->_llm_busy = false;
-    a->self->_llm_done = true;
+    a->self->_mark_llm_finished();
     delete a;
     vTaskDelete(nullptr);
 }
 
 void App_AICode::_send_chat_message() {
-    if (_chat_input.empty() || _llm_busy) return;
-    _chat_display += "\n[You] " + _chat_input + "\n[AI] ";
-    _llm_busy = true; _llm_done = false;
+    if (_chat_input.empty()) return;
+    if (_state_mutex) {
+        xSemaphoreTake(_state_mutex, portMAX_DELAY);
+        if (_llm_busy) {
+            xSemaphoreGive(_state_mutex);
+            return;
+        }
+        _chat_display += "\n[You] " + _chat_input + "\n[AI] ";
+        _llm_busy = true;
+        _llm_done = false;
+        xSemaphoreGive(_state_mutex);
+    } else if (_llm_busy) {
+        return;
+    }
     auto* args = new _LLMSendArgs{};
+    if (!args) {
+        if (_state_mutex) {
+            xSemaphoreTake(_state_mutex, portMAX_DELAY);
+            _llm_busy = false;
+            xSemaphoreGive(_state_mutex);
+        } else {
+            _llm_busy = false;
+        }
+        return;
+    }
     args->self = this;
     strncpy(args->msg, _chat_input.c_str(), AIAPP_MAX_INPUT_LEN - 1);
     _chat_input = "";
-    xTaskCreatePinnedToCore(_llm_task, "llm_task", AI_WORKER_TASK_STACK,
-                            args, AI_WORKER_TASK_PRIORITY, nullptr, AI_WORKER_TASK_CORE);
+    BaseType_t rc = xTaskCreatePinnedToCore(_llm_task, "llm_task", AI_WORKER_TASK_STACK,
+                                            args, AI_WORKER_TASK_PRIORITY, nullptr, AI_WORKER_TASK_CORE);
+    if (rc != pdPASS) {
+        delete args;
+        if (_state_mutex) {
+            xSemaphoreTake(_state_mutex, portMAX_DELAY);
+            _llm_busy = false;
+            _llm_done = true;
+            xSemaphoreGive(_state_mutex);
+        } else {
+            _llm_busy = false;
+            _llm_done = true;
+        }
+    }
 }
 
 // Lua runs on worker task too so UI stays at 40fps
@@ -355,17 +409,33 @@ struct _LuaRunArgs { App_AICode* self; char path[128]; };
 
 static void _lua_task(void* arg) {
     auto* a = (_LuaRunArgs*)arg;
-    a->self->_lua_result = LuaEngine::instance().exec_file(a->path);
-    a->self->_screen = App_AICode::Screen::LUA_RESULT;
+    lua_engine_result_t result = LuaEngine::instance().exec_file(a->path);
+    a->self->_publish_lua_result(result);
     delete a;
     vTaskDelete(nullptr);
 }
 
 void App_AICode::_run_lua_script(const std::string& path) {
     _screen = Screen::LUA_RUNNING;
+    _lua_done = false;
     auto* args = new _LuaRunArgs{};
+    if (!args) {
+        _lua_result = {};
+        _lua_result.status = LUA_ENGINE_ERR_INIT;
+        snprintf(_lua_result.error, sizeof(_lua_result.error), "failed to start task");
+        _screen = Screen::LUA_RESULT;
+        return;
+    }
     args->self = this;
     strncpy(args->path, path.c_str(), 127);
-    xTaskCreatePinnedToCore(_lua_task, "lua_task", AI_WORKER_TASK_STACK,
-                            args, AI_WORKER_TASK_PRIORITY, nullptr, AI_WORKER_TASK_CORE);
+    args->path[127] = '\0';
+    BaseType_t rc = xTaskCreatePinnedToCore(_lua_task, "lua_task", AI_WORKER_TASK_STACK,
+                                            args, AI_WORKER_TASK_PRIORITY, nullptr, AI_WORKER_TASK_CORE);
+    if (rc != pdPASS) {
+        delete args;
+        _lua_result = {};
+        _lua_result.status = LUA_ENGINE_ERR_INIT;
+        snprintf(_lua_result.error, sizeof(_lua_result.error), "failed to start task");
+        _screen = Screen::LUA_RESULT;
+    }
 }

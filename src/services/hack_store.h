@@ -76,7 +76,7 @@ hack_store_err_t hack_store_abort(void);
 /**
  * @brief Get live status of the service (for UI).
  */
-const hack_store_status_t* hack_store_get_status(void);
+void hack_store_get_status(hack_store_status_t* out);
 
 #ifdef __cplusplus
 }

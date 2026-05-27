@@ -33,6 +33,8 @@ public:
     volatile bool _emu_task_done;
 
 private:
+    void _cleanup_resources();
+
     char              _rom_path[256];
     uint16_t*         _front_buffer;   // Displayed by UI task (Core 1)
     uint16_t*         _back_buffer;    // Written by emulator (Core 0)

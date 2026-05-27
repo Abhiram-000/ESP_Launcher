@@ -12,6 +12,7 @@
 
 /* Use Lua's official C++ wrapper header */
 #include "lua.hpp"
+#include "freertos/semphr.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -78,6 +79,8 @@ private:
     LuaEngine& operator=(const LuaEngine&) = delete;
 
     lua_State* m_L;
+    SemaphoreHandle_t m_exec_mutex;
+    SemaphoreHandle_t m_log_mutex;
     volatile bool _abort_requested;
     uint32_t  _start_ms;
 

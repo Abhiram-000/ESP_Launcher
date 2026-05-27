@@ -18,6 +18,7 @@
 #include "../../services/lua_engine.h"
 #include "../components/UI_WifiScanner.h"
 #include "../components/UI_Keyboard.h"
+#include "freertos/semphr.h"
 #include <string>
 #include <vector>
 #include <stdint.h>
@@ -79,6 +80,7 @@ public:
     volatile bool _llm_busy;
     bool _llm_done;
     std::string _llm_reply_acc;        /* Accumulates streamed reply       */
+    SemaphoreHandle_t _state_mutex;
 
     /* ── IDE / Editor ────────────────────────────────────────────────── */
     std::string  _ide_buf;             /* Script text                      */
@@ -94,6 +96,7 @@ public:
     /* ── Lua result ──────────────────────────────────────────────────── */
     std::string _lua_output;
     lua_engine_result_t _lua_result;
+    bool _lua_done;
 
     /* ── Rendering helpers ───────────────────────────────────────────── */
     uint16_t blend(uint16_t fg, uint16_t bg, float a);
@@ -119,8 +122,9 @@ public:
     void _save_ide_file();
     void _run_lua_script(const std::string& path);
     void _send_chat_message();
+    void _mark_llm_finished();
+    void _publish_lua_result(const lua_engine_result_t& result);
 
     /* ── LLM streaming callback (static, passed to llm_client_send) ─── */
     static bool _on_llm_chunk(const char* token, size_t len, void* user);
 };
-

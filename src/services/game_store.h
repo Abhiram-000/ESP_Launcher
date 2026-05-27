@@ -76,7 +76,7 @@ game_store_err_t game_store_abort(void);
  * @brief Get the current status of the game store (e.g., download progress).
  * Safe to call from UI task.
  */
-const game_store_status_t* game_store_get_status(void);
+void game_store_get_status(game_store_status_t* out);
 
 /**
  * @brief Get a merged list of games (local + cloud).
