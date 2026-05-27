@@ -1,4 +1,92 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "instructions": ["esp32_system_prompt.md"]
+  "instructions": ["esp32_system_prompt.md"],
+  "model": "omniroute/kiro/deepseek-3.2",
+  "provider": {
+    "omniroute": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "OmniRoute AI Gateway",
+      "options": {
+        "baseURL": "http://localhost:20128/v1"
+      },
+      "models": {
+        "morph/morph-v3-fast": {
+          "name": "Morph v3 Fast"
+        },
+        "morph/morph-v3-large": {
+          "name": "Morph v3 Large"
+        },
+        "kiro/claude-haiku-4.5": {
+          "name": "Kiro Claude Haiku 4.5"
+        },
+        "kiro/claude-sonnet-4.5": {
+          "name": "Kiro Claude Sonnet 4.5"
+        },
+        "kiro/deepseek-3.2": {
+          "name": "Kiro DeepSeek 3.2"
+        },
+        "kiro/glm-5": {
+          "name": "Kiro GLM 5"
+        },
+        "kiro/minimax-m2.1": {
+          "name": "Kiro MiniMax M2.1"
+        },
+        "kiro/minimax-m2.5": {
+          "name": "Kiro MiniMax M2.5"
+        },
+        "kiro/qwen3-coder-next": {
+          "name": "Kiro Qwen3 Coder Next"
+        },
+        "gemini-cli/gemini-1.5-flash": {
+          "name": "Gemini CLI 1.5 Flash"
+        },
+        "gemini-cli/gemini-3-flash-preview": {
+          "name": "Gemini CLI 3 Flash Preview"
+        },
+        "gemini-cli/gemini-3.1-flash-lite-preview": {
+          "name": "Gemini CLI 3.1 Flash Lite Preview"
+        },
+        "gemini/gemini-2.0-flash": {
+          "name": "Gemini 2.0 Flash"
+        },
+        "gemini/gemini-2.5-flash": {
+          "name": "Gemini 2.5 Flash"
+        },
+        "gemini/gemini-2.5-flash-lite": {
+          "name": "Gemini 2.5 Flash Lite"
+        },
+        "gemini/gemini-3-flash-preview": {
+          "name": "Gemini 3 Flash Preview"
+        },
+        "gemini/gemini-3.1-flash-lite": {
+          "name": "Gemini 3.1 Flash Lite"
+        },
+        "gemini/gemini-3.5-flash": {
+          "name": "Gemini 3.5 Flash"
+        },
+        "gemini/gemini-flash-latest": {
+          "name": "Gemini Flash Latest"
+        },
+        "gemini/gemini-flash-lite-latest": {
+          "name": "Gemini Flash Lite Latest"
+        },
+        "gemini/gemini-robotics-er-1.6-preview": {
+          "name": "Gemini Robotics ER 1.6 Preview"
+        },
+        "gemini/gemma-4-26b-a4b-it": {
+          "name": "Gemma 4 26B"
+        },
+        "gemini/gemma-4-31b-it": {
+          "name": "Gemma 4 31B"
+        },
+        "nvidia/deepseek-ai/deepseek-v4-pro": {
+          "name": "NVIDIA DeepSeek V4 Pro"
+        },
+        "openrouter/auto": {
+          "name": "OpenRouter Auto"
+        }
+      }
+    }
+  }
 }
+

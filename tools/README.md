@@ -38,3 +38,4 @@ The Store Manager is a desktop GUI tool that automates the management of your Ci
 5. **Upload to Cloud:**
    Click the green **Commit & Push** button. The tool will automatically stage the changes, commit them, and push them to your GitHub repository. 
    *(Note: Ensure your terminal has the proper Git credentials cached, otherwise the push may fail).*
+# Hello

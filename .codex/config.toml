@@ -1,0 +1,20 @@
+[mcp_servers.log-silencer]
+command = "npx"
+args = [
+    "-y",
+    "token-saver-mcp",
+]
+
+[mcp_servers.platformio-mcp]
+command = "npx"
+args = [
+    "-y",
+    "@jl-codes/platformio-mcp",
+]
+
+[mcp_servers.token-saver]
+command = "npx"
+args = [
+    "-y",
+    "cc_token_saver_mcp",
+]
