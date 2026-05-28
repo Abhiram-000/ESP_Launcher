@@ -9,7 +9,7 @@ import os, threading, json, shutil
 from store_core import (
     GameCatalog, FirmwareCatalog,
     calc_crc32, get_size, make_url, git_commit_push,
-    scan_bins, scan_roms, is_git_repo
+    scan_bins, scan_roms, is_git_repo, url_is_valid, get_raw_base
 )
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
@@ -132,6 +132,22 @@ class StoreManager(tk.Tk):
 
         self.game_cat = GameCatalog(p)
         self.firm_cat = FirmwareCatalog(p)
+
+        # ── Heal pass: fix any stale empty URLs already in the JSON ──────────
+        # This handles catalogs that were saved before URL validation was added.
+        healed_f = self.firm_cat.heal_urls(p)
+        healed_g = self.game_cat.heal_urls(p)
+        if healed_f or healed_g:
+            self.game_cat.reload()
+            self.firm_cat.reload()
+            msg = []
+            if healed_f: msg.append(f"Fixed {len(healed_f)} firmware URL(s): {', '.join(healed_f)}")
+            if healed_g: msg.append(f"Fixed {len(healed_g)} game URL(s): {', '.join(healed_g)}")
+            messagebox.showinfo(
+                "URLs Healed",
+                "\n".join(msg) + "\n\nCommit & Push to publish the fixes."
+            )
+
         self._sync_auto_discovery()
         self._refresh_game_list()
         self._refresh_firm_list()
@@ -149,32 +165,71 @@ class StoreManager(tk.Tk):
     def _sync_auto_discovery(self):
         """Auto-add bins/roms found in folders but missing from JSON."""
         p = self.repo_path.get()
+
+        # Pre-flight: verify git remote is configured before scanning
+        if not get_raw_base(p):
+            messagebox.showwarning(
+                "Git Remote Not Configured",
+                "Cannot generate download URLs — git remote 'origin' is not set.\n\n"
+                "Run this in your store repo:\n"
+                "  git remote add origin https://github.com/USER/REPO.git\n\n"
+                "Without a remote, imported files will NOT be added to the catalog "
+                "(they would be saved with an empty URL and crash the device)."
+            )
+            return
+
         new_f, new_g = 0, 0
-        
+        failed_f, failed_g = [], []
+
         known_f = self.firm_cat.ids()
         for f in scan_bins(p):
             if f["id"] not in known_f:
-                self.firm_cat.add_or_update({
+                try:
+                    url = make_url(p, f["rel_path"])
+                except RuntimeError as e:
+                    failed_f.append(f["filename"])
+                    continue
+                err = self.firm_cat.add_or_update({
                     "id": f["id"], "name": f["filename"], "version": "v1.0",
                     "description": "Auto-discovered binary", "size_bytes": f["size"],
-                    "url": make_url(p, f["rel_path"])
+                    "url": url
                 })
-                new_f += 1
-                
+                if err:
+                    failed_f.append(f["filename"])
+                else:
+                    new_f += 1
+
         known_g = self.game_cat.ids()
         for g in scan_roms(p):
             if g["id"] not in known_g:
-                self.game_cat.add_or_update({
+                try:
+                    url = make_url(p, g["rel_path"])
+                except RuntimeError as e:
+                    failed_g.append(g["filename"])
+                    continue
+                err = self.game_cat.add_or_update({
                     "id": g["id"], "name": g["filename"], "version": "1.0",
                     "genre": "Unknown", "description": "Auto-discovered ROM",
                     "size_bytes": g["size"], "crc32": calc_crc32(g["abs_path"]),
-                    "mapper": 0, "url": make_url(p, g["rel_path"])
+                    "mapper": 0, "url": url
                 })
-                new_g += 1
-                
+                if err:
+                    failed_g.append(g["filename"])
+                else:
+                    new_g += 1
+
         if new_f or new_g:
             self.game_cat.reload(); self.firm_cat.reload()
             messagebox.showinfo("Auto Discovery", f"Found & added:\n{new_f} new firmwares\n{new_g} new ROMs")
+
+        if failed_f or failed_g:
+            names = ", ".join(failed_f + failed_g)
+            messagebox.showerror(
+                "URL Error — Files NOT Added",
+                f"These files could not be added because their download URL could not "
+                f"be generated (git remote not set or not GitHub):\n\n{names}\n\n"
+                f"Fix the remote and reload the repo to retry."
+            )
 
     # ── GAME TAB ─────────────────────────────────────────────────────────────────
     def _build_game_tab(self):

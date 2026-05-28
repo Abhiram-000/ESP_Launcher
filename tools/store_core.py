@@ -40,12 +40,26 @@ def get_raw_base(repo_path: str) -> str | None:
         pass
     return None
 
+def url_is_valid(url: str) -> bool:
+    """Return True only if url is a full HTTP/HTTPS URL (not empty/relative)."""
+    return bool(url) and (url.startswith("http://") or url.startswith("https://"))
+
 def make_url(repo_path: str, rel_path: str) -> str:
-    """Return a perfect raw GitHub URL, or a placeholder if remote is unset."""
+    """
+    Return a raw.githubusercontent.com download URL for rel_path.
+
+    Raises RuntimeError if the git remote 'origin' is not set or is not a
+    GitHub remote — so callers can never silently get an empty string that
+    would later crash the ESP32 HTTP client.
+    """
     base = get_raw_base(repo_path)
-    if base:
-        return f"{base}/{rel_path}"
-    return ""  # Empty means remote not configured yet
+    if not base:
+        raise RuntimeError(
+            "Cannot build a download URL: git remote 'origin' is not set or is not a "
+            "GitHub remote.\n"
+            "Run: git remote add origin https://github.com/USER/REPO.git"
+        )
+    return f"{base}/{rel_path}"
 
 def git_commit_push(repo_path: str, message: str) -> tuple[bool, str]:
     """Stage all, commit, push. Returns (success, output_text)."""
@@ -153,7 +167,16 @@ class GameCatalog:
                 entry[k] = entry[k][:limit-1]
 
     def add_or_update(self, entry: dict) -> str | None:
+        """Save entry after validation. Returns error string on failure, None on success."""
         self._truncate(entry)
+        url = entry.get("url", "")
+        if not url_is_valid(url):
+            return (
+                f"Invalid URL for game '{entry.get('id', '?')}': '{url}'\n"
+                "URL must start with http:// or https://\n"
+                "Make sure git remote 'origin' is set to a GitHub remote, "
+                "then re-import the ROM."
+            )
         games = self._data.setdefault("games", [])
         for i, g in enumerate(games):
             if g["id"] == entry["id"]:
@@ -163,6 +186,28 @@ class GameCatalog:
         games.append(entry)
         _save(self.path, self._data)
         return None
+
+    def heal_urls(self, repo_path: str) -> list[str]:
+        """
+        Scan every entry and regenerate any missing or invalid URL from its filename.
+        Returns a list of IDs that were fixed.
+        """
+        fixed = []
+        try:
+            base = get_raw_base(repo_path)
+        except Exception:
+            base = None
+        if not base:
+            return fixed
+        for entry in self._data.get("games", []):
+            if not url_is_valid(entry.get("url", "")):
+                filename = entry.get("name", "")
+                if filename:
+                    entry["url"] = f"{base}/roms/{filename}"
+                    fixed.append(entry["id"])
+        if fixed:
+            _save(self.path, self._data)
+        return fixed
 
     def delete(self, game_id: str):
         self._data["games"] = [g for g in self.entries() if g["id"] != game_id]
@@ -193,7 +238,16 @@ class FirmwareCatalog:
                 entry[k] = entry[k][:limit-1]
 
     def add_or_update(self, entry: dict) -> str | None:
+        """Save entry after validation. Returns error string on failure, None on success."""
         self._truncate(entry)
+        url = entry.get("url", "")
+        if not url_is_valid(url):
+            return (
+                f"Invalid URL for firmware '{entry.get('id', '?')}': '{url}'\n"
+                "URL must start with http:// or https://\n"
+                "Make sure git remote 'origin' is set to a GitHub remote, "
+                "then re-import the binary."
+            )
         firms = self._data.setdefault("firmwares", [])
         for i, f in enumerate(firms):
             if f["id"] == entry["id"]:
@@ -203,6 +257,28 @@ class FirmwareCatalog:
         firms.append(entry)
         _save(self.path, self._data)
         return None
+
+    def heal_urls(self, repo_path: str) -> list[str]:
+        """
+        Scan every entry and regenerate any missing or invalid URL from its filename.
+        Returns a list of IDs that were fixed.
+        """
+        fixed = []
+        try:
+            base = get_raw_base(repo_path)
+        except Exception:
+            base = None
+        if not base:
+            return fixed
+        for entry in self._data.get("firmwares", []):
+            if not url_is_valid(entry.get("url", "")):
+                filename = entry.get("name", "")
+                if filename:
+                    entry["url"] = f"{base}/firmwares/{filename}"
+                    fixed.append(entry["id"])
+        if fixed:
+            _save(self.path, self._data)
+        return fixed
 
     def delete(self, firm_id: str):
         self._data["firmwares"] = [f for f in self.entries() if f["id"] != firm_id]

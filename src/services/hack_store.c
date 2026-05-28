@@ -9,6 +9,7 @@
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "esp_system.h"
+#include "esp_random.h"
 #include "nvs.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
@@ -19,7 +20,18 @@
 
 static const char* TAG = "HackStore";
 
-#define CATALOG_URL "https://raw.githubusercontent.com/Abhiram9641/ESP32_Store/main/firmware_catalog.json"
+/**
+ * @brief Validate that a URL is an absolute HTTP/HTTPS URL.
+ * Returns false for empty strings, relative paths, or null — all of which
+ * cause esp_http_client_open() to crash with a StoreProhibited exception.
+ */
+static bool _url_is_valid(const char *url) {
+    if (!url || url[0] == '\0') return false;
+    return (strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 8) == 0);
+}
+
+#define CATALOG_URL "https://raw.githubusercontent.com/Abhiram9641/ESP_Store/main/firmware_catalog.json"
+
 #define HTTP_TIMEOUT_MS 10000
 #define DL_CHUNK_SIZE 8192
 
@@ -37,6 +49,7 @@ static EventGroupHandle_t hs_event_group = NULL;
 
 static TaskHandle_t current_task_handle = NULL;
 static volatile bool s_abort_requested = false;
+static char s_ota_id_buf[32] = {0};  // Stable buffer for ID passed to OTA task
 
 static void _hs_lock(void) {
     if (hs_mutex) {
@@ -159,8 +172,11 @@ static void _cloud_fetch_task(void *pvParameters) {
         goto fetch_fail;
     }
 
+    char fetch_url[256];
+    snprintf(fetch_url, sizeof(fetch_url), "%s?t=%lu", CATALOG_URL, (unsigned long)esp_random());
+    
     esp_http_client_config_t config = {
-        .url = CATALOG_URL,
+        .url = fetch_url,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms = HTTP_TIMEOUT_MS,
     };
@@ -313,10 +329,22 @@ static void _ota_download_task(void *pvParameters) {
     const char *id = (const char*)pvParameters;
     _hs_status_reset_transfer(id);
 
+    /*
+     * FIX: Copy entry URL under lock so we don't use a pointer into hs_catalog[]
+     * after releasing the mutex (another task could refresh the catalog and
+     * overwrite the entry).
+     */
+    char url_buf[256] = {0};
     _hs_lock();
     hack_entry_t *entry = _find_entry(id);
+    if (entry) {
+        strncpy(url_buf, entry->url, sizeof(url_buf) - 1);
+    }
     _hs_unlock();
-    if (!entry) {
+
+    if (!entry || !_url_is_valid(url_buf)) {
+        ESP_LOGE(TAG, "Invalid or empty URL for id='%s': '%s'", id, url_buf);
+        ESP_LOGE(TAG, "Update firmware_catalog.json on GitHub with a full https:// URL.");
         _hs_status_set_error(HACK_STORE_ERR_BAD_METADATA);
         goto dl_fail;
     }
@@ -336,7 +364,7 @@ static void _ota_download_task(void *pvParameters) {
 
     // 2. Setup HTTP Client
     esp_http_client_config_t config = {
-        .url = entry->url,
+        .url = url_buf,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .timeout_ms = HTTP_TIMEOUT_MS,
         .event_handler = _http_event_handle,
@@ -404,7 +432,7 @@ static void _ota_download_task(void *pvParameters) {
     if (status.last_error == HACK_STORE_ERR_OK && read_len >= 0) {
         if (esp_ota_end(update_handle) == ESP_OK) {
             if (esp_ota_set_boot_partition(ota1) == ESP_OK) {
-                _save_installed_id(entry->id);
+                _save_installed_id(id);
                 ESP_LOGI(TAG, "OTA Success, restarting to new firmware");
                 vTaskDelay(pdMS_TO_TICKS(500));
                 esp_restart(); // Boot into Marauder/Bruce immediately
@@ -507,35 +535,19 @@ hack_store_err_t hack_store_refresh_catalog(void) {
     }
 
     /*
-     * Wait up to 15 seconds.  portMAX_DELAY here is FORBIDDEN — it would
-     * starve the Task Watchdog on the calling task (hs_fetch_ui).
+     * Non-blocking: return immediately. The caller (UI task) must poll
+     * hack_store_get_status() to detect completion. This avoids the need
+     * for a wrapper task and eliminates all task-priority race conditions.
      */
-    const TickType_t CATALOG_TIMEOUT = pdMS_TO_TICKS(15000);
-    EventBits_t bits = xEventGroupWaitBits(
-        hs_event_group,
-        HS_EVT_CATALOG_DONE | HS_EVT_CATALOG_FAIL,
-        pdTRUE, pdFALSE,
-        CATALOG_TIMEOUT);
-
-    if (bits == 0) {
-        /* Timed out — task is still running, flag it for cooperative abort */
-        ESP_LOGE(TAG, "Catalog fetch timed out after 15s!");
-        s_abort_requested = true;
-        _hs_status_set_error(HACK_STORE_ERR_NETWORK);
-        return HACK_STORE_ERR_NETWORK;
-    }
-
-    if (bits & HS_EVT_CATALOG_DONE) {
-        ESP_LOGI(TAG, "Catalog fetch complete. %d items.", hs_catalog_count);
-        return HACK_STORE_ERR_OK;
-    }
-    _hs_status_snapshot(&status);
-    ESP_LOGE(TAG, "Catalog fetch failed with error: %d", (int)status.last_error);
-    return status.last_error;
+    return HACK_STORE_ERR_OK;
 }
 
 hack_store_err_t hack_store_install(const char* id) {
     if (!id || id[0] == '\0') return HACK_STORE_ERR_BAD_METADATA;
+    
+    // Clear any stale abort flag from a previous operation
+    s_abort_requested = false;
+    
     char installed_id[sizeof(hs_installed_id)] = {0};
     bool is_installed = hack_store_get_installed_id(installed_id, sizeof(installed_id));
     // If it's already installed, just boot it!
@@ -561,13 +573,22 @@ hack_store_err_t hack_store_install(const char* id) {
     _hs_status_reset_transfer(id);
 
     /*
+     * FIX: Copy id into a static buffer so the OTA task has a stable pointer.
+     * The caller's `id` pointer (from App_HackStore::_install_id_buf) might be
+     * valid, but we also protect against direct API callers whose buffer may
+     * go out of scope.
+     */
+    strncpy(s_ota_id_buf, id, sizeof(s_ota_id_buf) - 1);
+    s_ota_id_buf[sizeof(s_ota_id_buf) - 1] = '\0';
+
+    /*
      * OTA task: 12KB stack — esp_ota_write uses internal buffers and OTA
      * validation adds stack depth on top of the HTTP read loop.
      * Pinned to Core 0 alongside the TCP/IP stack.
      */
     BaseType_t rc = xTaskCreatePinnedToCore(
         _ota_download_task, "hs_dl",
-        12288, (void*)id, 5,
+        12288, (void*)s_ota_id_buf, 5,
         &current_task_handle, 0);
 
     if (rc != pdPASS) {

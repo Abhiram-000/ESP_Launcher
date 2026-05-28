@@ -24,10 +24,13 @@ App_HackStore::App_HackStore()
       _catalog_count(0), _list_sel(0), _list_scroll(0),
       _detail_idx(0), _last_err(HACK_STORE_ERR_OK),
       _anim_time(0.0f), _spinner_angle(0.0f),
-      _pending_install_idx(-1)
+      _pending_install_idx(-1),
+      _fetch_epoch_launched(0), _fetch_epoch_confirmed(0),
+      _install_epoch_launched(0), _install_epoch_confirmed(0)
 {
     memset(_catalog,  0, sizeof(_catalog));
     memset(_installed_id, 0, sizeof(_installed_id));
+    memset(_install_id_buf, 0, sizeof(_install_id_buf));
 }
 
 App_HackStore::~App_HackStore() {}
@@ -61,24 +64,33 @@ void App_HackStore::loop() {
     hack_store_status_t st = {};
     hack_store_get_status(&st);
 
-    if (_screen == Screen::Downloading && !st.is_busy) {
-        if (st.last_error == HACK_STORE_ERR_OK) {
-            // Success triggers a reboot, we shouldn't really get here if it succeeds
-            _refresh_catalog_local();
-            _screen = Screen::LocalList;
-        } else {
-            _last_err = st.last_error;
-            _screen   = Screen::Error;
+    if (_screen == Screen::Downloading) {
+        // Since is_busy is set to true synchronously before we transition to Downloading,
+        // we can simply wait for it to become false to know the task is done.
+        if (!st.is_busy) {
+            if (st.last_error == HACK_STORE_ERR_OK) {
+                ESP_LOGI("App_HackStore", "Install finished successfully, rebooting.");
+                _refresh_catalog_local();
+                _screen = Screen::LocalList;
+            } else {
+                _last_err = st.last_error;
+                ESP_LOGE("App_HackStore", "Install failed with error code: %d (%s)", (int)_last_err, _err_string(_last_err));
+                _screen   = Screen::Error;
+            }
         }
     }
 
-    if (_screen == Screen::CloudLoading && !st.is_busy) {
-        if (st.last_error == HACK_STORE_ERR_OK) {
-            _refresh_catalog_local();
-            _screen = Screen::StoreList;
-        } else {
-            _last_err = st.last_error;
-            _screen   = Screen::Error;
+    if (_screen == Screen::CloudLoading) {
+        if (!st.is_busy) {
+            if (st.last_error == HACK_STORE_ERR_OK) {
+                ESP_LOGI("App_HackStore", "Cloud fetch finished successfully. Catalog updated.");
+                _refresh_catalog_local();
+                _screen = Screen::StoreList;
+            } else {
+                _last_err = st.last_error;
+                ESP_LOGE("App_HackStore", "Cloud fetch failed with error code: %d (%s)", (int)_last_err, _err_string(_last_err));
+                _screen   = Screen::Error;
+            }
         }
     }
 }
@@ -377,11 +389,12 @@ void App_HackStore::_refresh_catalog_local() {
 }
 
 void App_HackStore::_begin_cloud_fetch() {
+    ESP_LOGI("App_HackStore", "Initiating cloud fetch...");
     _screen = Screen::CloudLoading;
-    xTaskCreate([](void* arg) {
-        hack_store_refresh_catalog();
-        vTaskDelete(NULL);
-    }, "hs_fetch_ui", 6144, nullptr, 4, nullptr);
+    _fetch_epoch_launched++;  // New operation — epoch advances; confirmed lags behind
+
+    // Direct call. This is non-blocking now.
+    hack_store_refresh_catalog();
 }
 
 void App_HackStore::_begin_install(int catalog_idx) {
@@ -395,11 +408,20 @@ void App_HackStore::_begin_install(int catalog_idx) {
         return;
     }
 
+    ESP_LOGI("App_HackStore", "Initiating install for ID: %s", gid);
     _screen = Screen::Downloading;
-    xTaskCreate([](void* arg) {
-        hack_store_install((const char*)arg);
-        vTaskDelete(NULL);
-    }, "hs_install", 8192, (void*)gid, 4, nullptr);
+    _install_epoch_launched++;  // New operation — epoch advances
+
+    /*
+     * FIX: Copy the ID into _install_id_buf (member) so the pointer remains
+     * valid for the entire lifetime of the OTA task, even if _catalog is
+     * refreshed or the user navigates away.
+     */
+    strncpy(_install_id_buf, gid, sizeof(_install_id_buf) - 1);
+    _install_id_buf[sizeof(_install_id_buf) - 1] = '\0';
+
+    // Direct call. This is non-blocking now.
+    hack_store_install(_install_id_buf);
 }
 
 const char* App_HackStore::_err_string(hack_store_err_t e) {

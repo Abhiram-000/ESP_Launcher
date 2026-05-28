@@ -44,6 +44,11 @@ private:
 
     int _pending_install_idx;
     char _installed_id[32];
+    char _install_id_buf[32];  // Stable buffer for OTA task (avoids dangling pointer)
+    uint32_t _fetch_epoch_launched;   // Incremented each time we start a cloud fetch
+    uint32_t _fetch_epoch_confirmed;  // Set to _fetch_epoch_launched once we see is_busy=true
+    uint32_t _install_epoch_launched;
+    uint32_t _install_epoch_confirmed;
 
     void _refresh_catalog_local();
     void _begin_cloud_fetch();
