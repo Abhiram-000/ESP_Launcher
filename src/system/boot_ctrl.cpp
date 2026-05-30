@@ -63,7 +63,7 @@ static const char *TAG = "BOOT_CTRL";
 #define BC_POLL_INTERVAL_MS    10     /* GPIO poll granularity                     */
 #define BC_DEBOUNCE_MS         50     /* Required consecutive LOW time for confirm */
 #define BC_BOOT_LOOP_MAX       3      /* Max boot-loop count before forcing Launcher */
-#define BC_LAUNCHER_PREF_SKIP  2     /* After this many consecutive SELECT presses, skip countdown */
+#define BC_LAUNCHER_PREF_SKIP  255     /* After this many consecutive SELECT presses, skip countdown */
 #define BC_NVS_NAMESPACE       "boot_ctrl"
 #define BC_NVS_KEY_BOOTCNT     "boot_cnt"
 #define BC_NVS_KEY_PREFCNT     "pref_cnt"  /* Consecutive launcher-preference counter */
