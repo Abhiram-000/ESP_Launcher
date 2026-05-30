@@ -545,12 +545,10 @@ hack_store_err_t hack_store_refresh_catalog(void) {
 hack_store_err_t hack_store_install(const char* id) {
     if (!id || id[0] == '\0') return HACK_STORE_ERR_BAD_METADATA;
     
-    // Clear any stale abort flag from a previous operation
     s_abort_requested = false;
     
     char installed_id[sizeof(hs_installed_id)] = {0};
     bool is_installed = hack_store_get_installed_id(installed_id, sizeof(installed_id));
-    // If it's already installed, just boot it!
     if (is_installed && strcmp(installed_id, id) == 0) {
         const esp_partition_t *ota1 = esp_partition_find_first(
             ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, NULL);
