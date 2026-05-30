@@ -76,12 +76,22 @@ static const char *TAG = "BOOT_CTRL";
  */
 #define BOOT_FORCE_LAUNCHER_MAGIC  0xA5B4C3D2U
 
+/*
+ * "Boot ota_1" flag. Set by Launcher before restarting to ota_1.
+ * The bootloader hook reads this flag and skips forcing ota_0,
+ * allowing ota_1 to boot. This is how the 5-second splash screen
+ * hands off to the installed firmware after timeout.
+ */
+#define BOOT_ALLOW_OTA1_MAGIC      0xB6C7D4E3U
+
 /* ---- Internal helpers ---- */
 
 /*
  * Validate that ota_1 contains a properly flashed and valid image.
- * Uses esp_ota_get_state_partition() as recommended — more reliable than
- * get_partition_description() which can't detect partial writes.
+ *
+ * First tries esp_ota_get_state_partition() (preferred method).
+ * If that fails (e.g. state was erased by bootloader hook), falls back
+ * to reading the first byte and checking for ESP32 image magic (0xE9).
  */
 static bool user_fw_is_valid(void) {
     const esp_partition_t *ota1 = esp_partition_find_first(
@@ -93,24 +103,37 @@ static bool user_fw_is_valid(void) {
 
     esp_ota_img_states_t state;
     esp_err_t err = esp_ota_get_state_partition(ota1, &state);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "Cannot read ota_1 state: %s — assuming invalid", esp_err_to_name(err));
+    if (err == ESP_OK) {
+        switch (state) {
+            case ESP_OTA_IMG_VALID:
+            case ESP_OTA_IMG_PENDING_VERIFY:
+            case ESP_OTA_IMG_NEW:
+                ESP_LOGI(TAG, "ota_1 state: %d (valid for boot)", state);
+                return true;
+            case ESP_OTA_IMG_INVALID:
+            case ESP_OTA_IMG_ABORTED:
+            case ESP_OTA_IMG_UNDEFINED:
+            default:
+                ESP_LOGW(TAG, "ota_1 state: %d (not suitable for boot)", state);
+                return false;
+        }
+    }
+
+    ESP_LOGW(TAG, "Cannot read ota_1 state: %s — checking image directly", esp_err_to_name(err));
+
+    uint8_t magic = 0;
+    if (esp_partition_read(ota1, 0, &magic, 1) != ESP_OK) {
+        ESP_LOGW(TAG, "Cannot read ota_1 first byte — assuming invalid");
         return false;
     }
 
-    switch (state) {
-        case ESP_OTA_IMG_VALID:
-        case ESP_OTA_IMG_PENDING_VERIFY:
-        case ESP_OTA_IMG_NEW:
-            ESP_LOGI(TAG, "ota_1 state: %d (valid for boot)", state);
-            return true;
-        case ESP_OTA_IMG_INVALID:
-        case ESP_OTA_IMG_ABORTED:
-        case ESP_OTA_IMG_UNDEFINED:
-        default:
-            ESP_LOGW(TAG, "ota_1 state: %d (not suitable for boot)", state);
-            return false;
+    if (magic == 0xE9) {
+        ESP_LOGI(TAG, "ota_1 has valid ESP32 image (magic=0x%02X) — allowing boot", magic);
+        return true;
     }
+
+    ESP_LOGW(TAG, "ota_1 first byte: 0x%02X (expected 0xE9) — no valid image", magic);
+    return false;
 }
 
 /* ---- NVS boot-loop guard ---- */
@@ -489,8 +512,22 @@ void boot_ctrl_check(void) {
     }
 
     ESP_LOGI(TAG, "Boot redirected to ota_1. Restarting now...");
-    reset_launcher_pref_count(); /* User is going to user firmware — reset preference streak */
-    vTaskDelay(pdMS_TO_TICKS(100)); /* Let log flush */
+    reset_launcher_pref_count();
+
+    /*
+     * Set "boot ota_1" flag in RTC retain memory before restarting.
+     * The bootloader hook will detect this flag and skip forcing ota_0,
+     * allowing ota_1 to boot. Without this flag, the hook would always
+     * force ota_0 and the installed firmware would never boot.
+     */
+    esp_partition_pos_t allow_ota1 = {
+        .offset = BOOT_ALLOW_OTA1_MAGIC,
+        .size   = 0
+    };
+    bootloader_common_update_rtc_retain_mem(&allow_ota1, false);
+    ESP_LOGI(TAG, "RTC flag set (BOOT_ALLOW_OTA1) — hook will let ota_1 boot");
+
+    vTaskDelay(pdMS_TO_TICKS(100));
     esp_restart();
     /* Unreachable */
 }

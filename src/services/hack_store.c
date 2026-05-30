@@ -9,6 +9,7 @@
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 #include "esp_system.h"
+#include "bootloader_common.h"
 #include "esp_random.h"
 #include "nvs.h"
 #include "cJSON.h"
@@ -19,6 +20,19 @@
 #include <string.h>
 
 static const char* TAG = "HackStore";
+
+#define BOOT_ALLOW_OTA1_MAGIC 0xB6C7D4E3U
+
+static void _set_boot_allow_ota1_and_restart(void) {
+    esp_partition_pos_t allow_ota1 = {
+        .offset = BOOT_ALLOW_OTA1_MAGIC,
+        .size   = 0
+    };
+    bootloader_common_update_rtc_retain_mem(&allow_ota1, false);
+    ESP_LOGI(TAG, "RTC flag set (BOOT_ALLOW_OTA1) — hook will let ota_1 boot");
+    vTaskDelay(pdMS_TO_TICKS(100));
+    esp_restart();
+}
 
 /**
  * @brief Validate that a URL is an absolute HTTP/HTTPS URL.
@@ -434,9 +448,8 @@ static void _ota_download_task(void *pvParameters) {
             if (esp_ota_set_boot_partition(ota1) == ESP_OK) {
                 _save_installed_id(id);
                 ESP_LOGI(TAG, "OTA Success, restarting to new firmware");
-                vTaskDelay(pdMS_TO_TICKS(500));
-                esp_restart(); // Boot into Marauder/Bruce immediately
-                while(1) { vTaskDelay(10); } // Unreachable
+                _set_boot_allow_ota1_and_restart();
+                while(1) { vTaskDelay(10); }
             }
         }
         _hs_status_set_error(HACK_STORE_ERR_FLASHING);
@@ -554,8 +567,7 @@ hack_store_err_t hack_store_install(const char* id) {
             ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_OTA_1, NULL);
         if (ota1 && esp_ota_set_boot_partition(ota1) == ESP_OK) {
             ESP_LOGI(TAG, "Already installed. Rebooting to %s", id);
-            vTaskDelay(pdMS_TO_TICKS(100));
-            esp_restart();
+            _set_boot_allow_ota1_and_restart();
         }
         return HACK_STORE_ERR_PARTITION;
     }
