@@ -3631,6 +3631,15 @@ CONFIG_WL_SECTOR_SIZE=4096
 # end of Wear Levelling
 
 #
+# cJSON
+#
+# default:
+CONFIG_CJSON_NESTING_LIMIT=1000
+# default:
+CONFIG_CJSON_CIRCULAR_LIMIT=10000
+# end of cJSON
+
+#
 # LittleFS
 #
 # default:
@@ -3678,21 +3687,14 @@ CONFIG_LITTLEFS_MALLOC_STRATEGY_DEFAULT=y
 # default:
 # CONFIG_LITTLEFS_MALLOC_STRATEGY_SPIRAM is not set
 # default:
+# CONFIG_LITTLEFS_MALLOC_STRATEGY_SPIRAM_PREFER is not set
+# default:
 CONFIG_LITTLEFS_ASSERTS=y
 # default:
 # CONFIG_LITTLEFS_MMAP_PARTITION is not set
 # default:
 # CONFIG_LITTLEFS_WDT_RESET is not set
 # end of LittleFS
-
-#
-# cJSON
-#
-# default:
-CONFIG_CJSON_NESTING_LIMIT=1000
-# default:
-CONFIG_CJSON_CIRCULAR_LIMIT=10000
-# end of cJSON
 # end of Component config
 
 # default:

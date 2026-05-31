@@ -1,3 +1,4 @@
 dependencies:
   espressif/led_strip: "*"
   espressif/cjson: "^1.7.19~2"
+  joltwallet/littlefs: "^1.22.1"

@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "instructions": ["esp32_system_prompt.md"],
+  "instructions": ["AGENTS.md", "esp32_system_prompt.md"],
   "model": "omniroute/kiro/deepseek-3.2",
   "provider": {
     "omniroute": {
