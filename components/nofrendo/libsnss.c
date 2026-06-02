@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include "libsnss.h"
+
+SNSS_FILE *snssFileBlock = NULL;
+char *blockBytes = NULL;
  
 static unsigned int
 swap32(unsigned int source)
@@ -225,6 +228,7 @@ SNSS_CloseFile(SNSS_FILE **snssFile)
  
       if (SNSS_OK != (code = SNSS_WriteFileHeader(*snssFile)))
       {
+         fclose((*snssFile)->fp);
          return SNSS_CLOSE_FAILED;
       }
 

@@ -30,7 +30,7 @@ static const char *TAG_OSD = "NES_OSD";
 
 /* ── Globals shared with App_NES (extern declared in App_NES.cpp) ────────── */
 char              active_nes_rom_path[256];  /* Set by App_NES before task start */
-uint16_t         *nes_frame_buffer   = NULL; /* Back-buffer written by OSD       */
+volatile uint16_t     *nes_frame_buffer   = NULL; /* Back-buffer written by OSD       */
 SemaphoreHandle_t nes_frame_sem      = NULL; /* Signals UI task: new frame ready  */
 volatile uint32_t nes_input_state    = 0;    /* NES button bits from App_NES      */
 volatile bool     nes_should_exit    = false;/* Set by App_NES to request quit    */
@@ -163,7 +163,15 @@ void osd_fullname(char *fullname, const char *shortname) { strncpy(fullname, sho
 char *osd_newextension(char *string, char *ext)
 {
     char *dot = strrchr(string, '.');
-    if (dot) strcpy(dot, ext);
+    if (dot)
+        strcpy(dot, ext);
+    else {
+        /* No extension found — append one */
+        size_t len = strlen(string);
+        size_t ext_len = strlen(ext);
+        if (len + ext_len < PATH_MAX)
+            strcpy(string + len, ext);
+    }
     return string;
 }
 
@@ -288,15 +296,15 @@ void IRAM_ATTR vid_flush(void)
         return;
     }
 
-    if (nes_state_cmd) {
-        if (nes_state_cmd == 1) {
-            ESP_LOGI(TAG_OSD, "Saving state...");
-            state_save();
-        } else if (nes_state_cmd == 2) {
-            ESP_LOGI(TAG_OSD, "Loading state...");
-            state_load();
-        }
-        nes_state_cmd = 0;
+    /* Capture once to avoid TOCTOU race with Core 1 writing nes_state_cmd */
+    uint8_t cmd = nes_state_cmd;
+    nes_state_cmd = 0;
+    if (cmd == 1) {
+        ESP_LOGI(TAG_OSD, "Saving state...");
+        state_save();
+    } else if (cmd == 2) {
+        ESP_LOGI(TAG_OSD, "Loading state...");
+        state_load();
     }
 
     if (!s_bitmap || !nes_frame_buffer) {
@@ -305,7 +313,7 @@ void IRAM_ATTR vid_flush(void)
         return;
     }
 
-    uint16_t *dst   = nes_frame_buffer;
+    uint16_t *dst   = (uint16_t*)nes_frame_buffer;
     uint32_t  y_acc = 0;
 
     for (int y = 0; y < 128; y++) {
@@ -374,7 +382,8 @@ void nofrendo_log_chain_logfunc(int (*logfunc)(const char *string)) { (void)logf
 void nofrendo_log_assert(int expr, int line, const char *file, char *msg) {
     if (!expr) {
         ESP_LOGE(TAG_OSD, "ASSERT %s:%d - %s", file, line, msg ? msg : "unknown");
-        abort();
+        /* Request graceful shutdown instead of abort — emulator checks nes_should_exit per frame */
+        nes_should_exit = true;
     }
 }
 

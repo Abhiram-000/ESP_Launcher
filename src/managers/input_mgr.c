@@ -11,7 +11,8 @@
 static const char *TAG = "INPUT_MGR";
 
 #define INPUT_QUEUE_SIZE 10
-#define DEBOUNCE_MS 30
+#define DEBOUNCE_MS     30
+#define MIN_PRESS_MS    200   /* Minimum interval between events for same button */
 
 static QueueHandle_t s_input_queue = NULL;
 
@@ -19,24 +20,32 @@ typedef struct {
     gpio_num_t pin;
     input_event_t event;
     uint32_t last_isr_time;
+    uint32_t last_event_time;  /* Timestamp of last event sent for this button */
 } btn_state_t;
 
 static btn_state_t s_buttons[5] = {
-    {(gpio_num_t)LAUNCHER_PIN_UP,     BTN_UP,     0},
-    {(gpio_num_t)LAUNCHER_PIN_DOWN,   BTN_DOWN,   0},
-    {(gpio_num_t)LAUNCHER_PIN_LEFT,   BTN_LEFT,   0},
-    {(gpio_num_t)LAUNCHER_PIN_RIGHT,  BTN_RIGHT,  0},
-    {(gpio_num_t)LAUNCHER_PIN_SELECT, BTN_SELECT, 0}
+    {(gpio_num_t)LAUNCHER_PIN_UP,     BTN_UP,     0, 0},
+    {(gpio_num_t)LAUNCHER_PIN_DOWN,   BTN_DOWN,   0, 0},
+    {(gpio_num_t)LAUNCHER_PIN_LEFT,   BTN_LEFT,   0, 0},
+    {(gpio_num_t)LAUNCHER_PIN_RIGHT,  BTN_RIGHT,  0, 0},
+    {(gpio_num_t)LAUNCHER_PIN_SELECT, BTN_SELECT, 0, 0}
 };
 
 static void IRAM_ATTR gpio_isr_handler(void* arg) {
     btn_state_t* btn = (btn_state_t*) arg;
     const uint32_t now = esp_timer_get_time() / 1000;
-    
+
     if (now - btn->last_isr_time > DEBOUNCE_MS) {
         btn->last_isr_time = now;
-        
+
         if (hal_gpio_get_level(btn->pin) == 0) {
+            /* Require minimum interval between events for the same button.
+             * Prevents noise-induced repeat triggers from a single physical press. */
+            if (now - btn->last_event_time < MIN_PRESS_MS) {
+                return;
+            }
+            btn->last_event_time = now;
+
             BaseType_t xHigherPriorityTaskWoken = pdFALSE;
             const input_event_t ev = btn->event;
             xQueueSendFromISR(s_input_queue, &ev, &xHigherPriorityTaskWoken);

@@ -21,7 +21,7 @@ static const char* TAG = "App_NES";
 // ─── Globals shared with osd_esp32s3.c ────────────────────────────────────
 extern "C" {
     extern char                  active_nes_rom_path[256];
-    extern uint16_t*             nes_frame_buffer;
+    extern volatile uint16_t*         nes_frame_buffer;
     extern SemaphoreHandle_t     nes_frame_sem;
     extern volatile uint32_t     nes_input_state;
     extern volatile bool         nes_should_exit;
@@ -159,17 +159,19 @@ void App_NES::init() {
     memset(_front_buffer, 0, 160 * 128 * 2);
     memset(_back_buffer,  0, 160 * 128 * 2);
 
-    _buffer_mutex = xSemaphoreCreateMutex();
+    _buffer_mutex = xSemaphoreCreateBinary();
     if (!_buffer_mutex) {
-        ESP_LOGE(TAG, "Mutex creation failed");
+        ESP_LOGE(TAG, "Semaphore creation failed");
         _cleanup_resources();
         _emu_task_done = true;
         return;
     }
+    /* Give once so the first render() can swap immediately (binary sem starts empty) */
+    xSemaphoreGive(_buffer_mutex);
 
     // ── Set globals for OSD layer ────────────────────────────────────────
     strncpy(active_nes_rom_path, _rom_path, 255);
-    nes_frame_buffer = _back_buffer;
+    nes_frame_buffer = (volatile uint16_t*)_back_buffer;
     nes_frame_sem    = _buffer_mutex;
     nes_input_state  = 0;
     nes_should_exit  = false;
@@ -206,16 +208,14 @@ void App_NES::exit() {
     ESP_LOGI(TAG, "exit — stopping emulator");
     nes_should_exit = true;
 
-    // Give emulator 200 ms to wrap up, then force-delete
+    // Give emulator up to 1s to wrap up (it self-deletes via vTaskDelete(NULL))
     if (_emu_task) {
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < 100; i++) {
             vTaskDelay(pdMS_TO_TICKS(10));
             if (_emu_task_done) break;
         }
         if (!_emu_task_done) {
-            eTaskState st = eTaskGetState(_emu_task);
-            ESP_LOGW(TAG, "Force-deleting emulator task (state=%d)", (int)st);
-            vTaskDelete(_emu_task);
+            ESP_LOGW(TAG, "Emulator task did not exit in time");
         }
         _emu_task = nullptr;
     }
@@ -274,7 +274,7 @@ void App_NES::render(LGFX_Sprite* canvas) {
         uint16_t* tmp  = _front_buffer;
         _front_buffer  = _back_buffer;
         _back_buffer   = tmp;
-        nes_frame_buffer = _back_buffer;
+        nes_frame_buffer = (volatile uint16_t*)_back_buffer;
         xSemaphoreGive(_buffer_mutex);
     }
 
