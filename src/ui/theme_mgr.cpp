@@ -126,12 +126,11 @@ void theme_draw_wallpaper(lgfx::v1::LGFX_Sprite* canvas, float time_offset) {
     canvas->fillSprite(bg);
 
     uint16_t accent = theme_get_accent();
-    
-    // Extract RGB565 to 888 for alpha blending
+
     uint8_t ar = (accent >> 11) & 0x1F;
     uint8_t ag = (accent >> 5) & 0x3F;
     uint8_t ab = accent & 0x1F;
-    
+
     uint8_t br = (bg >> 11) & 0x1F;
     uint8_t bg_g = (bg >> 5) & 0x3F;
     uint8_t bb = bg & 0x1F;
@@ -143,20 +142,38 @@ void theme_draw_wallpaper(lgfx::v1::LGFX_Sprite* canvas, float time_offset) {
         return (r << 11) | (g << 5) | b;
     };
 
-    // Draw a subtle, slow-moving parallax grid
-    uint16_t grid_col = blend(0.08f); // Very subtle
-    
     int w = canvas->width();
     int h = canvas->height();
 
-    int grid_size = 24;
-    int offset_x = (int)(time_offset * 12.0f) % grid_size;
-    int offset_y = (int)(time_offset * 6.0f) % grid_size;
+    static const float s_phases[9] = {0.0f, 1.2f, 2.8f, 4.1f, 5.5f, 7.0f, 8.3f, 9.9f, 11.4f};
+    static const float s_freqs1[9] = {0.019f, 0.024f, 0.016f, 0.028f, 0.021f, 0.014f, 0.026f, 0.018f, 0.023f};
+    static const float s_freqs2[9] = {0.041f, 0.035f, 0.048f, 0.032f, 0.044f, 0.038f, 0.030f, 0.046f, 0.036f};
+    static const float s_amps1[9]   = {18.0f, 24.0f, 14.0f, 28.0f, 20.0f, 12.0f, 26.0f, 16.0f, 22.0f};
+    static const float s_amps2[9]   = {8.0f, 12.0f, 6.0f, 14.0f, 10.0f, 5.0f, 13.0f, 7.0f, 11.0f};
 
-    for (int x = -offset_x; x < w; x += grid_size) {
-        canvas->drawFastVLine(x, 0, h, grid_col);
-    }
-    for (int y = -offset_y; y < h; y += grid_size) {
-        canvas->drawFastHLine(0, y, w, grid_col);
+    for (int i = 0; i < 9; i++) {
+        float base_y = (h * (i + 1)) / 10.0f;
+        float phase = s_phases[i];
+        float f1 = s_freqs1[i];
+        float f2 = s_freqs2[i];
+        float a1 = s_amps1[i];
+        float a2 = s_amps2[i];
+
+        float alpha_f = 0.18f + (i % 3) * 0.05f;
+        uint16_t line_col = blend(alpha_f);
+
+        int prev_x = 0;
+        int prev_y = (int)(base_y + sinf(phase) * a1 * 0.3f);
+
+        for (int x = 2; x < w; x += 2) {
+            float fx = (float)x;
+            int y = (int)(base_y
+                + sinf(fx * f1 + phase) * a1
+                + sinf(fx * f2 + phase * 1.7f) * a2);
+
+            canvas->drawLine(prev_x, prev_y, x, y, line_col);
+            prev_x = x;
+            prev_y = y;
+        }
     }
 }
