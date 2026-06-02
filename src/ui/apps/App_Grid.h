@@ -34,6 +34,11 @@ private:
 
     float anim_time;
 
+    input_event_t _held_btn;
+    int _held_frames;
+    static constexpr int HOLD_DELAY = 12;
+    static constexpr int HOLD_REPEAT = 3;
+
 public:
     App_Grid();
     ~App_Grid() override;

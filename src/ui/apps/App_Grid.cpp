@@ -8,7 +8,8 @@ extern void switch_to_app(IApp* app);
 
 static const char* TAG = "APP_GRID";
 
-App_Grid::App_Grid() : app_count(0), selected_index(0) {
+App_Grid::App_Grid() : app_count(0), selected_index(0),
+    _held_btn(BTN_NONE), _held_frames(0) {
     memset(apps, 0, sizeof(apps));
     cursor_x = 0;
     cursor_y = 0;
@@ -67,25 +68,48 @@ void App_Grid::registerApp(const char* name, const uint16_t* icon, IApp* app) {
 
 void App_Grid::init() {
     anim_time = 0;
+    _held_btn = BTN_NONE;
+    _held_frames = 0;
 }
 
 void App_Grid::exit() {
 }
 
 void App_Grid::loop() {
-    anim_time += 0.04f; 
+    anim_time += 0.04f;
     
-    const float ease = 0.22f; 
+    const float ease = 0.45f;
     cursor_x += (target_cursor_x - cursor_x) * ease;
     cursor_y += (target_cursor_y - cursor_y) * ease;
     cursor_w += (target_cursor_w - cursor_w) * ease;
     cursor_h += (target_cursor_h - cursor_h) * ease;
 
-    cursor_vx = 0; cursor_vy = 0; cursor_vw = 0; cursor_vh = 0;
+    if (fabsf(cursor_x - target_cursor_x) < 0.5f) cursor_x = target_cursor_x;
+    if (fabsf(cursor_y - target_cursor_y) < 0.5f) cursor_y = target_cursor_y;
+    if (fabsf(cursor_w - target_cursor_w) < 0.5f) cursor_w = target_cursor_w;
+    if (fabsf(cursor_h - target_cursor_h) < 0.5f) cursor_h = target_cursor_h;
 }
 
 void App_Grid::handleInput(input_event_t event) {
     if (app_count == 0) return;
+
+    if (event != BTN_NONE) {
+        if (event == _held_btn) {
+            _held_frames++;
+            if (_held_frames >= HOLD_DELAY &&
+                (_held_frames - HOLD_DELAY) % HOLD_REPEAT == 0) {
+            } else {
+                return;
+            }
+        } else {
+            _held_btn = event;
+            _held_frames = 0;
+        }
+    } else {
+        _held_btn = BTN_NONE;
+        _held_frames = 0;
+        return;
+    }
 
     const uint8_t col = selected_index % 3;
     const uint8_t row = selected_index / 3;
@@ -114,6 +138,8 @@ void App_Grid::handleInput(input_event_t event) {
         }
     }
     else if (event == BTN_SELECT) {
+        _held_btn = BTN_NONE;
+        _held_frames = 0;
         if (apps[selected_index].app_instance != nullptr) {
             switch_to_app(apps[selected_index].app_instance);
         }
@@ -155,7 +181,7 @@ void App_Grid::render(LGFX_Sprite* canvas) {
     target_cursor_x = base_target_x - (target_cursor_w - icon_size) * 0.5f;
     target_cursor_y = base_target_y - (target_cursor_h - icon_size) * 0.5f;
 
-    if (abs(cursor_x - base_target_x) > canvas->width() || cursor_w == 0) {
+    if (fabsf(cursor_x - base_target_x) > canvas->width() || cursor_w == 0) {
         cursor_x = base_target_x;
         cursor_y = base_target_y;
         cursor_w = icon_size;
