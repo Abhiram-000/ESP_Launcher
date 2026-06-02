@@ -87,20 +87,32 @@ void App_Grid::loop() {
 void App_Grid::handleInput(input_event_t event) {
     if (app_count == 0) return;
 
+    const uint8_t col = selected_index % 3;
+    const uint8_t row = selected_index / 3;
+    const uint8_t cols = 3;
+    const uint8_t total_rows = (app_count + cols - 1) / cols;
+
     if (event == BTN_RIGHT) {
-        if (selected_index < app_count - 1) selected_index++;
-    } 
+        if (col < cols - 1 && selected_index + 1 < app_count) {
+            selected_index++;
+        }
+    }
     else if (event == BTN_LEFT) {
-        if (selected_index > 0) selected_index--;
-    } 
+        if (col > 0) {
+            selected_index--;
+        }
+    }
     else if (event == BTN_DOWN) {
-        if (selected_index + 3 < app_count) selected_index += 3;
-        else selected_index = app_count - 1;
-    } 
+        if (row < total_rows - 1) {
+            uint8_t next = selected_index + cols;
+            selected_index = (next < app_count) ? next : app_count - 1;
+        }
+    }
     else if (event == BTN_UP) {
-        if (selected_index >= 3) selected_index -= 3;
-        else selected_index = 0;
-    } 
+        if (row > 0) {
+            selected_index -= cols;
+        }
+    }
     else if (event == BTN_SELECT) {
         if (apps[selected_index].app_instance != nullptr) {
             switch_to_app(apps[selected_index].app_instance);
