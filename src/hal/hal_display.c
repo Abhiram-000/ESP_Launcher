@@ -1,47 +1,31 @@
+/*
+ * hal_display.c — Display backlight control via LEDC PWM
+ *
+ * NOTE: LovyanGFX configures LEDC_TIMER_0 and LEDC_CHANNEL_0 for backlight
+ * control in LGFX_Config.h. The init function below is intentionally disabled
+ * to avoid conflicting with LovyanGFX. Use tft.setBrightness() directly
+ * or call hal_display_set_brightness() which uses the same LEDC channel.
+ */
+
 #include "hal_display.h"
 #include "hal_spi.h"
 #include "hal_gpio.h"
 #include "driver/ledc.h"
 #include <string.h>
 
-static hal_display_config_t s_config;
-static bool s_initialized = false;
-
 esp_err_t hal_display_init(const hal_display_config_t* config) {
-    if (!config) return ESP_ERR_INVALID_ARG;
-    
-    memcpy(&s_config, config, sizeof(hal_display_config_t));
-    
-    // Initialize backlight PWM
-    ledc_timer_config_t ledc_timer = {
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .duty_resolution = LEDC_TIMER_8_BIT,
-        .timer_num = LEDC_TIMER_0,
-        .freq_hz = 5000,
-        .clk_cfg = LEDC_AUTO_CLK
-    };
-    esp_err_t err = ledc_timer_config(&ledc_timer);
-    if (err != ESP_OK) return err;
-    
-    ledc_channel_config_t ledc_channel = {
-        .gpio_num = config->pin_bl,
-        .speed_mode = LEDC_LOW_SPEED_MODE,
-        .channel = LEDC_CHANNEL_0,
-        .intr_type = LEDC_INTR_DISABLE,
-        .timer_sel = LEDC_TIMER_0,
-        .duty = 0,
-        .hpoint = 0
-    };
-    err = ledc_channel_config(&ledc_channel);
-    if (err != ESP_OK) return err;
-    
-    s_initialized = true;
+    /* WARNING: This function conflicts with LovyanGFX backlight control.
+     * LovyanGFX already configures LEDC_TIMER_0 and LEDC_CHANNEL_0.
+     * Do NOT call this function — use tft.setBrightness() instead.
+     * Kept for reference only. */
+    (void)config;
     return ESP_OK;
 }
 
 esp_err_t hal_display_set_brightness(uint8_t brightness) {
-    if (!s_initialized) return ESP_ERR_INVALID_STATE;
-    return ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, brightness);
+    esp_err_t err = ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, brightness);
+    if (err != ESP_OK) return err;
+    return ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
 }
 
 esp_err_t hal_display_push_rect(const hal_display_rect_t* rect, const uint16_t* data) {

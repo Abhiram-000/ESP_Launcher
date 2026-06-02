@@ -20,7 +20,7 @@
 static const char* TAG = "LLM";
 
 /* ── Internal state ─────────────────────────────────────────────────────── */
-static char s_api_key[128]  = "csk-mj8mx8wjdpdmknwnpymhwtmv9dct5pk9dxhtdnj3e6re6fc6";
+static char s_api_key[128]  = {0};
 static char s_model[64]     = AI_LLM_MODEL_DEFAULT;
 
 /* Per-request streaming context */
@@ -88,7 +88,7 @@ static void _trim_history(void) {
     char line[512];
     long kept_start = 0;
     while (ftell(f) < sz - AI_CONTEXT_MAX_CHARS) {
-        fgets(line, sizeof(line), f);
+        if (!fgets(line, sizeof(line), f)) break;
         kept_start = ftell(f);
     }
     long kept_len = sz - kept_start;
@@ -109,9 +109,14 @@ static char* _escape_json(const char* input) {
     if (!esc) return NULL;
     size_t j = 0;
     for (size_t i = 0; i < len; i++) {
-        if (input[i] == '"' || input[i] == '\\') esc[j++] = '\\';
-        if (input[i] == '\n') { esc[j++] = '\\'; esc[j++] = 'n'; }
-        else esc[j++] = input[i];
+        switch (input[i]) {
+            case '"':  esc[j++] = '\\'; esc[j++] = '"';  break;
+            case '\\': esc[j++] = '\\'; esc[j++] = '\\'; break;
+            case '\n': esc[j++] = '\\'; esc[j++] = 'n';  break;
+            case '\t': esc[j++] = '\\'; esc[j++] = 't';  break;
+            case '\r': esc[j++] = '\\'; esc[j++] = 'r';  break;
+            default:   esc[j++] = input[i];               break;
+        }
     }
     esc[j] = '\0';
     return esc;
@@ -187,18 +192,21 @@ static char* _build_payload(const char* user_msg) {
             if (l < 5 || line[0] != '{' || line[l-1] != '}') {
                 continue; // Skip malformed or empty history lines
             }
-            pos += snprintf(payload + pos, AI_CONTEXT_MAX_CHARS - pos, "%s,", line);
+            if (pos < AI_CONTEXT_MAX_CHARS) {
+                pos += snprintf(payload + pos, AI_CONTEXT_MAX_CHARS - pos, "%s,", line);
+            }
         }
         fclose(hist);
     }
 
     /* Current user message */
     char* esc_user = _escape_json(user_msg);
+    size_t remain = (pos < AI_CONTEXT_MAX_CHARS + 2048) ? AI_CONTEXT_MAX_CHARS + 2048 - pos : 0;
     if (esc_user) {
-        pos += snprintf(payload + pos, 1024, "{\"role\":\"user\",\"content\":\"%s\"}]}", esc_user);
+        pos += snprintf(payload + pos, remain, "{\"role\":\"user\",\"content\":\"%s\"}]}", esc_user);
         heap_caps_free(esc_user);
     } else {
-        pos += snprintf(payload + pos, 512, "{\"role\":\"user\",\"content\":\"%s\"}]}", user_msg);
+        pos += snprintf(payload + pos, remain, "{\"role\":\"user\",\"content\":\"%s\"}]}", user_msg);
     }
     return payload;
 }

@@ -292,6 +292,7 @@ static void _gs_autodiscover_roms(void) {
     }
 
     struct dirent *entry;
+    _gs_lock();
     while ((entry = readdir(dir)) != NULL) {
         const char *fname = entry->d_name;
         size_t len = strlen(fname);
@@ -326,6 +327,7 @@ static void _gs_autodiscover_roms(void) {
 
         ESP_LOGI(TAG, "Auto-discovered ROM: %s (%lu bytes)", id, (unsigned long)e->size_bytes);
     }
+    _gs_unlock();
     closedir(dir);
 }
 
@@ -665,9 +667,18 @@ static void _gs_download_task(void *pvParameters) {
     const char *id = (const char*)pvParameters;
     game_store_status_t status;
     _gs_status_reset_transfer(id);
-    
+
+    char url_buf[256] = {0};
+    uint32_t size_bytes = 0;
+    uint32_t crc32 = 0;
+
     _gs_lock();
     game_entry_t *entry = _gs_local_catalog_find(id);
+    if (entry) {
+        strncpy(url_buf, entry->url, sizeof(url_buf) - 1);
+        size_bytes = entry->size_bytes;
+        crc32 = entry->crc32;
+    }
     _gs_unlock();
     if (!entry) {
         _gs_status_set_error(GAME_STORE_ERR_BAD_METADATA);
@@ -679,7 +690,7 @@ static void _gs_download_task(void *pvParameters) {
         goto dl_abort;
     }
 
-    if (game_store_get_free_bytes() < entry->size_bytes + (entry->size_bytes / 10)) {
+    if (game_store_get_free_bytes() < size_bytes + (size_bytes / 10)) {
         _gs_status_set_error(GAME_STORE_ERR_NO_SPACE);
         goto dl_abort;
     }
@@ -694,7 +705,7 @@ static void _gs_download_task(void *pvParameters) {
         }
 
         esp_http_client_config_t config = {
-            .url = entry->url,
+            .url = url_buf,
             .crt_bundle_attach = esp_crt_bundle_attach,
             .timeout_ms = GAME_STORE_HTTP_TIMEOUT_MS,
             .event_handler = _http_event_handle,
@@ -753,7 +764,7 @@ static void _gs_download_task(void *pvParameters) {
         }
 
         // Validate CRC32
-        if (crc != entry->crc32 && entry->crc32 != 0) {
+        if (crc != crc32 && crc32 != 0) {
             unlink(temp_path);
             _gs_status_set_error(GAME_STORE_ERR_CORRUPT_ROM);
             goto dl_abort;

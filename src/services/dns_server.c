@@ -84,9 +84,11 @@ static void dns_server_task(void *pvParameters) {
             // Find the end of the query section (Question QNAME)
             int qname_idx = sizeof(dns_header_t);
             while (qname_idx < len && rx_buf[qname_idx] != 0) {
-                qname_idx += rx_buf[qname_idx] + 1;
+                int label_len = rx_buf[qname_idx];
+                if (qname_idx + label_len + 1 > len) break;  // Bounds check
+                qname_idx += label_len + 1;
             }
-            qname_idx++; // Skip null byte
+            if (qname_idx < len) qname_idx++; // Skip null byte
 
             // Skip QTYPE (2 bytes) & QCLASS (2 bytes)
             int q_end = qname_idx + 4;
@@ -149,5 +151,8 @@ void dns_server_stop(void) {
     if (!s_run_dns) return;
     ESP_LOGI(TAG, "Stopping DNS Server...");
     s_run_dns = false;
-    // The task will exit its loop on timeout and clean up itself
+    if (s_dns_socket >= 0) {
+        close(s_dns_socket);
+        s_dns_socket = -1;
+    }
 }

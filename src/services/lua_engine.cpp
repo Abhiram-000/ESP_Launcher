@@ -214,7 +214,18 @@ void LuaEngine::append_log(const char* text) {
         xSemaphoreGive(m_log_mutex);
     }
 }
-const char* LuaEngine::get_log_buffer() { return s_log_buffer.c_str(); }
+const char* LuaEngine::get_log_buffer() {
+    static char s_copy_buf[4096];
+    if (m_log_mutex) {
+        xSemaphoreTake(m_log_mutex, portMAX_DELAY);
+    }
+    strncpy(s_copy_buf, s_log_buffer.c_str(), sizeof(s_copy_buf) - 1);
+    s_copy_buf[sizeof(s_copy_buf) - 1] = '\0';
+    if (m_log_mutex) {
+        xSemaphoreGive(m_log_mutex);
+    }
+    return s_copy_buf;
+}
 
 static int l_sys_print(lua_State* L) {
     const char* msg = luaL_checkstring(L, 1);

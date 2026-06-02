@@ -54,8 +54,16 @@ static uint8_t s_recv_buf[APP_OTA_RECV_BUF_SIZE];
 static esp_err_t _send_json_error(httpd_req_t *req,
                                   httpd_err_code_t code,
                                   const char *error_msg) {
-    char body[128];
-    snprintf(body, sizeof(body), "{\"ok\":false,\"error\":\"%s\"}", error_msg);
+    char body[256];
+    char safe_msg[128];
+    size_t j = 0;
+    for (size_t i = 0; error_msg[i] && j < sizeof(safe_msg) - 1; i++) {
+        if (error_msg[i] == '"') safe_msg[j++] = '\'';
+        else if (error_msg[i] == '\\') safe_msg[j++] = '\\';
+        else safe_msg[j++] = error_msg[i];
+    }
+    safe_msg[j] = '\0';
+    snprintf(body, sizeof(body), "{\"ok\":false,\"error\":\"%s\"}", safe_msg);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     httpd_resp_send_err(req, code, body);
@@ -190,7 +198,7 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
     /* --- Streaming receive + write loop --- */
     int remaining = total_len;
     int timeout_retries = 0;
-    const int MAX_TIMEOUT_RETRIES = 20;  /* 20 × 500 ms = 10 s max stall */
+    const int MAX_TIMEOUT_RETRIES = 200;  /* 200 × 50 ms = 10 s max stall */
 
     while (remaining > 0) {
         int chunk = MIN(remaining, (int)sizeof(s_recv_buf));
@@ -203,7 +211,7 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
                 return _send_json_error(req, HTTPD_408_REQ_TIMEOUT,
                                         "Upload timed out");
             }
-            vTaskDelay(pdMS_TO_TICKS(500));
+            vTaskDelay(pdMS_TO_TICKS(50));
             continue;
         }
         timeout_retries = 0;  /* Reset on successful recv */
@@ -358,8 +366,9 @@ static esp_err_t chat_send_get_handler(httpd_req_t *req) {
 
     char decoded[256] = {};
     size_t dj = 0;
+    size_t msg_len = strlen(msg);
     for (size_t i = 0; msg[i]; i++) {
-        if (msg[i] == '%') {
+        if (msg[i] == '%' && i + 2 < msg_len) {
             char hex[3] = { msg[i+1], msg[i+2], '\0' };
             decoded[dj++] = (char)strtol(hex, NULL, 16);
             i += 2;
@@ -368,6 +377,7 @@ static esp_err_t chat_send_get_handler(httpd_req_t *req) {
         } else {
             decoded[dj++] = msg[i];
         }
+        if (dj >= sizeof(decoded) - 1) break;
     }
     decoded[dj] = '\0';
 
@@ -388,23 +398,33 @@ static esp_err_t chat_send_get_handler(httpd_req_t *req) {
  * -------------------------------------------------------------------------- */
 static esp_err_t chat_ide_files_get_handler(httpd_req_t *req) {
     char* json = malloc(2048);
-    strcpy(json, "{\"files\":[");
+    if (!json) {
+        return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    }
+    size_t pos = 0;
+    int n = snprintf(json, 2048, "{\"files\":[");
+    if (n > 0) pos += n;
     DIR* d = opendir(AI_SCRIPTS_DIR);
     if (d) {
         struct dirent* e;
         bool first = true;
         while ((e = readdir(d))) {
             if (strstr(e->d_name, ".lua")) {
-                if (!first) strcat(json, ",");
-                strcat(json, "\"");
-                strcat(json, e->d_name);
-                strcat(json, "\"");
+                if (!first) {
+                    if (pos < 2047) json[pos++] = ',';
+                }
+                size_t remaining = (pos < 2048) ? 2047 - pos : 0;
+                n = snprintf(json + pos, remaining, "\"%s\"", e->d_name);
+                if (n > 0) pos += n;
                 first = false;
             }
         }
         closedir(d);
     }
-    strcat(json, "]}");
+    if (pos < 2048) json[pos++] = ']';
+    if (pos < 2048) json[pos++] = '}';
+    if (pos < 2048) json[pos] = '\0';
+    else json[2047] = '\0';
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -425,6 +445,9 @@ static esp_err_t chat_ide_load_get_handler(httpd_req_t *req) {
     if (httpd_query_key_value(query, "file", file, sizeof(file)) != ESP_OK) {
         return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Missing file parameter");
     }
+    if (strstr(file, "..")) {
+        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Invalid file path");
+    }
     char path[128];
     snprintf(path, sizeof(path), "%s/%s", AI_SCRIPTS_DIR, file);
 
@@ -434,6 +457,10 @@ static esp_err_t chat_ide_load_get_handler(httpd_req_t *req) {
     }
 
     char* buf = malloc(4096);
+    if (!buf) {
+        fclose(f);
+        return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    }
     size_t n = fread(buf, 1, 4095, f);
     buf[n] = '\0';
     fclose(f);
@@ -451,6 +478,9 @@ static esp_err_t chat_ide_load_get_handler(httpd_req_t *req) {
 static esp_err_t chat_ide_save_post_handler(httpd_req_t *req) {
     int total_len = req->content_len;
     char* buf = malloc(total_len + 1);
+    if (!buf) {
+        return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    }
     int received = 0;
     while (received < total_len) {
         int ret = httpd_req_recv(req, buf + received, total_len - received);
@@ -468,11 +498,18 @@ static esp_err_t chat_ide_save_post_handler(httpd_req_t *req) {
 
     char* code_enc = malloc(total_len + 1);
     char* code = malloc(total_len + 1);
+    if (!code_enc || !code) {
+        free(code_enc);
+        free(code);
+        free(buf);
+        return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    }
     code[0] = '\0';
     if (httpd_query_key_value(buf, "code", code_enc, total_len) == ESP_OK) {
         size_t j = 0;
+        size_t enc_len = strlen(code_enc);
         for (size_t i = 0; code_enc[i]; i++) {
-            if (code_enc[i] == '%') {
+            if (code_enc[i] == '%' && i + 2 < enc_len) {
                 char hex[3] = { code_enc[i+1], code_enc[i+2], '\0' };
                 code[j++] = (char)strtol(hex, NULL, 16);
                 i += 2;
@@ -490,6 +527,10 @@ static esp_err_t chat_ide_save_post_handler(httpd_req_t *req) {
     if (!file[0]) {
         free(code);
         return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Missing file parameter");
+    }
+    if (strstr(file, "..")) {
+        free(code);
+        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Invalid file path");
     }
 
     char path[128];
@@ -519,6 +560,9 @@ static esp_err_t chat_ide_run_get_handler(httpd_req_t *req) {
     if (httpd_query_key_value(query, "file", file, sizeof(file)) != ESP_OK) {
         return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Missing file parameter");
     }
+    if (strstr(file, "..")) {
+        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Invalid file path");
+    }
     char path[128];
     snprintf(path, sizeof(path), "%s/%s", AI_SCRIPTS_DIR, file);
 
@@ -531,6 +575,9 @@ static esp_err_t chat_ide_run_get_handler(httpd_req_t *req) {
     const char* raw_logs = lua_engine_get_logs();
     size_t logs_len = strlen(raw_logs);
     char* esc_logs = malloc(logs_len * 2 + 1);
+    if (!esc_logs) {
+        return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    }
     size_t j = 0;
     for (size_t i = 0; i < logs_len; i++) {
         if (raw_logs[i] == '"' || raw_logs[i] == '\\') {
@@ -549,6 +596,10 @@ static esp_err_t chat_ide_run_get_handler(httpd_req_t *req) {
     esc_logs[j] = '\0';
 
     char* json = malloc(logs_len * 2 + 512);
+    if (!json) {
+        free(esc_logs);
+        return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    }
     snprintf(json, logs_len * 2 + 512,
         "{\"ok\":%s,\"status\":%d,\"elapsed_ms\":%d,\"error\":\"%s\",\"logs\":\"%s\"}",
         (status == 0) ? "true" : "false", status, (int)elapsed, err, esc_logs);

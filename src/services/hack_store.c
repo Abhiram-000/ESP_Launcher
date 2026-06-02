@@ -2,6 +2,7 @@
  * hack_store.c — Backend service for downloading and flashing custom firmwares
  */
 #include "hack_store.h"
+#include "../config/sys_config.h"
 #include "wifi_mgr.h"
 #include "esp_log.h"
 #include "esp_http_client.h"
@@ -20,8 +21,6 @@
 #include <string.h>
 
 static const char* TAG = "HackStore";
-
-#define BOOT_ALLOW_OTA1_MAGIC 0xB6C7D4E3U
 
 static void _set_boot_allow_ota1_and_restart(void) {
     esp_partition_pos_t allow_ota1 = {
@@ -116,14 +115,12 @@ static void _load_installed_id(void) {
     nvs_handle_t h;
     _hs_lock();
     hs_installed_id[0] = '\0';
-    _hs_unlock();
     if (nvs_open("hack_store", NVS_READONLY, &h) == ESP_OK) {
         size_t len = sizeof(hs_installed_id);
-        _hs_lock();
         nvs_get_str(h, "installed_id", hs_installed_id, &len);
-        _hs_unlock();
         nvs_close(h);
     }
+    _hs_unlock();
 }
 
 static void _save_installed_id(const char* id) {
@@ -317,10 +314,11 @@ static void _cloud_fetch_task(void *pvParameters) {
     } else {
         ESP_LOGW(TAG, "No 'firmwares' array found in JSON.");
     }
+    int catalog_count = hs_catalog_count;
     _hs_unlock();
     cJSON_Delete(root);
 
-    ESP_LOGI(TAG, "Catalog fetch successful. Total items: %d", hs_catalog_count);
+    ESP_LOGI(TAG, "Catalog fetch successful. Total items: %d", catalog_count);
     _hs_status_set_busy(false);
     s_abort_requested = false;
     current_task_handle = NULL;
@@ -449,7 +447,8 @@ static void _ota_download_task(void *pvParameters) {
                 _save_installed_id(id);
                 ESP_LOGI(TAG, "OTA Success, restarting to new firmware");
                 _set_boot_allow_ota1_and_restart();
-                while(1) { vTaskDelay(10); }
+                /* esp_restart() never returns — if it does, self-delete as fallback */
+                vTaskDelete(NULL);
             }
         }
         _hs_status_set_error(HACK_STORE_ERR_FLASHING);

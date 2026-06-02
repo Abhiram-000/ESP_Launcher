@@ -20,8 +20,8 @@ void led_driver_init(void) {
         .color_component_format = (led_color_component_format_t) {
             .format = {
                 .r_pos = 1,
-                .g_pos = 2,
-                .b_pos = 0,
+                .g_pos = 0,
+                .b_pos = 2,
                 .w_pos = 3,
                 .reserved = 0,
                 .bytes_per_color = 1,

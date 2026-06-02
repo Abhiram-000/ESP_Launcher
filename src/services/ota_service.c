@@ -18,6 +18,8 @@
 #include "esp_partition.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include <string.h>
 
 static const char *TAG = "OTA_SVC";
@@ -46,6 +48,17 @@ typedef struct {
 } ota_ctx_t;
 
 static ota_ctx_t s_ctx;
+static SemaphoreHandle_t s_ota_mutex = NULL;
+
+static void _ota_lock(void) {
+    if (!s_ota_mutex) {
+        s_ota_mutex = xSemaphoreCreateMutex();
+        configASSERT(s_ota_mutex);
+    }
+    xSemaphoreTake(s_ota_mutex, portMAX_DELAY);
+}
+
+static void _ota_unlock(void) { xSemaphoreGive(s_ota_mutex); }
 
 /* --------------------------------------------------------------------------
  * Helpers
@@ -67,6 +80,7 @@ static void _reset_ctx(void) {
     s_ctx.active           = false;
     s_ctx.last_tick_us     = 0;
     s_ctx.kbps_ema         = 0.0f;
+    s_ctx.status_msg[0]    = '\0';
 }
 
 /* --------------------------------------------------------------------------
@@ -74,15 +88,19 @@ static void _reset_ctx(void) {
  * -------------------------------------------------------------------------- */
 
 esp_err_t ota_service_begin(size_t image_size) {
+    _ota_lock();
+
     /* Reject obviously invalid sizes */
     if (image_size > 0 && image_size < APP_OTA_MIN_IMAGE_SIZE) {
         ESP_LOGE(TAG, "Image too small (%zu B) — likely not a firmware binary", image_size);
         _set_state(OTA_STATE_FAILED, 0.0f, "File too small!");
+        _ota_unlock();
         return ESP_ERR_INVALID_SIZE;
     }
     if (image_size > APP_OTA_MAX_IMAGE_SIZE) {
         ESP_LOGE(TAG, "Image too large (%zu B) — exceeds partition size", image_size);
         _set_state(OTA_STATE_FAILED, 0.0f, "File too large!");
+        _ota_unlock();
         return ESP_ERR_INVALID_SIZE;
     }
 
@@ -106,6 +124,7 @@ esp_err_t ota_service_begin(size_t image_size) {
     if (s_ctx.partition == NULL) {
         ESP_LOGE(TAG, "No OTA partition found — check partitions.csv");
         _set_state(OTA_STATE_FAILED, 0.0f, "No OTA partition!");
+        _ota_unlock();
         return ESP_ERR_NOT_FOUND;
     }
     ESP_LOGI(TAG, "Target: subtype=%d @ 0x%08x (%.1f MB)",
@@ -120,20 +139,26 @@ esp_err_t ota_service_begin(size_t image_size) {
         ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(err));
         _set_state(OTA_STATE_FAILED, 0.0f, "Erase failed!");
         _reset_ctx();
+        _ota_unlock();
         return err;
     }
 
     s_ctx.active       = true;
     s_ctx.last_tick_us = esp_timer_get_time();
     _set_state(OTA_STATE_FLASHING, 0.0f, "Receiving...");
+    _ota_unlock();
     return ESP_OK;
 }
 
 esp_err_t ota_service_write(const void *data, size_t length) {
+    _ota_lock();
+
     if (!s_ctx.active || s_ctx.handle == 0) {
+        _ota_unlock();
         return ESP_ERR_INVALID_STATE;
     }
     if (data == NULL || length == 0) {
+        _ota_unlock();
         return ESP_ERR_INVALID_ARG;
     }
 
@@ -142,6 +167,7 @@ esp_err_t ota_service_write(const void *data, size_t length) {
         if (length < 4) {
             ESP_LOGE(TAG, "First chunk too small (%zu B) to contain ESP32 image header", length);
             _set_state(OTA_STATE_FAILED, 0.0f, "Invalid binary!");
+            _ota_unlock();
             return ESP_ERR_INVALID_ARG;
         }
         const uint8_t *hdr = (const uint8_t *)data;
@@ -152,6 +178,7 @@ esp_err_t ota_service_write(const void *data, size_t length) {
                      "  ESP-IDF: build/<proj>.bin | Arduino: Sketch→Export | PlatformIO: .pio/build/<env>/<proj>.bin",
                      hdr[0], APP_OTA_ESP32_MAGIC);
             _set_state(OTA_STATE_FAILED, 0.0f, "Not an ESP32 binary!");
+            _ota_unlock();
             return ESP_ERR_INVALID_ARG;
         }
         ESP_LOGI(TAG, "Binary magic OK (0xE9). Chip type byte: 0x%02X Flash: 0x%02X", hdr[2], hdr[3]);
@@ -163,6 +190,7 @@ esp_err_t ota_service_write(const void *data, size_t length) {
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_write failed: %s", esp_err_to_name(err));
         _set_state(OTA_STATE_FAILED, 0.0f, "Flash write error!");
+        _ota_unlock();
         return err;
     }
     s_ctx.total_written += length;
@@ -187,11 +215,15 @@ esp_err_t ota_service_write(const void *data, size_t length) {
     snprintf(msg, sizeof(msg), "Flashing... %.0f%%", progress);
     sys_mgr_send_ui_msg(OTA_STATE_FLASHING, progress, s_ctx.kbps_ema, msg);
 
+    _ota_unlock();
     return ESP_OK;
 }
 
 esp_err_t ota_service_end(void) {
+    _ota_lock();
+
     if (!s_ctx.active || s_ctx.handle == 0) {
+        _ota_unlock();
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -211,6 +243,7 @@ esp_err_t ota_service_end(void) {
             _set_state(OTA_STATE_FAILED, 0.0f, "Finalize error!");
         }
         _reset_ctx();
+        _ota_unlock();
         return err;
     }
 
@@ -219,22 +252,26 @@ esp_err_t ota_service_end(void) {
         ESP_LOGE(TAG, "esp_ota_set_boot_partition error: %s", esp_err_to_name(err));
         _set_state(OTA_STATE_FAILED, 0.0f, "Boot update failed!");
         _reset_ctx();
+        _ota_unlock();
         return err;
     }
 
     ESP_LOGI(TAG, "OTA SUCCESS — new boot partition set. System will reboot.");
     _set_state(OTA_STATE_SUCCESS, 100.0f, "Update OK! Rebooting...");
     s_ctx.active = false;
+    _ota_unlock();
     return ESP_OK;
 }
 
 void ota_service_abort(void) {
+    _ota_lock();
     if (s_ctx.handle != 0) {
         esp_ota_abort(s_ctx.handle);
         ESP_LOGW(TAG, "OTA aborted after %zu bytes written", s_ctx.total_written);
     }
     _set_state(OTA_STATE_FAILED, 0.0f, "Upload aborted");
     _reset_ctx();
+    _ota_unlock();
 }
 
 /* --------------------------------------------------------------------------
@@ -242,17 +279,25 @@ void ota_service_abort(void) {
  * -------------------------------------------------------------------------- */
 
 float ota_service_get_progress(void) {
-    if (s_ctx.expected_size == 0) return 0.0f;
+    _ota_lock();
+    if (s_ctx.expected_size == 0) { _ota_unlock(); return 0.0f; }
     float p = ((float)s_ctx.total_written / (float)s_ctx.expected_size) * 100.0f;
+    _ota_unlock();
     return (p > 100.0f) ? 100.0f : p;
 }
 
 float ota_service_get_kbps(void) {
-    return s_ctx.kbps_ema;
+    _ota_lock();
+    float k = s_ctx.kbps_ema;
+    _ota_unlock();
+    return k;
 }
 
 ota_state_t ota_service_get_state(void) {
-    return s_ctx.state;
+    _ota_lock();
+    ota_state_t s = s_ctx.state;
+    _ota_unlock();
+    return s;
 }
 
 const char* ota_service_get_status_msg(void) {

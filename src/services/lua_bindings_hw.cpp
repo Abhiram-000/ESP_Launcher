@@ -77,6 +77,7 @@ static int l_i2c_setup(lua_State* L) {
     if (bus < 0 || bus > 1) { lua_pushboolean(L, 0); return 1; }
     int sda  = luaL_checkinteger(L, 2);
     int scl  = luaL_checkinteger(L, 3);
+    if (!_pin_allowed(sda) || !_pin_allowed(scl)) { lua_pushboolean(L, 0); return 1; }
     int freq = (int)luaL_optinteger(L, 4, 400000);
     
     if (!s_i2c_bus[bus]) {
@@ -155,6 +156,7 @@ static int l_uart_setup(lua_State* L) {
     int port = luaL_checkinteger(L, 1);
     int tx   = luaL_checkinteger(L, 2);
     int rx   = luaL_checkinteger(L, 3);
+    if (!_pin_allowed(tx) || !_pin_allowed(rx)) { lua_pushboolean(L, 0); return 1; }
     int baud = luaL_checkinteger(L, 4);
     uart_config_t cfg = {};
     cfg.baud_rate = baud;
@@ -255,8 +257,10 @@ void LuaEngine::_bind_pwm(lua_State* L) {
 
 // ─── fs.* ────────────────────────────────────────────────────────────────────
 static bool _fs_path_allowed(const char* path) {
-    // Scripts must stay within /games/ai/
-    return strncmp(path, AI_BASE_DIR, strlen(AI_BASE_DIR)) == 0;
+    if (!path) return false;
+    if (strncmp(path, AI_BASE_DIR, strlen(AI_BASE_DIR)) != 0) return false;
+    if (strstr(path, "..") != NULL) return false;
+    return true;
 }
 static int l_fs_read(lua_State* L) {
     const char* path = luaL_checkstring(L, 1);
@@ -307,6 +311,11 @@ void LuaEngine::_bind_spi(lua_State* /*L*/) { /* TODO: implement in next iterati
 // ─── net.* ───────────────────────────────────────────────────────────────────
 static int l_net_fetch(lua_State* L) {
     const char* url = luaL_checkstring(L, 1);
+    if (!url || url[0] == '\0') {
+        lua_pushnil(L);
+        lua_pushstring(L, "empty URL");
+        return 2;
+    }
     esp_http_client_config_t cfg = {};
     cfg.url = url;
     cfg.timeout_ms = 10000;

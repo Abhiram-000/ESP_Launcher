@@ -52,6 +52,12 @@ extern "C" {
 #define APP_OTA_ESP32_MAGIC     0xE9u
 
 /* --------------------------------------------------------------------------
+ * Boot Control — RTC Retain Memory Magic Values
+ * -------------------------------------------------------------------------- */
+#define BOOT_FORCE_LAUNCHER_MAGIC  0xA5B4C3D2U
+#define BOOT_ALLOW_OTA1_MAGIC      0xB6C7D4E3U
+
+/* --------------------------------------------------------------------------
  * Game Store — Cloud ROM Downloader
  * -------------------------------------------------------------------------- */
 #define GAME_STORE_PARTITION_LABEL  "games"

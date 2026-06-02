@@ -68,21 +68,7 @@ static const char *TAG = "BOOT_CTRL";
 #define BC_NVS_KEY_BOOTCNT     "boot_cnt"
 #define BC_NVS_KEY_PREFCNT     "pref_cnt"  /* Consecutive launcher-preference counter */
 
-/*
- * Bootloader–App communication via RTC retain memory.
- * The bootloader's GPIO hook stores BOOT_FORCE_LAUNCHER_MAGIC in
- * rtc_retain_mem.partition.offset when SELECT is held at reset.
- * We read it here and clear it after consuming.
- */
-#define BOOT_FORCE_LAUNCHER_MAGIC  0xA5B4C3D2U
-
-/*
- * "Boot ota_1" flag. Set by Launcher before restarting to ota_1.
- * The bootloader hook reads this flag and skips forcing ota_0,
- * allowing ota_1 to boot. This is how the 5-second splash screen
- * hands off to the installed firmware after timeout.
- */
-#define BOOT_ALLOW_OTA1_MAGIC      0xB6C7D4E3U
+/* Boot magic constants are defined in sys_config.h */
 
 /* ---- Internal helpers ---- */
 
@@ -233,8 +219,19 @@ static LGFX_Sprite          *s_canvas = nullptr;
 static bool s_display_ok = false;
 
 static bool display_init_for_splash(void) {
-    s_tft    = new LGFX_ESP32S3_ST7735();
+    s_tft = new LGFX_ESP32S3_ST7735();
+    if (s_tft == nullptr) {
+        ESP_LOGE(TAG, "Failed to allocate LGFX_ESP32S3_ST7735");
+        return false;
+    }
+
     s_canvas = new LGFX_Sprite(s_tft);
+    if (s_canvas == nullptr) {
+        ESP_LOGE(TAG, "Failed to allocate LGFX_Sprite");
+        delete s_tft;
+        s_tft = nullptr;
+        return false;
+    }
 
     s_tft->init();
     s_tft->setRotation(1);
@@ -398,11 +395,6 @@ void boot_ctrl_check(void) {
         reset_boot_count();
         return;
     }
-    /* Ensure retain mem is clean for subsequent boots */
-    if (rtc_mem != NULL) {
-        bootloader_common_reset_rtc_retain_mem();
-    }
-
     /* Step 1: Confirm we are in Launcher (ota_0). */
     const esp_partition_t *running = esp_ota_get_running_partition();
     if (running == NULL || running->subtype != ESP_PARTITION_SUBTYPE_APP_OTA_0) {
@@ -415,10 +407,11 @@ void boot_ctrl_check(void) {
     uint8_t boot_count = get_and_increment_boot_count();
     ESP_LOGI(TAG, "Launcher boot count (raw): %d", boot_count);
 
-    if (boot_count > BC_BOOT_LOOP_MAX) {
-        ESP_LOGW(TAG, "Boot loop detected (count=%d > %d) — forcing Launcher, skipping FW switch",
+    if (boot_count >= BC_BOOT_LOOP_MAX) {
+        ESP_LOGW(TAG, "Boot loop detected (count=%d >= %d) — forcing Launcher, skipping FW switch",
                  boot_count, BC_BOOT_LOOP_MAX);
         reset_boot_count();
+        reset_launcher_pref_count();
         return; /* Stay in Launcher regardless */
     }
 

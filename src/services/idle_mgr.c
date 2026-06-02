@@ -11,6 +11,8 @@
 #include "nvs_flash.h"
 #include "driver/rtc_io.h"
 #include "../config/sys_config.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "IDLE_MGR";
 
@@ -20,6 +22,7 @@ static const char *TAG = "IDLE_MGR";
 
 static uint64_t s_last_activity_ms = 0;
 static idle_state_t s_state = IDLE_STATE_ACTIVE;
+static SemaphoreHandle_t s_mutex = NULL;
 
 static uint64_t get_now_ms(void) {
     return esp_timer_get_time() / 1000;
@@ -27,16 +30,20 @@ static uint64_t get_now_ms(void) {
 
 void idle_mgr_init(void) {
     ESP_LOGI(TAG, "Initializing Idle Manager (50s Idle / 10s Countdown)");
+    s_mutex = xSemaphoreCreateMutex();
+    configASSERT(s_mutex);
     s_last_activity_ms = get_now_ms();
     s_state = IDLE_STATE_ACTIVE;
 }
 
 void idle_mgr_feed(void) {
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_last_activity_ms = get_now_ms();
     if (s_state != IDLE_STATE_ACTIVE) {
         ESP_LOGI(TAG, "System Woken (Inactivity reset)");
         s_state = IDLE_STATE_ACTIVE;
     }
+    xSemaphoreGive(s_mutex);
 }
 
 static void enter_deep_sleep(void) {
@@ -63,6 +70,7 @@ static void enter_deep_sleep(void) {
 }
 
 void idle_mgr_process(void) {
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
     uint64_t now = get_now_ms();
     uint64_t elapsed = now - s_last_activity_ms;
 
@@ -78,6 +86,7 @@ void idle_mgr_process(void) {
             if (elapsed > (IDLE_TIMEOUT_MS + COUNTDOWN_TIMEOUT_MS)) {
                 ESP_LOGI(TAG, "Countdown expired. Shutting down.");
                 s_state = IDLE_STATE_SLEEP;
+                xSemaphoreGive(s_mutex);
                 enter_deep_sleep();
             }
             break;
@@ -86,18 +95,27 @@ void idle_mgr_process(void) {
             /* Already transitioning or asleep */
             break;
     }
+    xSemaphoreGive(s_mutex);
 }
 
 idle_state_t idle_mgr_get_state(void) {
-    return s_state;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    idle_state_t state = s_state;
+    xSemaphoreGive(s_mutex);
+    return state;
 }
 
 int idle_mgr_get_countdown_remaining(void) {
-    if (s_state != IDLE_STATE_COUNTDOWN) return 0;
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (s_state != IDLE_STATE_COUNTDOWN) {
+        xSemaphoreGive(s_mutex);
+        return 0;
+    }
     
     uint64_t now = get_now_ms();
     uint64_t elapsed = now - s_last_activity_ms;
     int remaining = (int)((IDLE_TIMEOUT_MS + COUNTDOWN_TIMEOUT_MS - elapsed) / 1000);
     
+    xSemaphoreGive(s_mutex);
     return (remaining < 0) ? 0 : remaining;
 }

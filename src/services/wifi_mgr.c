@@ -14,6 +14,8 @@
 #include "nvs.h"
 #include "../system/sys_mgr.h"
 #include "../config/sys_config.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "WIFI_MGR";
 
@@ -22,6 +24,15 @@ static char s_sta_ip[16] = "0.0.0.0";
 static char s_sta_ssid[33] = {0};
 static char s_sta_pass[65] = {0};
 static bool s_scan_done = false;
+static SemaphoreHandle_t s_mutex = NULL;
+
+static void _lock(void) {
+    if (s_mutex) xSemaphoreTake(s_mutex, portMAX_DELAY);
+}
+
+static void _unlock(void) {
+    if (s_mutex) xSemaphoreGive(s_mutex);
+}
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                 int32_t event_id, void* event_data) {
@@ -43,13 +54,17 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                 ESP_LOGI(TAG, "STA Started");
                 break;
             case WIFI_EVENT_STA_DISCONNECTED:
+                _lock();
                 s_sta_connected = false;
                 strncpy(s_sta_ip, "0.0.0.0", sizeof(s_sta_ip) - 1);
                 s_sta_ip[sizeof(s_sta_ip) - 1] = '\0';
+                _unlock();
                 ESP_LOGI(TAG, "STA Disconnected");
                 break;
             case WIFI_EVENT_SCAN_DONE:
+                _lock();
                 s_scan_done = true;
+                _unlock();
                 ESP_LOGI(TAG, "STA Scan Complete");
                 break;
             default:
@@ -57,15 +72,19 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         }
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        _lock();
         esp_ip4addr_ntoa(&event->ip_info.ip, s_sta_ip, sizeof(s_sta_ip));
         s_sta_connected = true;
+        _unlock();
         ESP_LOGI(TAG, "STA Got IP: %s", s_sta_ip);
         
         // Save to NVS on successful connection
         nvs_handle_t h;
         if (nvs_open("wifi_creds", NVS_READWRITE, &h) == ESP_OK) {
+            _lock();
             nvs_set_str(h, "ssid", s_sta_ssid);
             nvs_set_str(h, "pass", s_sta_pass);
+            _unlock();
             nvs_commit(h);
             nvs_close(h);
             ESP_LOGI(TAG, "STA Credentials saved to NVS");
@@ -75,6 +94,11 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
 
 void wifi_mgr_init(void) {
     ESP_LOGI(TAG, "Initializing Unified Wi-Fi Manager (APSTA)");
+
+    if (!s_mutex) {
+        s_mutex = xSemaphoreCreateMutex();
+        configASSERT(s_mutex);
+    }
 
     // Initialize networking stack (idempotent)
     esp_err_t err = esp_netif_init();
@@ -115,6 +139,7 @@ void wifi_mgr_init(void) {
     // Auto-reconnect from NVS
     nvs_handle_t h;
     if (nvs_open("wifi_creds", NVS_READONLY, &h) == ESP_OK) {
+        _lock();
         size_t s_len = sizeof(s_sta_ssid), p_len = sizeof(s_sta_pass);
         if (nvs_get_str(h, "ssid", s_sta_ssid, &s_len) == ESP_OK &&
             nvs_get_str(h, "pass", s_sta_pass, &p_len) == ESP_OK) {
@@ -122,8 +147,11 @@ void wifi_mgr_init(void) {
             wifi_config_t sta_cfg = {0};
             strncpy((char*)sta_cfg.sta.ssid, s_sta_ssid, sizeof(sta_cfg.sta.ssid)-1);
             strncpy((char*)sta_cfg.sta.password, s_sta_pass, sizeof(sta_cfg.sta.password)-1);
+            _unlock();
             esp_wifi_set_config(WIFI_IF_STA, &sta_cfg);
             esp_wifi_connect();
+        } else {
+            _unlock();
         }
         nvs_close(h);
     }
@@ -132,13 +160,18 @@ void wifi_mgr_init(void) {
 }
 
 void wifi_mgr_scan_start(void) {
+    _lock();
     s_scan_done = false;
+    _unlock();
     wifi_scan_config_t scan_config = { .show_hidden = false };
     esp_wifi_scan_start(&scan_config, false);
 }
 
 bool wifi_mgr_is_scan_done(void) {
-    return s_scan_done;
+    _lock();
+    bool done = s_scan_done;
+    _unlock();
+    return done;
 }
 
 int wifi_mgr_get_scan_results(wifi_scan_info_t* results, int max_results) {
@@ -156,8 +189,10 @@ int wifi_mgr_get_scan_results(wifi_scan_info_t* results, int max_results) {
 }
 
 void wifi_mgr_connect(const char* ssid, const char* password) {
+    _lock();
     strncpy(s_sta_ssid, ssid, sizeof(s_sta_ssid)-1);
     strncpy(s_sta_pass, password, sizeof(s_sta_pass)-1);
+    _unlock();
     
     wifi_config_t sta_config = {0};
     strncpy((char*)sta_config.sta.ssid, ssid, sizeof(sta_config.sta.ssid)-1);
@@ -171,9 +206,17 @@ void wifi_mgr_disconnect(void) {
 }
 
 bool wifi_mgr_is_connected(void) {
-    return s_sta_connected;
+    _lock();
+    bool connected = s_sta_connected;
+    _unlock();
+    return connected;
 }
 
 const char* wifi_mgr_get_connected_ssid(void) {
-    return s_sta_ssid;
+    static char s_copy[33];
+    _lock();
+    strncpy(s_copy, s_sta_ssid, sizeof(s_copy) - 1);
+    s_copy[sizeof(s_copy) - 1] = '\0';
+    _unlock();
+    return s_copy;
 }

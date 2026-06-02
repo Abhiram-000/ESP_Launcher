@@ -43,6 +43,7 @@
  * BOOT_ALLOW_OTA1_MAGIC: Launcher sets this before restarting to ota_1.
  *   Hook reads it and skips forcing ota_0, allowing ota_1 to boot.
  */
+/* Mirror of sys_config.h — bootloader component can't include src/ headers */
 #define BOOT_FORCE_LAUNCHER_MAGIC  0xA5B4C3D2U
 #define BOOT_ALLOW_OTA1_MAGIC      0xB6C7D4E3U
 
