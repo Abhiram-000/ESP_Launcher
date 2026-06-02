@@ -11,6 +11,7 @@
 
 #include "App_OTA.h"
 #include "../theme_mgr.h"
+#include "../../utils/color_utils.h"
 #include "esp_log.h"
 #include <math.h>
 #include "freertos/FreeRTOS.h"
@@ -154,19 +155,6 @@ void App_OTA::handleInput(input_event_t event) {
 }
 
 /* --------------------------------------------------------------------------
- * Color blending
- * -------------------------------------------------------------------------- */
-uint16_t App_OTA::blend_color(uint16_t fg, uint16_t bg, float alpha) {
-    if (alpha <= 0.0f) return bg;
-    if (alpha >= 1.0f) return fg;
-    uint8_t r1 = (fg >> 11) & 0x1F, g1 = (fg >> 5) & 0x3F, b1 = fg & 0x1F;
-    uint8_t r2 = (bg >> 11) & 0x1F, g2 = (bg >> 5) & 0x3F, b2 = bg & 0x1F;
-    return ((uint16_t)(r2 + (r1 - r2) * alpha) << 11) |
-           ((uint16_t)(g2 + (g1 - g2) * alpha) << 5) |
-           (uint16_t)(b2 + (b1 - b2) * alpha);
-}
-
-/* --------------------------------------------------------------------------
  * Animated liquid tank
  * -------------------------------------------------------------------------- */
 void App_OTA::draw_liquid_tank(LGFX_Sprite* canvas,
@@ -192,7 +180,7 @@ void App_OTA::draw_liquid_tank(LGFX_Sprite* canvas,
 
         /* Surface highlight */
         canvas->drawPixel(cx + x, cy + sy,
-            blend_color(canvas->color565(220, 240, 255), color_water, 0.75f));
+            color_blend(canvas->color565(220, 240, 255), color_water, 0.75f));
     }
 
     /* Outer bezel rings */
@@ -233,7 +221,7 @@ void App_OTA::draw_phase_dots(LGFX_Sprite* canvas, int cx, int bottom_y) {
         } else if (is_current) {
             /* Animated active dot */
             float alpha = 0.5f + 0.5f * sinf(anim_time * 4.0f);
-            col = blend_color(theme_get_accent(),
+            col = color_blend(theme_get_accent(),
                               canvas->color565(15, 25, 40), alpha);
         } else if (is_past) {
             col = theme_get_success();
@@ -357,9 +345,9 @@ void App_OTA::render(LGFX_Sprite* canvas) {
         if (shockwave_r < 100.0f) {
             float a = 1.0f - (shockwave_r / 100.0f);
             canvas->drawCircle(cx, tank_cy, (int)shockwave_r,
-                               blend_color(state_color, dynamic_bg, a));
+                               color_blend(state_color, dynamic_bg, a));
             canvas->drawCircle(cx, tank_cy, (int)(shockwave_r - 2),
-                               blend_color(state_color, dynamic_bg, a * 0.35f));
+                               color_blend(state_color, dynamic_bg, a * 0.35f));
         }
         /* State label */
         canvas->setFont(&fonts::Font2);

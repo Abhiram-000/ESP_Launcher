@@ -40,6 +40,15 @@ static void IRAM_ATTR gpio_isr_handler(void* arg) {
             BaseType_t xHigherPriorityTaskWoken = pdFALSE;
             const input_event_t ev = btn->event;
             xQueueSendFromISR(s_input_queue, &ev, &xHigherPriorityTaskWoken);
+
+            static const char* btn_names[] = {"UP","DOWN","LEFT","RIGHT","SELECT"};
+            int idx = (int)(btn->event - BTN_UP);
+            if (idx >= 0 && idx <= 4) {
+                ESP_DRAM_LOGI("IN_ISR", ">> ISR fire: %s pin=%d level=%d q_spaces=%d",
+                    btn_names[idx], btn->pin, hal_gpio_get_level(btn->pin),
+                    (int)uxQueueSpacesAvailable(s_input_queue));
+            }
+
             if (xHigherPriorityTaskWoken) {
                 portYIELD_FROM_ISR();
             }
@@ -75,7 +84,13 @@ input_event_t input_mgr_get_event(void) {
     
     input_event_t ev;
     if (xQueueReceive(s_input_queue, &ev, 0) == pdTRUE) {
-        idle_mgr_feed(); // Reset sleep timer on any valid processed event
+        idle_mgr_feed();
+        static const char* ev_names[] = {"NONE","UP","DOWN","LEFT","RIGHT","SELECT"};
+        int idx = (int)ev;
+        if (idx >= 0 && idx <= 5) {
+            ESP_LOGD(TAG, "Dequeued: %s q_remaining=%d",
+                ev_names[idx], (int)uxQueueMessagesWaiting(s_input_queue));
+        }
         return ev;
     }
     return BTN_NONE;

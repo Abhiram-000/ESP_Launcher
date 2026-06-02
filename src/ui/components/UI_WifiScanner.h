@@ -41,6 +41,7 @@ private:
     char _selected_ssid[33];
     char _password[64];
     bool _connect_success;
+    int _connect_timeout_ticks;
 
     UI_Keyboard _keyboard;
     std::function<void(bool)> _on_complete;

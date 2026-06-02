@@ -99,7 +99,6 @@ public:
     bool _lua_done;
 
     /* ── Rendering helpers ───────────────────────────────────────────── */
-    uint16_t blend(uint16_t fg, uint16_t bg, float a);
     void draw_header(LGFX_Sprite* c, const char* title);
     void draw_wifi_check(LGFX_Sprite* c);
     void draw_api_key_entry(LGFX_Sprite* c);

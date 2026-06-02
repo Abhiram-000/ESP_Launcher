@@ -20,9 +20,11 @@ private:
     float anim_time;
 
     input_event_t _held_btn;
-    int _held_frames;
-    static constexpr int HOLD_DELAY = 12;
-    static constexpr int HOLD_REPEAT = 3;
+    int _held_delay;
+    int _held_repeat;
+    bool _move_pending;
+
+    void _move(input_event_t dir);
 
 public:
     App_Grid();

@@ -1,5 +1,6 @@
 #include "App_Settings.h"
 #include "../theme_mgr.h"
+#include "../../utils/color_utils.h"
 #include "../ui_task.h"
 #include "esp_system.h"
 #include "esp_chip_info.h"
@@ -114,16 +115,7 @@ void App_Settings::handleInput(input_event_t event) {
     }
 }
 
-/* Helper to blend colors for glowing effects */
-static uint16_t blend_color(uint16_t fg, uint16_t bg, float alpha) {
-    if (alpha <= 0.0f) return bg;
-    if (alpha >= 1.0f) return fg;
-    uint8_t r1 = (fg >> 11) & 0x1F, g1 = (fg >> 5) & 0x3F, b1 = fg & 0x1F;
-    uint8_t r2 = (bg >> 11) & 0x1F, g2 = (bg >> 5) & 0x3F, b2 = bg & 0x1F;
-    return ((uint16_t)(r2 + (r1 - r2) * alpha) << 11) |
-           ((uint16_t)(g2 + (g1 - g2) * alpha) << 5) |
-           (uint16_t)(b2 + (b1 - b2) * alpha);
-}
+
 
 void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_offset) {
     int cx = canvas->width() / 2 + x_offset;
@@ -142,8 +134,8 @@ void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_o
             // Draw rounded card
             if (i == menu_cursor) {
                 float pulse = 0.8f + 0.2f * sinf(anim_time * 4.0f);
-                canvas->fillRoundRect(x_offset + 10, item_y, canvas->width()-20, 22, 6, blend_color(accent, bg, 0.2f));
-                canvas->drawRoundRect(x_offset + 10, item_y, canvas->width()-20, 22, 6, blend_color(accent, bg, pulse));
+                canvas->fillRoundRect(x_offset + 10, item_y, canvas->width()-20, 22, 6, color_blend(accent, bg, 0.2f));
+                canvas->drawRoundRect(x_offset + 10, item_y, canvas->width()-20, 22, 6, color_blend(accent, bg, pulse));
                 canvas->setTextColor(theme_get_text());
                 
                 // Animated chevron
@@ -151,8 +143,8 @@ void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_o
                 canvas->setTextDatum(textdatum_t::middle_right);
                 canvas->drawString(">", x_offset + canvas->width() - 15 + bounce, item_y + 11);
             } else {
-                canvas->fillRoundRect(x_offset + 10, item_y, canvas->width()-20, 22, 6, blend_color(theme_get_text_dim(), bg, 0.1f));
-                canvas->drawRoundRect(x_offset + 10, item_y, canvas->width()-20, 22, 6, blend_color(theme_get_text_dim(), bg, 0.3f));
+                canvas->fillRoundRect(x_offset + 10, item_y, canvas->width()-20, 22, 6, color_blend(theme_get_text_dim(), bg, 0.1f));
+                canvas->drawRoundRect(x_offset + 10, item_y, canvas->width()-20, 22, 6, color_blend(theme_get_text_dim(), bg, 0.3f));
                 canvas->setTextColor(theme_get_text_dim());
             }
             
@@ -173,8 +165,8 @@ void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_o
         canvas->setTextColor(theme_get_text());
         
         // Premium grouped info box
-        canvas->fillRoundRect(x_offset + 8, list_y, canvas->width()-16, 68, 6, blend_color(theme_get_text_dim(), bg, 0.05f));
-        canvas->drawRoundRect(x_offset + 8, list_y, canvas->width()-16, 68, 6, blend_color(accent, bg, 0.3f));
+        canvas->fillRoundRect(x_offset + 8, list_y, canvas->width()-16, 68, 6, color_blend(theme_get_text_dim(), bg, 0.05f));
+        canvas->drawRoundRect(x_offset + 8, list_y, canvas->width()-16, 68, 6, color_blend(accent, bg, 0.3f));
         
         list_y += 6;
         snprintf(buf, sizeof(buf), "CPU: ESP32-S%d", (chip_info.model == CHIP_ESP32S3) ? 3 : 2);
@@ -203,7 +195,7 @@ void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_o
         canvas->drawString(">", x_offset + canvas->width() - 15 + bounce, list_y + 10);
 
         // Highlight box for current selection
-        canvas->fillRoundRect(x_offset + 25, list_y, canvas->width()-50, 20, 6, blend_color(accent, bg, 0.15f));
+        canvas->fillRoundRect(x_offset + 25, list_y, canvas->width()-50, 20, 6, color_blend(accent, bg, 0.15f));
         canvas->drawRoundRect(x_offset + 25, list_y, canvas->width()-50, 20, 6, accent);
         
         canvas->setTextColor(theme_get_text());
@@ -215,7 +207,7 @@ void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_o
         canvas->drawRoundRect(cx - 24, list_y - 8, 16, 16, 4, theme_get_text_dim());
         
         canvas->fillRoundRect(cx - 4, list_y - 8, 16, 16, 4, theme_get_accent());
-        canvas->drawRoundRect(cx - 4, list_y - 8, 16, 16, 4, blend_color(theme_get_text(), theme_get_accent(), 0.2f));
+        canvas->drawRoundRect(cx - 4, list_y - 8, 16, 16, 4, color_blend(theme_get_text(), theme_get_accent(), 0.2f));
         
         canvas->fillRoundRect(cx + 16, list_y - 8, 16, 16, 4, theme_get_text());
         
@@ -231,8 +223,8 @@ void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_o
         int bar_y = list_y;
         
         // Beautiful slider track
-        canvas->fillRoundRect(bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4, 6, blend_color(theme_get_text_dim(), bg, 0.2f));
-        canvas->drawRoundRect(bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4, 6, blend_color(theme_get_text_dim(), bg, 0.5f));
+        canvas->fillRoundRect(bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4, 6, color_blend(theme_get_text_dim(), bg, 0.2f));
+        canvas->drawRoundRect(bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4, 6, color_blend(theme_get_text_dim(), bg, 0.5f));
         
         int fill_w = (temp_brightness * bar_w) / 255;
         if (fill_w < 4) fill_w = 4;
@@ -272,8 +264,8 @@ void App_Settings::render(LGFX_Sprite* canvas) {
     // Glowing separator line
     float pulse = 0.5f + 0.5f * sinf(anim_time * 3.0f);
     int line_w = 100 + (int)(20.0f * pulse);
-    canvas->drawFastHLine(cx - line_w/2, header_y + 10, line_w, blend_color(accent, bg, 0.8f));
-    canvas->drawFastHLine(cx - line_w/2 + 10, header_y + 11, line_w - 20, blend_color(accent, bg, 0.4f));
+    canvas->drawFastHLine(cx - line_w/2, header_y + 10, line_w, color_blend(accent, bg, 0.8f));
+    canvas->drawFastHLine(cx - line_w/2 + 10, header_y + 11, line_w - 20, color_blend(accent, bg, 0.4f));
 
     // --- Content Area with Transitions ---
     // Create a clipping window so content doesn't overwrite the header or footer
@@ -300,7 +292,7 @@ void App_Settings::render(LGFX_Sprite* canvas) {
     canvas->clearClipRect();
 
     // --- Footer ---
-    canvas->setTextColor(blend_color(theme_get_text_dim(), bg, 0.5f));
+    canvas->setTextColor(color_blend(theme_get_text_dim(), bg, 0.5f));
     canvas->setTextDatum(textdatum_t::bottom_center);
     if(current_state == STATE_MENU) {
         canvas->drawString("L: EXIT   R/SEL: OK", cx, canvas->height() - 2);

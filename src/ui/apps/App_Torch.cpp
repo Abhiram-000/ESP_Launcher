@@ -1,5 +1,6 @@
 #include "App_Torch.h"
 #include "../theme_mgr.h"
+#include "../../utils/color_utils.h"
 #include "../../drivers/led_driver.h"
 #include <math.h>
 #include <stdio.h>
@@ -143,15 +144,7 @@ void App_Torch::handleInput(input_event_t event) {
     }
 }
 
-static uint16_t blend_color(uint16_t fg, uint16_t bg, float alpha) {
-    if (alpha <= 0.0f) return bg;
-    if (alpha >= 1.0f) return fg;
-    uint8_t r1 = (fg >> 11) & 0x1F, g1 = (fg >> 5) & 0x3F, b1 = fg & 0x1F;
-    uint8_t r2 = (bg >> 11) & 0x1F, g2 = (bg >> 5) & 0x3F, b2 = bg & 0x1F;
-    return ((uint16_t)(r2 + (r1 - r2) * alpha) << 11) |
-           ((uint16_t)(g2 + (g1 - g2) * alpha) << 5) |
-           (uint16_t)(b2 + (b1 - b2) * alpha);
-}
+
 
 void App_Torch::render(LGFX_Sprite* canvas) {
     uint16_t bg = theme_get_bg();
@@ -178,7 +171,7 @@ void App_Torch::render(LGFX_Sprite* canvas) {
         }
         else if (current_mode == MODE_CYBER_PULSE) {
             float intensity = (sinf(anim_time * 3.0f) + 1.0f) * 0.5f;
-            orb_color = blend_color(theme_get_accent(), bg, 0.4f + intensity * 0.6f);
+            orb_color = color_blend(theme_get_accent(), bg, 0.4f + intensity * 0.6f);
         }
         else if (current_mode == MODE_SOS) {
             float t = fmodf(anim_time * 2.0f, 32.0f);
@@ -201,15 +194,15 @@ void App_Torch::render(LGFX_Sprite* canvas) {
     
     if (led_on) {
         float glow_pulse = 2.0f * sinf(anim_time * 4.0f);
-        canvas->fillCircle(cx, cy, (int)(dynamic_r + 8 + glow_pulse), blend_color(orb_color, bg, 0.15f));
-        canvas->fillCircle(cx, cy, (int)(dynamic_r + 4 + glow_pulse/2), blend_color(orb_color, bg, 0.35f));
+        canvas->fillCircle(cx, cy, (int)(dynamic_r + 8 + glow_pulse), color_blend(orb_color, bg, 0.15f));
+        canvas->fillCircle(cx, cy, (int)(dynamic_r + 4 + glow_pulse/2), color_blend(orb_color, bg, 0.35f));
     }
     
-    canvas->fillCircle(cx, cy, (int)dynamic_r, blend_color(orb_color, bg, led_on ? 0.9f : 0.3f));
+    canvas->fillCircle(cx, cy, (int)dynamic_r, color_blend(orb_color, bg, led_on ? 0.9f : 0.3f));
     canvas->drawCircle(cx, cy, (int)dynamic_r, led_on ? 0xFFFF : theme_get_text_dim());
     
     // 3D Glass Highlight
-    canvas->fillCircle(cx - (int)(dynamic_r * 0.3f), cy - (int)(dynamic_r * 0.3f), (int)(dynamic_r * 0.3f), blend_color(0xFFFF, orb_color, led_on ? 0.6f : 0.2f));
+    canvas->fillCircle(cx - (int)(dynamic_r * 0.3f), cy - (int)(dynamic_r * 0.3f), (int)(dynamic_r * 0.3f), color_blend(0xFFFF, orb_color, led_on ? 0.6f : 0.2f));
 
     // Mode Label
     int label_y = cy + 36;
@@ -231,7 +224,7 @@ void App_Torch::render(LGFX_Sprite* canvas) {
     int pill_h = 12;
     int pill_x = cx - pill_w/2;
     int pill_y = label_y + 12;
-    uint16_t pill_bg = led_on ? theme_get_success() : blend_color(theme_get_text_dim(), bg, 0.3f);
+    uint16_t pill_bg = led_on ? theme_get_success() : color_blend(theme_get_text_dim(), bg, 0.3f);
     
     canvas->fillRoundRect(pill_x, pill_y, pill_w, pill_h, 6, pill_bg);
     canvas->setTextColor(led_on ? 0x0000 : theme_get_text()); 
@@ -239,7 +232,7 @@ void App_Torch::render(LGFX_Sprite* canvas) {
     canvas->drawString(led_on ? "ON" : "OFF", cx, pill_y + pill_h/2);
 
     // Footer
-    canvas->setTextColor(blend_color(theme_get_text_dim(), bg, 0.5f));
+    canvas->setTextColor(color_blend(theme_get_text_dim(), bg, 0.5f));
     canvas->setTextDatum(textdatum_t::bottom_center);
     canvas->drawString("L: EXT  SEL: ON  R: MOD", cx, canvas->height() - 2);
 }

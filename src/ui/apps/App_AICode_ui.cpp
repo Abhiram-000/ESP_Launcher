@@ -6,6 +6,7 @@
  */
 #include "App_AICode.h"
 #include "../theme_mgr.h"
+#include "../../utils/color_utils.h"
 #include "../../services/lua_engine.h"
 #include "../../services/llm_client.h"
 #include "../../services/wifi_mgr.h"
@@ -17,15 +18,6 @@
 #include <string.h>
 
 extern void switch_to_grid();
-
-// ─── Utility ─────────────────────────────────────────────────────────────
-uint16_t App_AICode::blend(uint16_t fg, uint16_t bg, float a) {
-    if (a <= 0) return bg;
-    if (a >= 1) return fg;
-    uint8_t r1=(fg>>11)&0x1F,g1=(fg>>5)&0x3F,b1=fg&0x1F;
-    uint8_t r2=(bg>>11)&0x1F,g2=(bg>>5)&0x3F,b2=bg&0x1F;
-    return ((uint16_t)(r2+(r1-r2)*a)<<11)|((uint16_t)(g2+(g1-g2)*a)<<5)|(uint16_t)(b2+(b1-b2)*a);
-}
 
 void App_AICode::draw_header(LGFX_Sprite* c, const char* title) {
     uint16_t acc = theme_get_accent();
@@ -90,7 +82,7 @@ void App_AICode::draw_main_menu(LGFX_Sprite* c) {
         if (sel) {
             float pulse = 0.5f + 0.5f * sinf(_anim * 4.0f);
             c->fillRoundRect(8, cy + i*h, c->width()-16, h-2, 5,
-                blend(theme_get_accent(), theme_get_bg(), 0.3f * pulse + 0.2f));
+                color_blend(theme_get_accent(), theme_get_bg(), 0.3f * pulse + 0.2f));
             c->drawRoundRect(8, cy + i*h, c->width()-16, h-2, 5, theme_get_accent());
         }
         c->setTextDatum(textdatum_t::middle_left);
@@ -115,10 +107,10 @@ void App_AICode::draw_chat_select(LGFX_Sprite* c) {
         if (sel) {
             float pulse = 0.5f + 0.5f * sinf(_anim * 4.0f);
             c->fillRoundRect(8, y, W-16, h, 6,
-                blend(theme_get_accent(), theme_get_bg(), 0.3f * pulse + 0.2f));
+                color_blend(theme_get_accent(), theme_get_bg(), 0.3f * pulse + 0.2f));
             c->drawRoundRect(8, y, W-16, h, 6, theme_get_accent());
         } else {
-            c->fillRoundRect(8, y, W-16, h, 6, blend(theme_get_text_dim(), theme_get_bg(), 0.1f));
+            c->fillRoundRect(8, y, W-16, h, 6, color_blend(theme_get_text_dim(), theme_get_bg(), 0.1f));
             c->drawRoundRect(8, y, W-16, h, 6, theme_get_text_dim());
         }
         c->setFont(&fonts::Font0);
@@ -140,7 +132,7 @@ void App_AICode::draw_chat_phone(LGFX_Sprite* c) {
     c->setTextDatum(textdatum_t::top_left);
     c->drawString("Connect your phone to:", 8, 20);
 
-    c->fillRoundRect(6, 32, W-12, 22, 4, blend(theme_get_accent(), theme_get_bg(), 0.15f));
+    c->fillRoundRect(6, 32, W-12, 22, 4, color_blend(theme_get_accent(), theme_get_bg(), 0.15f));
     c->drawRoundRect(6, 32, W-12, 22, 4, theme_get_accent());
     c->setTextColor(theme_get_accent());
     c->drawString(APP_WIFI_SSID, 12, 38);
@@ -148,13 +140,13 @@ void App_AICode::draw_chat_phone(LGFX_Sprite* c) {
     c->setTextColor(theme_get_text());
     c->drawString("Then open browser at:", 8, 60);
 
-    c->fillRoundRect(6, 72, W-12, 22, 4, blend(theme_get_accent(), theme_get_bg(), 0.15f));
+    c->fillRoundRect(6, 72, W-12, 22, 4, color_blend(theme_get_accent(), theme_get_bg(), 0.15f));
     c->drawRoundRect(6, 72, W-12, 22, 4, theme_get_accent());
     c->setTextColor(theme_get_accent());
     c->drawString("http://192.168.4.1/chat", 12, 78);
 
     float pulse = 0.6f + 0.4f * sinf(_anim * 5.0f);
-    c->fillCircle(12, 108, 4, blend(theme_get_success(), theme_get_bg(), pulse));
+    c->fillCircle(12, 108, 4, color_blend(theme_get_success(), theme_get_bg(), pulse));
     c->setTextColor(theme_get_text_dim());
     c->drawString("Hosting local portal...", 22, 104);
 
@@ -220,7 +212,7 @@ void App_AICode::draw_ide(LGFX_Sprite* c) {
         while (i <= len && src[i] != '\n') i++;
         i++;
         bool is_cur = (line == cur_line);
-        if (is_cur) c->fillRect(0, y, W, lh, blend(theme_get_accent(), theme_get_bg(), 0.15f));
+        if (is_cur) c->fillRect(0, y, W, lh, color_blend(theme_get_accent(), theme_get_bg(), 0.15f));
         c->setTextColor(is_cur ? theme_get_text() : theme_get_text_dim());
         c->setTextDatum(textdatum_t::top_left);
         c->drawString(row, 4, y);
@@ -242,7 +234,7 @@ void App_AICode::draw_script_list(LGFX_Sprite* c) {
     }
     for (int i = 0; i < (int)_scripts.size() && y < c->height()-4; i++, y += h) {
         bool sel = i == _script_sel;
-        if (sel) c->fillRoundRect(4, y, c->width()-8, h-2, 3, blend(theme_get_accent(), theme_get_bg(), 0.25f));
+        if (sel) c->fillRoundRect(4, y, c->width()-8, h-2, 3, color_blend(theme_get_accent(), theme_get_bg(), 0.25f));
         c->setTextColor(sel ? theme_get_text() : theme_get_text_dim());
         c->setTextDatum(textdatum_t::middle_left);
         c->drawString(_scripts[i].c_str(), 10, y + h/2 - 1);

@@ -84,6 +84,21 @@
         },
         "openrouter/auto": {
           "name": "OpenRouter Auto"
+        },
+        "aihubmix/coding-glm-5.1-free": {
+          "name": "GLM 5.1 Free (SWE-bench #1)"
+        },
+        "aihubmix/gpt-5.5-free": {
+          "name": "GPT-5.5 Free"
+        },
+        "aihubmix/xiaomi-mimo-v2.5-pro-free": {
+          "name": "Xiaomi MiMo V2.5 Pro Free"
+        },
+        "aihubmix/k2.6-code-preview-free": {
+          "name": "Kimi K2.6 Code Preview Free"
+        },
+        "aihubmix/coding-minimax-m3-free": {
+          "name": "MiniMax M3 Coding Free"
         }
       }
     }

@@ -1,5 +1,6 @@
 #include "UI_WifiScanner.h"
 #include "../theme_mgr.h"
+#include "../../utils/color_utils.h"
 #include "esp_log.h"
 #include <math.h>
 #include <string.h>
@@ -7,7 +8,8 @@
 static const char* TAG = "UI_WIFI";
 
 UI_WifiScanner::UI_WifiScanner() 
-    : _active(false), _state(State::Idle), _anim_time(0), _spinner_angle(0), _network_count(0) {}
+    : _active(false), _state(State::Idle), _anim_time(0), _spinner_angle(0),
+      _network_count(0), _connect_timeout_ticks(0) {}
 UI_WifiScanner::~UI_WifiScanner() {}
 
 void UI_WifiScanner::begin(std::function<void(bool)> on_complete) {
@@ -18,6 +20,7 @@ void UI_WifiScanner::begin(std::function<void(bool)> on_complete) {
     _list_sel = 0;
     _list_scroll = 0;
     _connect_success = false;
+    _connect_timeout_ticks = 0;
     memset(_selected_ssid, 0, sizeof(_selected_ssid));
     memset(_password, 0, sizeof(_password));
     
@@ -40,14 +43,11 @@ void UI_WifiScanner::loop() {
             _connect_success = true;
             _state = State::Done;
         } else {
-            // Need a timeout, but wifi_mgr_connect currently retries or we can assume failure if it takes too long
-            // Let's rely on a 10 second timeout
-            static int timeout_ticks = 0;
-            timeout_ticks++;
-            if (timeout_ticks > 200) { // roughly 10 seconds at 50ms loop
+            _connect_timeout_ticks++;
+            if (_connect_timeout_ticks > 200) { // roughly 10 seconds at 50ms loop
+                ESP_LOGW(TAG, "connect timeout for %s", _selected_ssid);
                 _connect_success = false;
                 _state = State::Done;
-                timeout_ticks = 0;
             }
         }
     }
@@ -111,16 +111,6 @@ void UI_WifiScanner::handleInput(input_event_t ev) {
     }
 }
 
-static uint16_t blend(uint16_t fg, uint16_t bg, float alpha) {
-    if (alpha <= 0.0f) return bg;
-    if (alpha >= 1.0f) return fg;
-    uint8_t r1 = (fg >> 11) & 0x1F, g1 = (fg >> 5) & 0x3F, b1 = fg & 0x1F;
-    uint8_t r2 = (bg >> 11) & 0x1F, g2 = (bg >> 5) & 0x3F, b2 = bg & 0x1F;
-    return ((uint16_t)(r2 + (r1 - r2) * alpha) << 11) |
-           ((uint16_t)(g2 + (g1 - g2) * alpha) << 5) |
-           (uint16_t)(b2 + (b1 - b2) * alpha);
-}
-
 void UI_WifiScanner::_draw_header(LGFX_Sprite* c, const char* title, uint16_t accent) {
     c->fillRect(0, 0, 160, 14, theme_get_bg());
     c->drawFastHLine(0, 14, 160, accent);
@@ -140,7 +130,7 @@ void UI_WifiScanner::render(LGFX_Sprite* c) {
     if (!_active) return;
     
     // Dim the background
-    c->fillRect(0, 0, 160, 128, blend(theme_get_bg(), 0x0000, 0.8f));
+    c->fillRect(0, 0, 160, 128, color_blend(theme_get_bg(), 0x0000, 0.8f));
 
     if (_state == State::Scanning) {
         _draw_header(c, "SCANNING WI-FI", theme_get_accent());
@@ -169,7 +159,7 @@ void UI_WifiScanner::render(LGFX_Sprite* c) {
                 int y = 18 + row * 25;
                 bool sel = (i == _list_sel);
                 
-                uint16_t bg = sel ? theme_get_accent() : blend(theme_get_text_dim(), theme_get_bg(), 0.1f);
+                uint16_t bg = sel ? theme_get_accent() : color_blend(theme_get_text_dim(), theme_get_bg(), 0.1f);
                 uint16_t fg = sel ? theme_get_bg() : theme_get_text();
                 
                 c->fillRoundRect(4, y, 152, 22, 4, bg);

@@ -34,8 +34,6 @@ private:
     ui_message_t local_msg;
 
     /* ---------- Rendering helpers ---------- */
-    uint16_t blend_color(uint16_t fg, uint16_t bg, float alpha);
-
     void draw_liquid_tank(LGFX_Sprite* canvas,
                           int cx, int cy, int radius,
                           float progress, float time,

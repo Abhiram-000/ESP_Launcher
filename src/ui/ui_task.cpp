@@ -206,9 +206,11 @@ static void ui_task_runner(void *arg) {
         input_event_t ev = input_mgr_get_event();
         if (ev != BTN_NONE) {
             idle_mgr_feed();
-            if (current_app) {
-                current_app->handleInput(ev);
-            }
+            ESP_LOGD(TAG, "DISPATCH ev=%d to %s", ev,
+                current_app ? "app" : "null");
+        }
+        if (current_app) {
+            current_app->handleInput(ev);
         }
 
         // Update animations
