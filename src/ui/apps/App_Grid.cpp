@@ -11,18 +11,6 @@ static const char* TAG = "APP_GRID";
 App_Grid::App_Grid() : app_count(0), selected_index(0),
     _held_btn(BTN_NONE), _held_frames(0) {
     memset(apps, 0, sizeof(apps));
-    cursor_x = 0;
-    cursor_y = 0;
-    target_cursor_x = 0;
-    target_cursor_y = 0;
-    cursor_vx = 0;
-    cursor_vy = 0;
-    cursor_w = 32;
-    cursor_h = 32;
-    target_cursor_w = 32;
-    target_cursor_h = 32;
-    cursor_vw = 0;
-    cursor_vh = 0;
     anim_time = 0;
 }
 
@@ -77,17 +65,6 @@ void App_Grid::exit() {
 
 void App_Grid::loop() {
     anim_time += 0.04f;
-    
-    const float ease = 0.45f;
-    cursor_x += (target_cursor_x - cursor_x) * ease;
-    cursor_y += (target_cursor_y - cursor_y) * ease;
-    cursor_w += (target_cursor_w - cursor_w) * ease;
-    cursor_h += (target_cursor_h - cursor_h) * ease;
-
-    if (fabsf(cursor_x - target_cursor_x) < 0.5f) cursor_x = target_cursor_x;
-    if (fabsf(cursor_y - target_cursor_y) < 0.5f) cursor_y = target_cursor_y;
-    if (fabsf(cursor_w - target_cursor_w) < 0.5f) cursor_w = target_cursor_w;
-    if (fabsf(cursor_h - target_cursor_h) < 0.5f) cursor_h = target_cursor_h;
 }
 
 void App_Grid::handleInput(input_event_t event) {
@@ -157,14 +134,8 @@ void App_Grid::render(LGFX_Sprite* canvas) {
         return;
     }
 
-    const uint8_t page = selected_index / MAX_APPS_PER_PAGE;
-    const uint8_t start_idx = page * MAX_APPS_PER_PAGE;
-    uint8_t end_idx = start_idx + MAX_APPS_PER_PAGE;
-    if (end_idx > app_count) end_idx = app_count;
-
-    const uint8_t sel_idx_on_page = selected_index % MAX_APPS_PER_PAGE;
-    const uint8_t sel_col = sel_idx_on_page % 3;
-    const uint8_t sel_row = sel_idx_on_page / 3;
+    const uint8_t sel_col = selected_index % 3;
+    const uint8_t sel_row = selected_index / 3;
     
     constexpr int icon_size = 32;
     constexpr int gap_x = 16;
@@ -173,29 +144,9 @@ void App_Grid::render(LGFX_Sprite* canvas) {
     const int start_x = (canvas->width() - (3 * icon_size + 2 * gap_x)) / 2;
     const int start_y = (canvas->height() - (3 * icon_size + 2 * gap_y)) / 2 + 5;
     
-    const float base_target_x = start_x + sel_col * (icon_size + gap_x);
-    const float base_target_y = start_y + sel_row * (icon_size + gap_y);
+    const int sel_x = start_x + sel_col * (icon_size + gap_x);
+    const int sel_y = start_y + sel_row * (icon_size + gap_y);
 
-    target_cursor_w = icon_size;
-    target_cursor_h = icon_size;
-    target_cursor_x = base_target_x - (target_cursor_w - icon_size) * 0.5f;
-    target_cursor_y = base_target_y - (target_cursor_h - icon_size) * 0.5f;
-
-    if (fabsf(cursor_x - base_target_x) > canvas->width() || cursor_w == 0) {
-        cursor_x = base_target_x;
-        cursor_y = base_target_y;
-        cursor_w = icon_size;
-        cursor_h = icon_size;
-        target_cursor_x = base_target_x;
-        target_cursor_y = base_target_y;
-        target_cursor_w = icon_size;
-        target_cursor_h = icon_size;
-    }
-
-    const int cx_draw = (int)cursor_x;
-    const int cy_draw = (int)cursor_y;
-    const int cw_draw = (int)cursor_w;
-    const int ch_draw = (int)cursor_h;
     const uint16_t acc = theme_get_accent();
 
     const uint8_t ar = ((acc >> 11) & 0x1F) << 3;
@@ -212,15 +163,15 @@ void App_Grid::render(LGFX_Sprite* canvas) {
         return canvas->color565(mr, mg, mb);
     };
 
-    canvas->fillRect(cx_draw - 4, cy_draw - 4, cw_draw + 8, ch_draw + 8, blend_with_bg(30));
-    canvas->drawRect(cx_draw - 7, cy_draw - 7, cw_draw + 14, ch_draw + 14, blend_with_bg(40));
-    canvas->drawRect(cx_draw - 5, cy_draw - 5, cw_draw + 10, ch_draw + 10, blend_with_bg(80));
-    canvas->drawRect(cx_draw - 4, cy_draw - 4, cw_draw + 8,  ch_draw + 8, blend_with_bg(130));
-    canvas->drawRect(cx_draw - 3, cy_draw - 3, cw_draw + 6, ch_draw + 6, acc);
+    canvas->fillRect(sel_x - 4, sel_y - 4, icon_size + 8, icon_size + 8, blend_with_bg(30));
+    canvas->drawRect(sel_x - 7, sel_y - 7, icon_size + 14, icon_size + 14, blend_with_bg(40));
+    canvas->drawRect(sel_x - 5, sel_y - 5, icon_size + 10, icon_size + 10, blend_with_bg(80));
+    canvas->drawRect(sel_x - 4, sel_y - 4, icon_size + 8,  icon_size + 8, blend_with_bg(130));
+    canvas->drawRect(sel_x - 3, sel_y - 3, icon_size + 6, icon_size + 6, acc);
 
     const int tick = 5 + (int)(1.5f * (sinf(anim_time * 2.2f) * 0.5f + 0.5f) * 2.0f);
-    const int bx0 = cx_draw - 4, by0 = cy_draw - 4;
-    const int bx1 = cx_draw + cw_draw + 3, by1 = cy_draw + ch_draw + 3;
+    const int bx0 = sel_x - 4, by0 = sel_y - 4;
+    const int bx1 = sel_x + icon_size + 3, by1 = sel_y + icon_size + 3;
 
     canvas->drawFastHLine(bx0, by0, tick, acc);
     canvas->drawFastVLine(bx0, by0, tick, acc);
@@ -238,10 +189,9 @@ void App_Grid::render(LGFX_Sprite* canvas) {
         canvas->fillCircle(bx1 + 1, by0 - 1, 1, acc);
     }
 
-    for (uint8_t i = start_idx; i < end_idx; i++) {
-        const uint8_t idx = i % MAX_APPS_PER_PAGE;
-        const int x = start_x + (idx % 3) * (icon_size + gap_x);
-        const int y = start_y + (idx / 3) * (icon_size + gap_y);
+    for (uint8_t i = 0; i < app_count; i++) {
+        const int x = start_x + (i % 3) * (icon_size + gap_x);
+        const int y = start_y + (i / 3) * (icon_size + gap_y);
         
         if (apps[i].cached_icon32 != nullptr) {
             if (i == selected_index) {
@@ -249,8 +199,7 @@ void App_Grid::render(LGFX_Sprite* canvas) {
                 temp_sp.setPsram(false);
                 if (temp_sp.createSprite(32, 32)) {
                     temp_sp.pushImage(0, 0, 32, 32, apps[i].cached_icon32);
-                    const float zoom = (cursor_w / (float)icon_size) * 1.15f; 
-                    temp_sp.pushRotateZoom(x + 16, y + 16, 0, zoom, zoom);
+                    temp_sp.pushRotateZoom(x + 16, y + 16, 0, 1.15f, 1.15f);
                     temp_sp.deleteSprite();
                 } else {
                     canvas->pushImage(x, y, 32, 32, apps[i].cached_icon32);
@@ -274,7 +223,8 @@ void App_Grid::render(LGFX_Sprite* canvas) {
     if (total_pages > 1) {
         const int dot_start_x = (canvas->width() - (total_pages * 8)) / 2;
         for (uint8_t p = 0; p < total_pages; p++) {
-            const uint16_t color = (p == page) ? theme_get_text() : theme_get_text_dim();
+            const uint16_t color = (p == selected_index / MAX_APPS_PER_PAGE)
+                ? theme_get_text() : theme_get_text_dim();
             canvas->fillCircle(dot_start_x + (p * 8) + 4, canvas->height() - 19, 2, color);
         }
     }

@@ -17,21 +17,6 @@ private:
     AppEntry apps[MAX_TOTAL_APPS];
     uint8_t app_count;
     uint8_t selected_index;
-    
-    float cursor_x;
-    float cursor_y;
-    float target_cursor_x;
-    float target_cursor_y;
-    float cursor_vx;
-    float cursor_vy;
-
-    float cursor_w;
-    float cursor_h;
-    float target_cursor_w;
-    float target_cursor_h;
-    float cursor_vw;
-    float cursor_vh;
-
     float anim_time;
 
     input_event_t _held_btn;
