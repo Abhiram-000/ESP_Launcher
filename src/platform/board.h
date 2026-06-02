@@ -11,7 +11,7 @@ extern "C" {
 
 // Input Settings
 // NOTE: GPIO 6-11 are reserved for Octal PSRAM/Flash — cannot be used as GPIO
-#define LAUNCHER_PIN_UP          5
+#define LAUNCHER_PIN_UP          3
 #define LAUNCHER_PIN_DOWN        17
 #define LAUNCHER_PIN_LEFT        18
 #define LAUNCHER_PIN_RIGHT       15

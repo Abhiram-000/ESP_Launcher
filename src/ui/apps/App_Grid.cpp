@@ -1,5 +1,7 @@
 #include "App_Grid.h"
 #include "../theme_mgr.h"
+#include "../../platform/board.h"
+#include "../../hal/hal_gpio.h"
 #include "esp_log.h"
 #include <math.h>
 #include <string.h>
@@ -8,8 +10,21 @@ extern void switch_to_app(IApp* app);
 
 static const char* TAG = "APP_GRID";
 
+static bool _is_btn_physically_held(input_event_t btn) {
+    gpio_num_t pin;
+    switch (btn) {
+        case BTN_UP:     pin = (gpio_num_t)LAUNCHER_PIN_UP; break;
+        case BTN_DOWN:   pin = (gpio_num_t)LAUNCHER_PIN_DOWN; break;
+        case BTN_LEFT:   pin = (gpio_num_t)LAUNCHER_PIN_LEFT; break;
+        case BTN_RIGHT:  pin = (gpio_num_t)LAUNCHER_PIN_RIGHT; break;
+        case BTN_SELECT: pin = (gpio_num_t)LAUNCHER_PIN_SELECT; break;
+        default: return false;
+    }
+    return hal_gpio_get_level(pin) == 0;
+}
+
 App_Grid::App_Grid() : app_count(0), selected_index(0),
-    _held_btn(BTN_NONE), _held_frames(0) {
+    _held_btn(BTN_NONE), _held_delay(0), _held_repeat(0), _move_pending(false) {
     memset(apps, 0, sizeof(apps));
     anim_time = 0;
 }
@@ -57,69 +72,83 @@ void App_Grid::registerApp(const char* name, const uint16_t* icon, IApp* app) {
 void App_Grid::init() {
     anim_time = 0;
     _held_btn = BTN_NONE;
-    _held_frames = 0;
+    _held_delay = 0;
+    _held_repeat = 0;
+    _move_pending = false;
 }
 
 void App_Grid::exit() {
 }
 
-void App_Grid::loop() {
-    anim_time += 0.04f;
-}
-
-void App_Grid::handleInput(input_event_t event) {
+void App_Grid::_move(input_event_t dir) {
     if (app_count == 0) return;
 
-    if (event != BTN_NONE) {
-        if (event == _held_btn) {
-            _held_frames++;
-            if (_held_frames >= HOLD_DELAY &&
-                (_held_frames - HOLD_DELAY) % HOLD_REPEAT == 0) {
-            } else {
-                return;
-            }
-        } else {
-            _held_btn = event;
-            _held_frames = 0;
-        }
-    } else {
-        _held_btn = BTN_NONE;
-        _held_frames = 0;
-        return;
-    }
-
-    const uint8_t col = selected_index % 3;
-    const uint8_t row = selected_index / 3;
     const uint8_t cols = 3;
     const uint8_t total_rows = (app_count + cols - 1) / cols;
 
-    if (event == BTN_RIGHT) {
-        if (col < cols - 1 && selected_index + 1 < app_count) {
-            selected_index++;
+    if (dir == BTN_RIGHT) {
+        selected_index = (selected_index + 1) % app_count;
+    }
+    else if (dir == BTN_LEFT) {
+        selected_index = (selected_index - 1 + app_count) % app_count;
+    }
+    else if (dir == BTN_DOWN) {
+        const uint8_t row = selected_index / cols;
+        const uint8_t col = selected_index % cols;
+        const uint8_t next_row = (row + 1) % total_rows;
+        uint8_t next_idx = next_row * cols + col;
+        if (next_idx >= app_count) next_idx = app_count - 1;
+        selected_index = next_idx;
+    }
+    else if (dir == BTN_UP) {
+        const uint8_t row = selected_index / cols;
+        const uint8_t col = selected_index % cols;
+        const uint8_t prev_row = (row - 1 + total_rows) % total_rows;
+        uint8_t prev_idx = prev_row * cols + col;
+        if (prev_idx >= app_count) prev_idx = app_count - 1;
+        selected_index = prev_idx;
+    }
+}
+
+void App_Grid::loop() {
+    anim_time += 0.04f;
+
+    if (_held_btn != BTN_NONE) {
+        if (!_is_btn_physically_held(_held_btn)) {
+            _held_btn = BTN_NONE;
+            _held_delay = 0;
+            _held_repeat = 0;
+            return;
+        }
+        _held_delay++;
+        if (_held_delay > 15) {
+            _held_repeat++;
+            if (_held_repeat % 3 == 0) {
+                _move(_held_btn);
+            }
         }
     }
-    else if (event == BTN_LEFT) {
-        if (col > 0) {
-            selected_index--;
-        }
-    }
-    else if (event == BTN_DOWN) {
-        if (row < total_rows - 1) {
-            uint8_t next = selected_index + cols;
-            selected_index = (next < app_count) ? next : app_count - 1;
-        }
-    }
-    else if (event == BTN_UP) {
-        if (row > 0) {
-            selected_index -= cols;
-        }
-    }
-    else if (event == BTN_SELECT) {
+}
+
+void App_Grid::handleInput(input_event_t event) {
+    ESP_LOGD(TAG, "handleInput: ev=%d held=%d delay=%d repeat=%d idx=%d apps=%d",
+        event, _held_btn, _held_delay, _held_repeat, selected_index, app_count);
+
+    if (event == BTN_SELECT) {
         _held_btn = BTN_NONE;
-        _held_frames = 0;
-        if (apps[selected_index].app_instance != nullptr) {
+        _held_delay = 0;
+        _held_repeat = 0;
+        if (app_count > 0 && apps[selected_index].app_instance != nullptr) {
             switch_to_app(apps[selected_index].app_instance);
         }
+        return;
+    }
+
+    if (event == BTN_UP || event == BTN_DOWN || event == BTN_LEFT || event == BTN_RIGHT) {
+        _held_btn = event;
+        _held_delay = 0;
+        _held_repeat = 0;
+        _move(event);
     }
 }
 
