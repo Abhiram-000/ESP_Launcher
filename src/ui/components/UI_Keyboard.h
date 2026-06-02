@@ -17,13 +17,14 @@ public:
 private:
     bool _active;
     char _buffer[64];
-    int _buf_len;
+    int  _buf_len;
     char _title[32];
 
     int _cursor_x;
     int _cursor_y;
-    int _mode; // 0=lower, 1=upper, 2=symbols
-    
+    int _mode;            // 0=lowercase QWERTY, 1=UPPERCASE QWERTY, 2=symbols
+    int _text_scroll_off;
+
     std::function<void(const char*)> _on_complete;
     std::function<void()> _on_cancel;
 
@@ -33,5 +34,5 @@ private:
     void _cancel();
 
     const char* _get_key_label(int x, int y);
-    char _get_key_char(int x, int y);
+    char        _get_key_char(int x, int y);
 };
