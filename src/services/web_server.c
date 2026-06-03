@@ -343,11 +343,16 @@ static bool _web_llm_chunk(const char* token, size_t len, void* user) {
     }
     esc[j] = '\0';
 
-    char chunk[1024];
-    int n = snprintf(chunk, sizeof(chunk), "data: {\"token\":\"%s\"}\n\n", esc);
+    char* chunk = heap_caps_malloc(1024, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!chunk) {
+        free(esc);
+        return false;
+    }
+    int n = snprintf(chunk, 1024, "data: {\"token\":\"%s\"}\n\n", esc);
     free(esc);
 
     esp_err_t err = httpd_resp_send_chunk(req, chunk, n);
+    free(chunk);
     return err == ESP_OK;
 }
 
@@ -397,8 +402,9 @@ static esp_err_t chat_send_get_handler(httpd_req_t *req) {
  * GET /chat/ide/files — Lists all script files in the LittleFS scripts dir
  * -------------------------------------------------------------------------- */
 static esp_err_t chat_ide_files_get_handler(httpd_req_t *req) {
-    char* json = malloc(2048);
+    char* json = heap_caps_malloc(2048, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!json) {
+        ESP_LOGE(TAG, "PSRAM alloc failed: 2048 bytes");
         return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
     }
     size_t pos = 0;
@@ -456,8 +462,9 @@ static esp_err_t chat_ide_load_get_handler(httpd_req_t *req) {
         return _send_json_error(req, HTTPD_404_NOT_FOUND, "File not found");
     }
 
-    char* buf = malloc(4096);
+    char* buf = heap_caps_malloc(4096, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buf) {
+        ESP_LOGE(TAG, "PSRAM alloc failed: 4096 bytes");
         fclose(f);
         return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
     }
