@@ -17,6 +17,9 @@ extern "C" {
 #define LAUNCHER_PIN_RIGHT       15
 #define LAUNCHER_PIN_SELECT      16
 
+// LED Settings
+#define LAUNCHER_PIN_LED          48
+
 #ifdef __cplusplus
 }
 #endif

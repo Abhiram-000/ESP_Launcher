@@ -2,20 +2,17 @@
 #include "esp_log.h"
 #include "../utils/error_handling.h"
 #include "led_strip.h"
-
-#ifndef BOARD_LED_GPIO
-#define BOARD_LED_GPIO 48
-#endif
+#include "../platform/board.h"
 
 static const char *TAG = "LED_DRIVER";
 static led_strip_handle_t led_strip = NULL;
 static bool initialized = false;
 
 void led_driver_init(void) {
-    ESP_LOGI(TAG, "Initializing NeoPixel on GPIO %d", BOARD_LED_GPIO);
+    ESP_LOGI(TAG, "Initializing NeoPixel on GPIO %d", LAUNCHER_PIN_LED);
     
     led_strip_config_t strip_config = {
-        .strip_gpio_num = BOARD_LED_GPIO,
+        .strip_gpio_num = LAUNCHER_PIN_LED,
         .max_leds = 1,
         .color_component_format = (led_color_component_format_t) {
             .format = {
