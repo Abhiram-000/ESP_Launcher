@@ -271,18 +271,18 @@ void App_Grid::render(LGFX_Sprite* canvas) {
             canvas->setFont(&fonts::Font0);
             canvas->setTextColor(theme_get_text());
             canvas->setTextDatum(textdatum_t::bottom_center);
-            canvas->drawString(apps[app_idx].name, canvas->width()/2, canvas->height() - 30); // Higher
+            canvas->drawString(apps[app_idx].name, canvas->width()/2, canvas->height() - 8); // Higher
         }
     }
 
     const uint8_t total_pages = (app_count + MAX_APPS_PER_PAGE - 1) / MAX_APPS_PER_PAGE;
     if (total_pages > 1) {
-        const int indicator_y = canvas->height() - 25;
-        const int indicator_x = canvas->width() / 2;
+        const int indicator_y = canvas->height() - 24;
+        const int indicator_x = canvas->width() / 2 + 4; // Slightly right
         
         for (uint8_t p = 0; p < total_pages; p++) {
             const uint16_t color = (p == page) ? theme_get_text() : theme_get_text_dim();
-            const int x_pos = indicator_x + (p - 1) * 20;
+            const int x_pos = indicator_x + (p - 1) * 12; // Reduced spacing
             
             if (p == page) {
                 // Current page: wide pill
