@@ -23,6 +23,7 @@ static const char *TAG = "IDLE_MGR";
 static uint64_t s_last_activity_ms = 0;
 static idle_state_t s_state = IDLE_STATE_ACTIVE;
 static SemaphoreHandle_t s_mutex = NULL;
+static bool s_idle_disabled = false;
 
 static uint64_t get_now_ms(void) {
     return esp_timer_get_time() / 1000;
@@ -71,6 +72,15 @@ static void enter_deep_sleep(void) {
 
 void idle_mgr_process(void) {
     xSemaphoreTake(s_mutex, portMAX_DELAY);
+    
+    // If idle is disabled, keep feeding the timer and stay active
+    if (s_idle_disabled) {
+        s_last_activity_ms = get_now_ms();
+        s_state = IDLE_STATE_ACTIVE;
+        xSemaphoreGive(s_mutex);
+        return;
+    }
+    
     uint64_t now = get_now_ms();
     uint64_t elapsed = now - s_last_activity_ms;
 
@@ -118,4 +128,26 @@ int idle_mgr_get_countdown_remaining(void) {
     
     xSemaphoreGive(s_mutex);
     return (remaining < 0) ? 0 : remaining;
+}
+
+void idle_mgr_disable(void) {
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (!s_idle_disabled) {
+        ESP_LOGI(TAG, "Idle timeout DISABLED (sleep prevention active)");
+        s_idle_disabled = true;
+        s_last_activity_ms = get_now_ms();
+        s_state = IDLE_STATE_ACTIVE;
+    }
+    xSemaphoreGive(s_mutex);
+}
+
+void idle_mgr_enable(void) {
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (s_idle_disabled) {
+        ESP_LOGI(TAG, "Idle timeout ENABLED (normal sleep behavior restored)");
+        s_idle_disabled = false;
+        s_last_activity_ms = get_now_ms();
+        s_state = IDLE_STATE_ACTIVE;
+    }
+    xSemaphoreGive(s_mutex);
 }

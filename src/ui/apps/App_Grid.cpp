@@ -84,29 +84,47 @@ void App_Grid::_move(input_event_t dir) {
     if (app_count == 0) return;
 
     const uint8_t cols = 3;
-    const uint8_t total_rows = (app_count + cols - 1) / cols;
+    const uint8_t page = selected_index / MAX_APPS_PER_PAGE;
+    const uint8_t page_start = page * MAX_APPS_PER_PAGE;
+    const uint8_t local_idx = selected_index - page_start;
+    const uint8_t row = local_idx / cols;
+    const uint8_t col = local_idx % cols;
 
     if (dir == BTN_RIGHT) {
-        selected_index = (selected_index + 1) % app_count;
+        uint8_t next = selected_index + 1;
+        if (next >= page_start + MAX_APPS_PER_PAGE || next >= app_count) {
+            next = page_start;
+        }
+        selected_index = next;
     }
     else if (dir == BTN_LEFT) {
-        selected_index = (selected_index - 1 + app_count) % app_count;
+        uint8_t prev = (selected_index == page_start) ? page_start + MAX_APPS_PER_PAGE - 1 : selected_index - 1;
+        if (prev >= app_count) prev = app_count - 1;
+        selected_index = prev;
     }
     else if (dir == BTN_DOWN) {
-        const uint8_t row = selected_index / cols;
-        const uint8_t col = selected_index % cols;
-        const uint8_t next_row = (row + 1) % total_rows;
-        uint8_t next_idx = next_row * cols + col;
-        if (next_idx >= app_count) next_idx = app_count - 1;
-        selected_index = next_idx;
+        if (row < 1) {
+            // Row 0 → Row 1 (same page)
+            selected_index = page_start + local_idx + cols;
+        } else if (row == 1) {
+            // Row 1 → Page 2 (if exists)
+            if (app_count > MAX_APPS_PER_PAGE) {
+                uint8_t target = MAX_APPS_PER_PAGE + col;
+                if (target >= app_count) target = app_count - 1;
+                selected_index = target;
+            }
+        }
     }
     else if (dir == BTN_UP) {
-        const uint8_t row = selected_index / cols;
-        const uint8_t col = selected_index % cols;
-        const uint8_t prev_row = (row - 1 + total_rows) % total_rows;
-        uint8_t prev_idx = prev_row * cols + col;
-        if (prev_idx >= app_count) prev_idx = app_count - 1;
-        selected_index = prev_idx;
+        if (row > 0) {
+            // Row 1 → Row 0 (same page)
+            selected_index = page_start + local_idx - cols;
+        } else if (row == 0 && page == 1) {
+            // Page 2 Row 0 → Page 1 Row 1
+            uint8_t target = MAX_APPS_PER_PAGE - cols + col;
+            if (target >= app_count) target = app_count - 1;
+            selected_index = target;
+        }
     }
 }
 
@@ -163,14 +181,22 @@ void App_Grid::render(LGFX_Sprite* canvas) {
         return;
     }
 
-    const uint8_t sel_col = selected_index % 3;
-    const uint8_t sel_row = selected_index / 3;
+    const uint8_t cols = 3;
+    const uint8_t page = selected_index / MAX_APPS_PER_PAGE;
+    const uint8_t page_start = page * MAX_APPS_PER_PAGE;
+    const uint8_t page_end = page_start + MAX_APPS_PER_PAGE;
+    const uint8_t apps_on_page = (page_end > app_count) ? (app_count - page_start) : MAX_APPS_PER_PAGE;
+    
+    const uint8_t local_idx = selected_index - page_start;
+    const uint8_t sel_col = local_idx % cols;
+    const uint8_t sel_row = local_idx / cols;
     
     constexpr int icon_size = 32;
     constexpr int gap_x = 16;
     constexpr int gap_y = 10;
     
-    const int start_x = (canvas->width() - (3 * icon_size + 2 * gap_x)) / 2;
+    // Position like 3x3 grid (3 rows centered)
+    const int start_x = (canvas->width() - (cols * icon_size + (cols - 1) * gap_x)) / 2;
     const int start_y = (canvas->height() - (3 * icon_size + 2 * gap_y)) / 2 + 5;
     
     const int sel_x = start_x + sel_col * (icon_size + gap_x);
@@ -218,43 +244,53 @@ void App_Grid::render(LGFX_Sprite* canvas) {
         canvas->fillCircle(bx1 + 1, by0 - 1, 1, acc);
     }
 
-    for (uint8_t i = 0; i < app_count; i++) {
+    for (uint8_t i = 0; i < apps_on_page; i++) {
+        const uint8_t app_idx = page_start + i;
         const int x = start_x + (i % 3) * (icon_size + gap_x);
         const int y = start_y + (i / 3) * (icon_size + gap_y);
         
-        if (apps[i].cached_icon32 != nullptr) {
-            if (i == selected_index) {
+        if (apps[app_idx].cached_icon32 != nullptr) {
+            if (app_idx == selected_index) {
                 LGFX_Sprite temp_sp(canvas);
                 temp_sp.setPsram(false);
                 if (temp_sp.createSprite(32, 32)) {
-                    temp_sp.pushImage(0, 0, 32, 32, apps[i].cached_icon32);
+                    temp_sp.pushImage(0, 0, 32, 32, apps[app_idx].cached_icon32);
                     temp_sp.pushRotateZoom(x + 16, y + 16, 0, 1.15f, 1.15f);
                     temp_sp.deleteSprite();
                 } else {
-                    canvas->pushImage(x, y, 32, 32, apps[i].cached_icon32);
+                    canvas->pushImage(x, y, 32, 32, apps[app_idx].cached_icon32);
                 }
             } else {
-                canvas->pushImage(x, y, 32, 32, apps[i].cached_icon32);
+                canvas->pushImage(x, y, 32, 32, apps[app_idx].cached_icon32);
             }
         } else {
             canvas->fillRect(x, y, 32, 32, canvas->color565(30, 40, 50));
         }
         
-        if (i == selected_index) {
+        if (app_idx == selected_index) {
             canvas->setFont(&fonts::Font0);
             canvas->setTextColor(theme_get_text());
             canvas->setTextDatum(textdatum_t::bottom_center);
-            canvas->drawString(apps[i].name, canvas->width()/2, canvas->height() - 8);
+            canvas->drawString(apps[app_idx].name, canvas->width()/2, canvas->height() - 30); // Higher
         }
     }
 
     const uint8_t total_pages = (app_count + MAX_APPS_PER_PAGE - 1) / MAX_APPS_PER_PAGE;
     if (total_pages > 1) {
-        const int dot_start_x = (canvas->width() - (total_pages * 8)) / 2;
+        const int indicator_y = canvas->height() - 25;
+        const int indicator_x = canvas->width() / 2;
+        
         for (uint8_t p = 0; p < total_pages; p++) {
-            const uint16_t color = (p == selected_index / MAX_APPS_PER_PAGE)
-                ? theme_get_text() : theme_get_text_dim();
-            canvas->fillCircle(dot_start_x + (p * 8) + 4, canvas->height() - 19, 2, color);
+            const uint16_t color = (p == page) ? theme_get_text() : theme_get_text_dim();
+            const int x_pos = indicator_x + (p - 1) * 20;
+            
+            if (p == page) {
+                // Current page: wide pill
+                canvas->fillRoundRect(x_pos - 6, indicator_y - 2, 12, 4, 2, color);
+            } else {
+                // Other pages: small dot
+                canvas->fillCircle(x_pos, indicator_y, 2, color);
+            }
         }
     }
 }

@@ -190,13 +190,13 @@ static void ui_task_runner(void *arg) {
 
     theme_init();
 
-    app_grid.registerApp("Clock",       icon_weather,   &app_clockweather);
     app_grid.registerApp("OTA System",  icon_ota,       &app_ota);
     app_grid.registerApp("Torch",       icon_torch,     &app_torch);
     app_grid.registerApp("AI Code",     icon_aicode,    &app_aicode);
     app_grid.registerApp("Settings",    icon_settings,  &app_settings);
     app_grid.registerApp("Game Store",  icon_games,     &app_gamestore);
     app_grid.registerApp("Hack Store",  icon_app_store, &app_hackstore);
+    app_grid.registerApp("Clock",       icon_weather,   &app_clockweather);
 
     // Use a direct init for the first launch — no slide needed at boot
     current_app = &app_grid;

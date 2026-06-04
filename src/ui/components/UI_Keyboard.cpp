@@ -226,8 +226,8 @@ void UI_Keyboard::render(LGFX_Sprite* canvas) {
     // ── Keyboard grid ──────────────────────────────────────────────
     const int COLS = 10;
     const int ROWS = 5;
-    const int key_w = 14;
-    const int key_h = 13;
+    const int key_w = 15;  // Slightly wider for better fit
+    const int key_h = 14;  // Slightly taller
     const int gap   = 1;
     const int grid_w = COLS * key_w + (COLS - 1) * gap;
     const int grid_x = (160 - grid_w) / 2;
@@ -235,8 +235,9 @@ void UI_Keyboard::render(LGFX_Sprite* canvas) {
 
     for (int row = 0; row < ROWS; row++) {
         for (int col = 0; col < COLS; col++) {
-            // Skip rendering spacebar continuation cells
+            // Skip rendering spacebar continuation cells and empty cells
             if (row == 4 && col >= 3 && col <= 4) continue;
+            if (row == 4 && col >= 8) continue; // Skip empty cells at end of row 4
 
             const char* label = _get_key_label(col, row);
             if (!label || !label[0]) continue;
@@ -249,6 +250,12 @@ void UI_Keyboard::render(LGFX_Sprite* canvas) {
             bool is_space = (row == 4 && col == 2);
             if (is_space) {
                 pw = key_w * 3 + gap * 2;
+            }
+            
+            // Wider function keys for better text fit
+            bool is_func = (row == 4 && (col == 0 || col == 1 || col == 5 || col == 6 || col == 7));
+            if (is_func && !is_space) {
+                pw = key_w + 2; // Slightly wider for "CAP", "BK", "OK", "CL", "SYM"
             }
 
             bool is_sel = false;

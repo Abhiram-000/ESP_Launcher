@@ -2,7 +2,7 @@
 
 #include "IApp.h"
 
-#define MAX_APPS_PER_PAGE 9
+#define MAX_APPS_PER_PAGE 6
 #define MAX_TOTAL_APPS 12
 
 struct AppEntry {

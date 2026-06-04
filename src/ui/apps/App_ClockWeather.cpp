@@ -13,6 +13,7 @@
 #include "../../services/ntp_service.h"
 #include "../../services/weather_service.h"
 #include "../../services/wifi_mgr.h"
+#include "../../services/idle_mgr.h"
 #include "../../utils/color_utils.h"
 #include "esp_log.h"
 #include <math.h>
@@ -46,11 +47,22 @@ void App_ClockWeather::init() {
     _weather_icon_bounce = 0;
     _temp_glow = 0;
     
-    ESP_LOGI(TAG, "Clock & Weather app initialized");
+    // Disable sleep mode while clock app is active
+    idle_mgr_disable();
+    
+    // Trigger NTP sync if not already synced
+    if (!ntp_service_is_synced()) {
+        ESP_LOGI(TAG, "NTP not synced - triggering sync request");
+        ntp_service_get_local_time(&_time_info); // This should trigger sync internally
+    }
+    
+    ESP_LOGI(TAG, "Clock & Weather app initialized (sleep disabled)");
 }
 
 void App_ClockWeather::exit() {
-    // Clean exit, no tasks to kill
+    // Re-enable sleep mode when exiting clock app
+    idle_mgr_enable();
+    ESP_LOGI(TAG, "Clock & Weather app exited (sleep re-enabled)");
 }
 
 void App_ClockWeather::loop() {
@@ -179,34 +191,38 @@ void App_ClockWeather::_draw_digit_pair(LGFX_Sprite* canvas, int value, int32_t 
     canvas->setTextDatum(textdatum_t::top_left);
     canvas->drawString(buf, x, y);
     
-    // Pulsing colon
+    // Static colon (no blinking)
     if (show_colon) {
-        float pulse = sinf(_anim_time * 3.14f);
-        if (pulse > 0.0f) {
-            uint16_t colon_color = _blend_color(theme_get_text_dim(), theme_get_accent(), pulse);
-            canvas->setTextColor(colon_color);
-            canvas->drawString(":", x + 32, y);
-            canvas->setTextColor(theme_get_text());
-        }
+        canvas->drawString(":", x + 32, y);
     }
 }
 
 void App_ClockWeather::_draw_time_large(LGFX_Sprite* canvas, int cx, int cy) {
-    // Large clock display: HH:MM:SS
+    // Large clock display: HH:MM:SS with thick text
     int hour = _time_info.tm_hour;
     int min = _time_info.tm_min;
     int sec = _time_info.tm_sec;
     
-    // Draw with glow effect
-    uint16_t glow_color = _blend_color(theme_get_bg(), theme_get_accent(), 0.15f);
+    // Draw shadow/outline for thickness effect (4 passes: down-right, down-left, up-right, up-left)
+    uint16_t shadow_color = _blend_color(theme_get_bg(), theme_get_text(), 0.4f);
+    canvas->setTextColor(shadow_color);
     
-    // Glow pass (offset slightly)
-    canvas->setTextColor(glow_color);
+    // Shadow pass 1 (bottom-right)
     _draw_digit_pair(canvas, hour, cx - 46, cy + 1, true);
     _draw_digit_pair(canvas, min, cx - 6, cy + 1, true);
     _draw_digit_pair(canvas, sec, cx + 34, cy + 1, false);
     
-    // Main pass
+    // Shadow pass 2 (right)
+    _draw_digit_pair(canvas, hour, cx - 47, cy, true);
+    _draw_digit_pair(canvas, min, cx - 7, cy, true);
+    _draw_digit_pair(canvas, sec, cx + 33, cy, false);
+    
+    // Shadow pass 3 (bottom)
+    _draw_digit_pair(canvas, hour, cx - 48, cy + 1, true);
+    _draw_digit_pair(canvas, min, cx - 8, cy + 1, true);
+    _draw_digit_pair(canvas, sec, cx + 32, cy + 1, false);
+    
+    // Main pass (bright, on top)
     canvas->setTextColor(theme_get_text());
     _draw_digit_pair(canvas, hour, cx - 48, cy, true);
     _draw_digit_pair(canvas, min, cx - 8, cy, true);
@@ -219,58 +235,93 @@ void App_ClockWeather::_draw_date_small(LGFX_Sprite* canvas, int cx, int cy) {
     const char* months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", 
                            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     
-    snprintf(date_buf, sizeof(date_buf), "%s, %s %d %d",
-             weekdays[_time_info.tm_wday],
-             months[_time_info.tm_mon],
-             _time_info.tm_mday,
-             _time_info.tm_year + 1900);
+    // Only show date if NTP is synced (to avoid showing wrong year)
+    if (_ntp_synced) {
+        snprintf(date_buf, sizeof(date_buf), "%s, %s %d %d",
+                 weekdays[_time_info.tm_wday],
+                 months[_time_info.tm_mon],
+                 _time_info.tm_mday,
+                 _time_info.tm_year + 1900);
+    } else {
+        // Show "Syncing..." message when NTP not ready
+        snprintf(date_buf, sizeof(date_buf), "Syncing time...");
+    }
     
     canvas->setFont(&fonts::Font0);
     canvas->setTextDatum(textdatum_t::middle_center);
-    canvas->setTextColor(theme_get_text_dim());
+    canvas->setTextColor(_ntp_synced ? theme_get_text_dim() : theme_get_accent());
     canvas->drawString(date_buf, cx, cy);
 }
 
 void App_ClockWeather::_draw_weather_panel(LGFX_Sprite* canvas) {
     if (!_weather_has_data) return;
     
-    int panel_y = 75;
-    int panel_h = 45;
+    int panel_y = 70;
+    int panel_h = 40;
     
-    // Semi-transparent rounded panel
-    uint16_t panel_bg = _blend_color(theme_get_bg(), theme_get_accent(), 0.08f);
+    // Beautiful rounded panel with gradient
+    uint16_t panel_bg = _blend_color(theme_get_bg(), theme_get_accent(), 0.12f);
     canvas->fillRoundRect(4, panel_y, _w - 8, panel_h, 8, panel_bg);
-    canvas->drawRoundRect(4, panel_y, _w - 8, panel_h, 8, _blend_color(theme_get_accent(), theme_get_bg(), 0.4f));
     
-    // Weather icon with bounce animation
-    const char* icon = weather_code_to_icon(_weather_code);
-    canvas->setFont(&fonts::Font2);
-    canvas->setTextDatum(textdatum_t::middle_center);
-    canvas->setTextColor(theme_get_accent());
-    canvas->drawString(icon, 20, panel_y + panel_h/2 + (int)_weather_icon_bounce);
+    uint16_t border_color = _blend_color(theme_get_accent(), theme_get_text(), 0.6f);
+    canvas->drawRoundRect(4, panel_y, _w - 8, panel_h, 8, border_color);
+    canvas->drawRoundRect(5, panel_y + 1, _w - 10, panel_h - 2, 7, _blend_color(border_color, theme_get_bg(), 0.5f));
     
-    // Temperature (large, with glow)
-    char temp_buf[16];
-    snprintf(temp_buf, sizeof(temp_buf), "%.1f°C", _temperature);
+    // Draw a simple cloud icon (box-based, not emoji)
+    uint16_t icon_color = _blend_color(theme_get_accent(), theme_get_text(), 0.7f);
+    int cloud_x = 16;
+    int cloud_y = panel_y + 18 + (int)_weather_icon_bounce;
+    
+    // Draw cloud shape with circles
+    canvas->fillCircle(cloud_x - 4, cloud_y, 5, icon_color);
+    canvas->fillCircle(cloud_x + 2, cloud_y - 2, 6, icon_color);
+    canvas->fillCircle(cloud_x + 8, cloud_y, 5, icon_color);
+    canvas->fillRect(cloud_x - 4, cloud_y, 12, 5, icon_color);
+    
+    // RIGHT SIDE - Perfectly spaced in 3 rows
+    int right_start_x = 38;
+    
+    // ROW 1 (TOP): Temperature with degree dot - NO GAP before C
+    char temp_buf[8];
+    snprintf(temp_buf, sizeof(temp_buf), "%.0f", _temperature);
     
     uint16_t temp_color = _blend_color(theme_get_text(), theme_get_accent(), _temp_glow);
     canvas->setFont(&fonts::Font2);
     canvas->setTextColor(temp_color);
-    canvas->setTextDatum(textdatum_t::middle_left);
-    canvas->drawString(temp_buf, 40, panel_y + 12);
+    canvas->setTextDatum(textdatum_t::top_left);
+    canvas->drawString(temp_buf, right_start_x, panel_y + 2);
     
-    // Weather description
+    // Degree dot positioned right after number (no gap)
+    int temp_width = strlen(temp_buf) * 16;
+    canvas->fillCircle(right_start_x + temp_width + 2, panel_y + 6, 2, temp_color);
+    
+    // "C" immediately after degree dot (no gap)
+    canvas->setFont(&fonts::Font2);
+    canvas->drawString("C", right_start_x + temp_width + 6, panel_y + 2);
+    
+    // ROW 2 (MIDDLE): Weather description
     const char* desc = weather_code_to_description(_weather_code);
     canvas->setFont(&fonts::Font0);
-    canvas->setTextColor(theme_get_text_dim());
+    uint16_t desc_color = _blend_color(theme_get_text(), theme_get_accent(), 0.6f);
+    canvas->setTextColor(desc_color);
     canvas->setTextDatum(textdatum_t::middle_left);
-    canvas->drawString(desc, 40, panel_y + 26);
+    canvas->drawString(desc, right_start_x, panel_y + 20);
     
-    // Humidity & wind (bottom right)
-    char detail_buf[32];
-    snprintf(detail_buf, sizeof(detail_buf), "%d%%  %.1f km/h", _humidity, _wind_speed);
+    // ROW 3 (BOTTOM): Details - moved lower to avoid overlap
+    canvas->setFont(&fonts::Font0);
+    canvas->setTextColor(theme_get_text_dim());
+    canvas->setTextDatum(textdatum_t::bottom_left);
+    
+    // Humidity (bottom left) - moved down
+    char humidity_buf[16];
+    snprintf(humidity_buf, sizeof(humidity_buf), "Hum %d%%", _humidity);
+    canvas->drawString(humidity_buf, right_start_x, panel_y + panel_h - 2);
+    
+    // Wind (bottom right)
+    char wind_buf[16];
+    snprintf(wind_buf, sizeof(wind_buf), "%.0fkm/h", _wind_speed);
     canvas->setTextDatum(textdatum_t::bottom_right);
-    canvas->drawString(detail_buf, _w - 8, panel_y + panel_h - 4);
+    canvas->drawString(wind_buf, _w - 10, panel_y + panel_h - 2);
 }
 
 void App_ClockWeather::_draw_status_indicator(LGFX_Sprite* canvas) {
@@ -306,12 +357,9 @@ void App_ClockWeather::_draw_status_indicator(LGFX_Sprite* canvas) {
 }
 
 void App_ClockWeather::_draw_clock_screen(LGFX_Sprite* canvas) {
-    // Breathing gradient background
+    // Static background color (no breathing animation)
     uint16_t bg = theme_get_bg();
-    uint16_t accent = theme_get_accent();
-    uint16_t gradient_color = _blend_color(bg, accent, _breath_phase * 0.05f);
-    
-    canvas->fillSprite(gradient_color);
+    canvas->fillSprite(bg);
     
     // Parallax grid wallpaper (subtle)
     theme_draw_wallpaper(canvas, _anim_time);
