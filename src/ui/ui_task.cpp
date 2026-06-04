@@ -16,6 +16,7 @@
 #include "apps/App_GameStore.h"
 #include "apps/App_NES.h"
 #include "apps/App_HackStore.h"
+#include "apps/App_ClockWeather.h"
 #include "theme_mgr.h"
 #include "nvs_flash.h"
 #include "nvs.h"
@@ -29,6 +30,7 @@
 #include "../assets/icons/aicode.h"
 #include "../assets/icons/games.h"
 #include "../assets/icons/app_store.h"
+#include "../assets/icons/weather.h"
 
 static const char *TAG = "UI_TASK";
 
@@ -54,13 +56,14 @@ uint8_t ui_get_brightness(void) {
     return current_brightness;
 }
 
-static App_Grid      app_grid;
-static App_OTA       app_ota;
-static App_Settings  app_settings;
-static App_Torch     app_torch;
-static App_AICode    app_aicode;
-static App_GameStore app_gamestore;
-static App_HackStore app_hackstore;
+static App_Grid         app_grid;
+static App_OTA          app_ota;
+static App_Settings     app_settings;
+static App_Torch        app_torch;
+static App_AICode       app_aicode;
+static App_GameStore    app_gamestore;
+static App_HackStore    app_hackstore;
+static App_ClockWeather app_clockweather;
 
 static IApp* current_app = nullptr;
 
@@ -187,6 +190,7 @@ static void ui_task_runner(void *arg) {
 
     theme_init();
 
+    app_grid.registerApp("Clock",       icon_weather,   &app_clockweather);
     app_grid.registerApp("OTA System",  icon_ota,       &app_ota);
     app_grid.registerApp("Torch",       icon_torch,     &app_torch);
     app_grid.registerApp("AI Code",     icon_aicode,    &app_aicode);

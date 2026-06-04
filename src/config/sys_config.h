@@ -100,6 +100,32 @@ extern "C" {
 #define APP_UI_QUEUE_SIZE       10
 
 /* --------------------------------------------------------------------------
+ * NTP Time Service
+ * -------------------------------------------------------------------------- */
+#define NTP_SERVER_1                "pool.ntp.org"
+#define NTP_SERVER_2                "time.google.com"
+#define NTP_SERVER_3                "time.windows.com"
+#define NTP_SYNC_INTERVAL_S         3600        /* Re-sync every 1 hour */
+#define NTP_SAVE_INTERVAL_S         60          /* Save to NVS every 60s */
+#define NTP_NVS_NAMESPACE           "ntp_time"
+#define NTP_NVS_KEY_EPOCH           "epoch"
+#define NTP_NVS_KEY_TIMER_US        "timer_us"
+
+/* --------------------------------------------------------------------------
+ * Weather Service
+ * -------------------------------------------------------------------------- */
+#define WEATHER_HTTP_TIMEOUT_MS     10000
+#define WEATHER_REFRESH_INTERVAL_S  1800        /* 30 minutes */
+#define WEATHER_STALE_THRESHOLD_S   7200        /* 2 hours */
+#define WEATHER_CONFIG_PATH         "/storage/ai/clock_weather.json"
+#define WEATHER_IP_GEO_URL          "http://ip-api.com/json/?fields=status,city,lat,lon,timezone,offset,country"
+#define WEATHER_FORECAST_URL        "https://api.open-meteo.com/v1/forecast"
+#define WEATHER_GEOCODING_URL       "https://geocoding-api.open-meteo.com/v1/search"
+#define WEATHER_TASK_STACK          8192
+#define WEATHER_TASK_PRIORITY       5
+#define WEATHER_TASK_CORE           0
+
+/* --------------------------------------------------------------------------
  * AI Assistant — Lua Engine, LLM Client, IDE
  * -------------------------------------------------------------------------- */
 
