@@ -17,6 +17,7 @@
 #include "apps/App_NES.h"
 #include "apps/App_HackStore.h"
 #include "apps/App_ClockWeather.h"
+#include "apps/App_Pomodoro.h"
 #include "theme_mgr.h"
 #include "nvs_flash.h"
 #include "nvs.h"
@@ -31,6 +32,7 @@
 #include "../assets/icons/games.h"
 #include "../assets/icons/app_store.h"
 #include "../assets/icons/weather.h"
+#include "../assets/icons/pomodoro.h"
 
 static const char *TAG = "UI_TASK";
 
@@ -64,6 +66,7 @@ static App_AICode       app_aicode;
 static App_GameStore    app_gamestore;
 static App_HackStore    app_hackstore;
 static App_ClockWeather app_clockweather;
+static App_Pomodoro     app_pomodoro;
 
 static IApp* current_app = nullptr;
 
@@ -197,6 +200,7 @@ static void ui_task_runner(void *arg) {
     app_grid.registerApp("Game Store",  icon_games,     &app_gamestore);
     app_grid.registerApp("Hack Store",  icon_app_store, &app_hackstore);
     app_grid.registerApp("Clock",       icon_weather,   &app_clockweather);
+    app_grid.registerApp("Pomodoro",    icon_pomodoro,  &app_pomodoro);
 
     // Use a direct init for the first launch — no slide needed at boot
     current_app = &app_grid;

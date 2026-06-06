@@ -1,0 +1,33 @@
+CompileFlags:
+  CompilationDatabase: .pio
+  Add:
+    - -Wall
+    - -Wextra
+    - -Werror
+    - -std=c17
+    - -DBOARD_HAS_PSRAM
+    - -DCORE_DEBUG_LEVEL=5
+  Remove:
+    - -mfix-esp32-psram-cache-issue
+
+Diagnostics:
+  UnusedIncludes: Strict
+  ClangTidy:
+    Add:
+      - bugprone-*
+      - cert-*
+      - concurrency-*
+      - misc-*
+      - readability-identifier-naming
+    Remove:
+      - readability-magic-numbers
+      - cert-err33-c
+      - misc-no-recursion
+
+InlayHints:
+  Enabled: true
+  ParameterNames: true
+  DeducedTypes: true
+
+Hover:
+  ShowAKA: true

@@ -1,7 +1,88 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "instructions": ["AGENTS.md", "esp32_system_prompt.md"],
-  "model": "omniroute/kiro/deepseek-3.2",
+  "model": "opencode/mimo-v2.5-free",
+  "agent": {
+    "build": {
+      "mode": "primary",
+      "model": "opencode/mimo-v2.5-free",
+      "prompt": "{file:./AGENTS.md}\n\n{file:./esp32_system_prompt.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow"
+      }
+    },
+    "plan": {
+      "mode": "primary",
+      "model": "opencode/mimo-v2.5-free",
+      "permission": {
+        "edit": "ask",
+        "bash": "ask"
+      }
+    },
+    "review": {
+      "mode": "subagent",
+      "model": "opencode/mimo-v2.5-free",
+      "permission": {
+        "edit": "deny",
+        "bash": "deny"
+      }
+    },
+    "debug": {
+      "mode": "subagent",
+      "model": "opencode/mimo-v2.5-free",
+      "permission": {
+        "bash": "ask",
+        "edit": "allow"
+      }
+    },
+    "refactor": {
+      "mode": "subagent",
+      "model": "opencode/mimo-v2.5-free",
+      "permission": {
+        "bash": "deny"
+      }
+    },
+    "docs": {
+      "mode": "subagent",
+      "model": "opencode/mimo-v2.5-free",
+      "permission": {
+        "bash": "deny"
+      }
+    }
+  },
+  "mcp": {
+    "platformio-mcp": {
+      "type": "local",
+      "command": ["npx", "-y", "@jl-codes/platformio-mcp"],
+      "enabled": true
+    },
+    "context7": {
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp",
+      "enabled": true
+    }
+  },
+  "permission": {
+    "skill": {
+      "*": "allow"
+    },
+    "bash": {
+      "*": "ask",
+      "pio run*": "allow",
+      "pio device*": "ask",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "rg *": "allow",
+      "cat *": "allow",
+      "ls *": "allow"
+    }
+  },
+  "plugin": [
+    "opencode-notificator",
+    "opencode-skillful"
+  ],
   "provider": {
     "omniroute": {
       "npm": "@ai-sdk/openai-compatible",
@@ -104,4 +185,3 @@
     }
   }
 }
-

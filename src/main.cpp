@@ -30,6 +30,7 @@
 #include "services/idle_mgr.h"
 #include "services/game_store.h"
 #include "services/hack_store.h"
+#include "services/pomodoro_service.h"
 #include "ui/ui_task.h"
 
 static const char* TAG = "MAIN";
@@ -61,6 +62,12 @@ extern "C" void app_main(void) {
     game_store_err_t gs_ret = game_store_init();
     if (gs_ret != GAME_STORE_ERR_OK) {
         ESP_LOGE(TAG, "Game Store init failed: %d", gs_ret);
+    }
+    
+    // 3a. Initialize Pomodoro Service (timer + statistics)
+    pomo_err_t pomo_ret = pomodoro_service_init();
+    if (pomo_ret != POMO_ERR_OK) {
+        ESP_LOGE(TAG, "Pomodoro Service init failed: %d", pomo_ret);
     }
 
     // 4. Start Heavy UI Renderer
