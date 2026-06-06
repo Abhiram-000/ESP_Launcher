@@ -236,7 +236,7 @@ static void ui_task_runner(void *arg) {
             current_app->render(&canvas);
         }
 
-        // Idle countdown overlay
+        // Idle countdown overlay with enhanced visuals
         if (idle_mgr_get_state() == IDLE_STATE_COUNTDOWN) {
             int rem = idle_mgr_get_countdown_remaining();
             int w = canvas.width();
@@ -247,34 +247,69 @@ static void ui_task_runner(void *arg) {
             int bx = (w - bw) / 2;
             int by = (h - bh) / 2;
 
+            float pulse = sinf((float)(esp_timer_get_time() / 500000));
+            uint16_t warning_color = (rem <= 3) ? canvas.color565(255, 60, 40) :
+                                     (rem <= 6) ? canvas.color565(255, 180, 0) :
+                                     theme_get_accent();
+            
+            canvas.fillRoundRect(bx - 2, by - 2, bw + 4, bh + 4, 10,
+                color_blend(warning_color, theme_get_bg(), 0.08f + pulse * 0.04f));
+            
             canvas.fillRoundRect(bx, by, bw, bh, 8,
-                color_blend(theme_get_bg(), theme_get_text_dim(), 0.15f));
-            canvas.drawRoundRect(bx, by, bw, bh, 8, theme_get_accent());
+                color_blend(theme_get_bg(), canvas.color565(20, 30, 60), 0.85f));
+            
+            canvas.drawRoundRect(bx, by, bw, bh, 8, 
+                color_blend(warning_color, theme_get_text(), 0.75f + pulse * 0.25f));
+            canvas.drawRoundRect(bx + 1, by + 1, bw - 2, bh - 2, 7,
+                color_blend(warning_color, theme_get_bg(), 0.25f));
 
-            int bar_w = w / 27;
-            int bar_max_h = bh - 20;
-            int bar_x = bx + 12;
-            int bar_y = by + 10;
+            int bar_w = w / 26;
+            int bar_max_h = bh - 16;
+            int bar_x = bx + 10;
+            int bar_y = by + 8;
 
-            canvas.drawRect(bar_x, bar_y, bar_w, bar_max_h, theme_get_text_dim());
+            canvas.fillRoundRect(bar_x, bar_y, bar_w, bar_max_h, 3,
+                color_blend(theme_get_text_dim(), theme_get_bg(), 0.15f));
+            canvas.drawRoundRect(bar_x, bar_y, bar_w, bar_max_h, 3,
+                color_blend(theme_get_text_dim(), theme_get_bg(), 0.35f));
 
             int fill_h = (int)(bar_max_h * (rem / 10.0f));
             if (fill_h > 0) {
-                canvas.fillRect(bar_x + 1, bar_y + (bar_max_h - fill_h), bar_w - 2, fill_h, theme_get_accent());
+                for (int i = 0; i < fill_h; i += 2) {
+                    float gradient = (float)i / (float)fill_h;
+                    uint16_t seg_color = color_blend(warning_color, 
+                        canvas.color565(255, 255, 100), gradient * 0.4f);
+                    canvas.drawFastHLine(bar_x + 2, bar_y + bar_max_h - i - 1, 
+                        bar_w - 4, seg_color);
+                }
+                canvas.fillRoundRect(bar_x + 2, bar_y + bar_max_h - fill_h, 
+                    bar_w - 4, 2, 1, canvas.color565(255, 255, 255));
             }
 
+            int text_x = bar_x + bar_w + 8;
+            int content_width = bw - (text_x - bx) - 6;
+
             canvas.setTextDatum(textdatum_t::middle_left);
-            canvas.setTextColor(theme_get_text());
             canvas.setFont(&fonts::Font2);
             char buf[16];
             snprintf(buf, sizeof(buf), "%ds", rem);
-            canvas.drawString(buf, bar_x + 15, bar_y + 8);
+            
+            if (rem <= 3) {
+                int shake = (int)(pulse * 2);
+                canvas.setTextColor(color_blend(canvas.color565(255, 80, 60), 
+                    canvas.color565(255, 200, 0), pulse * 0.5f + 0.5f));
+                canvas.drawString(buf, text_x + shake, bar_y + 6);
+            } else {
+                canvas.setTextColor(theme_get_text());
+                canvas.drawString(buf, text_x, bar_y + 6);
+            }
 
             canvas.setFont(&fonts::Font0);
-            canvas.drawString("SLEEPING SOON", bar_x + 15, bar_y + 22);
+            canvas.setTextColor(warning_color);
+            canvas.drawString("SLEEPING SOON", text_x, bar_y + 20);
 
-            canvas.setTextColor(theme_get_text_dim());
-            canvas.drawString("Any key to stay", bar_x + 15, bar_y + 34);
+            canvas.setTextColor(color_blend(theme_get_text(), theme_get_bg(), 0.6f));
+            canvas.drawString("Press any key", text_x, bar_y + 32);
         }
 
         canvas.pushSprite(0, -4);
