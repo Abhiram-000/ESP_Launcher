@@ -302,8 +302,8 @@ extern "C"
  
    const char *SNSS_GetErrorString(SNSS_RETURN_CODE code);
 
-   static SNSS_FILE *snssFileBlock;
-   static char *blockBytes;
+   extern SNSS_FILE *snssFileBlock;
+   extern char *blockBytes;
 
 #ifdef __cplusplus
 }

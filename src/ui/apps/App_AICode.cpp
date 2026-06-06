@@ -11,6 +11,8 @@
 #include <string.h>
 #include <math.h>
 
+static const char* TAG = "App_AICode";
+
 extern void switch_to_grid();
 
 const char* App_AICode::MENU_LABELS[App_AICode::MENU_ITEMS] = {
@@ -21,7 +23,10 @@ const char* App_AICode::MENU_LABELS[App_AICode::MENU_ITEMS] = {
 bool App_AICode::_on_llm_chunk(const char* token, size_t len, void* user) {
     App_AICode* self = (App_AICode*)user;
     if (self->_state_mutex) {
-        xSemaphoreTake(self->_state_mutex, portMAX_DELAY);
+        if (xSemaphoreTake(self->_state_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+            ESP_LOGW(TAG, "LLM chunk: mutex timeout, skipping update");
+            return true;
+        }
     }
     self->_llm_reply_acc.append(token, len);
     // Append to display buffer (trim if too long)
@@ -91,9 +96,13 @@ void App_AICode::init() {
 
 void App_AICode::exit() {
     if (_state_mutex) {
-        xSemaphoreTake(_state_mutex, portMAX_DELAY);
-        _llm_busy = false;
-        xSemaphoreGive(_state_mutex);
+        if (xSemaphoreTake(_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            _llm_busy = false;
+            xSemaphoreGive(_state_mutex);
+        } else {
+            ESP_LOGW(TAG, "exit: mutex timeout");
+            _llm_busy = false;
+        }
     } else {
         _llm_busy = false;
     }
@@ -101,10 +110,15 @@ void App_AICode::exit() {
 
 void App_AICode::_mark_llm_finished() {
     if (_state_mutex) {
-        xSemaphoreTake(_state_mutex, portMAX_DELAY);
-        _llm_busy = false;
-        _llm_done = true;
-        xSemaphoreGive(_state_mutex);
+        if (xSemaphoreTake(_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            _llm_busy = false;
+            _llm_done = true;
+            xSemaphoreGive(_state_mutex);
+        } else {
+            ESP_LOGW(TAG, "_mark_llm_finished: mutex timeout");
+            _llm_busy = false;
+            _llm_done = true;
+        }
     } else {
         _llm_busy = false;
         _llm_done = true;
@@ -113,10 +127,15 @@ void App_AICode::_mark_llm_finished() {
 
 void App_AICode::_publish_lua_result(const lua_engine_result_t& result) {
     if (_state_mutex) {
-        xSemaphoreTake(_state_mutex, portMAX_DELAY);
-        _lua_result = result;
-        _lua_done = true;
-        xSemaphoreGive(_state_mutex);
+        if (xSemaphoreTake(_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            _lua_result = result;
+            _lua_done = true;
+            xSemaphoreGive(_state_mutex);
+        } else {
+            ESP_LOGW(TAG, "_publish_lua_result: mutex timeout");
+            _lua_result = result;
+            _lua_done = true;
+        }
     } else {
         _lua_result = result;
         _lua_done = true;
@@ -129,13 +148,16 @@ void App_AICode::loop() {
     _wifi_scanner.loop();
 
     if (_state_mutex) {
-        xSemaphoreTake(_state_mutex, portMAX_DELAY);
-        if (_lua_done) {
-            _lua_done = false;
-            _screen = Screen::LUA_RESULT;
+        if (xSemaphoreTake(_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            if (_lua_done) {
+                _lua_done = false;
+                _screen = Screen::LUA_RESULT;
+            }
+            _llm_done = false;
+            xSemaphoreGive(_state_mutex);
+        } else {
+            ESP_LOGW(TAG, "loop: mutex timeout");
         }
-        _llm_done = false;
-        xSemaphoreGive(_state_mutex);
     }
 
     // After scanner completes connection, proceed to API key or main menu
@@ -244,9 +266,12 @@ void App_AICode::handleInput(input_event_t ev) {
             {
                 bool llm_busy = _llm_busy;
                 if (_state_mutex) {
-                    xSemaphoreTake(_state_mutex, portMAX_DELAY);
-                    llm_busy = _llm_busy;
-                    xSemaphoreGive(_state_mutex);
+                    if (xSemaphoreTake(_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                        llm_busy = _llm_busy;
+                        xSemaphoreGive(_state_mutex);
+                    } else {
+                        ESP_LOGW(TAG, "handleInput CHAT: mutex timeout");
+                    }
                 }
                 if (ev == BTN_SELECT && !llm_busy) {
                 _chat_input = "";

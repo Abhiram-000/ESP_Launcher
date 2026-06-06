@@ -7,6 +7,7 @@
 static const char *TAG = "LED_DRIVER";
 static led_strip_handle_t led_strip = NULL;
 static bool initialized = false;
+static uint8_t brightness = 255;  /* Global brightness scaling (0-255) */
 
 void led_driver_init(void) {
     ESP_LOGI(TAG, "Initializing NeoPixel on GPIO %d", LAUNCHER_PIN_LED);
@@ -46,8 +47,23 @@ void led_driver_init(void) {
 
 void led_driver_set_rgb(uint8_t r, uint8_t g, uint8_t b) {
     if (!initialized || !led_strip) return;
+    /* Apply brightness scaling: (value * brightness) >> 8 */
+    uint8_t br = brightness;
+    if (br < 255) {
+        r = (uint8_t)(((uint16_t)r * br) >> 8);
+        g = (uint8_t)(((uint16_t)g * br) >> 8);
+        b = (uint8_t)(((uint16_t)b * br) >> 8);
+    }
     ESP_ERROR_WARN(led_strip_set_pixel(led_strip, 0, r, g, b), TAG, "LED set pixel");
     ESP_ERROR_WARN(led_strip_refresh(led_strip), TAG, "LED refresh");
+}
+
+void led_driver_set_brightness(uint8_t br) {
+    brightness = br;
+}
+
+uint8_t led_driver_get_brightness(void) {
+    return brightness;
 }
 
 void led_driver_off(void) {

@@ -50,6 +50,17 @@ idle_state_t idle_mgr_get_state(void);
  */
 int idle_mgr_get_countdown_remaining(void);
 
+/**
+ * @brief Disable idle timeout (prevent sleep).
+ * Use when an app needs to stay awake indefinitely.
+ */
+void idle_mgr_disable(void);
+
+/**
+ * @brief Re-enable idle timeout (resume normal sleep behavior).
+ */
+void idle_mgr_enable(void);
+
 #ifdef __cplusplus
 }
 #endif

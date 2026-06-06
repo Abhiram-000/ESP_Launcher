@@ -519,7 +519,7 @@ void gui_sendmsg(int color, char *format, ...)
 {
    va_list arg;
    va_start(arg, format);
-   vsprintf(msg.text, format, arg);
+   vsnprintf(msg.text, MAX_MSG_LENGTH, format, arg);
 
 #ifdef NOFRENDO_DEBUG
    nofrendo_log_print("GUI: ");

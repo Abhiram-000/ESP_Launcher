@@ -19,8 +19,13 @@ static QueueHandle_t s_input_queue = NULL;
 typedef struct {
     gpio_num_t pin;
     input_event_t event;
+<<<<<<< HEAD
     volatile uint32_t last_isr_time;
     volatile uint32_t last_event_time;  /* Timestamp of last event sent for this button */
+=======
+    uint32_t last_isr_time;
+    uint32_t last_event_time;  /* Timestamp of last event sent for this button */
+>>>>>>> fix/issue-1-iram-attr-gpio
 } btn_state_t;
 
 static btn_state_t s_buttons[5] = {
@@ -109,4 +114,17 @@ void input_mgr_inject_event(input_event_t ev) {
     if (s_input_queue && ev != BTN_NONE) {
         xQueueSend(s_input_queue, &ev, 0);
     }
+}
+
+bool input_mgr_is_button_held(input_event_t btn) {
+    gpio_num_t pin;
+    switch (btn) {
+        case BTN_UP:     pin = (gpio_num_t)LAUNCHER_PIN_UP; break;
+        case BTN_DOWN:   pin = (gpio_num_t)LAUNCHER_PIN_DOWN; break;
+        case BTN_LEFT:   pin = (gpio_num_t)LAUNCHER_PIN_LEFT; break;
+        case BTN_RIGHT:  pin = (gpio_num_t)LAUNCHER_PIN_RIGHT; break;
+        case BTN_SELECT: pin = (gpio_num_t)LAUNCHER_PIN_SELECT; break;
+        default: return false;
+    }
+    return hal_gpio_get_level(pin) == 0;
 }

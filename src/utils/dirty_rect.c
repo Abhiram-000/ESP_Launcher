@@ -1,5 +1,8 @@
 #include "dirty_rect.h"
 #include <string.h>
+#include "esp_log.h"
+
+static const char* TAG = "DIRTY_RECT";
 
 static inline int16_t min_i16(int16_t a, int16_t b) { return a < b ? a : b; }
 static inline int16_t max_i16(int16_t a, int16_t b) { return a > b ? a : b; }

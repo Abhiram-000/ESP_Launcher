@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -29,6 +31,13 @@ input_event_t input_mgr_get_event(void);
  * @param ev The button event to inject.
  */
 void input_mgr_inject_event(input_event_t ev);
+
+/**
+ * @brief Check if a button's physical GPIO pin is currently held (active low).
+ * @param btn The button to check.
+ * @return true if the pin is low (button pressed), false otherwise.
+ */
+bool input_mgr_is_button_held(input_event_t btn);
 
 #ifdef __cplusplus
 }

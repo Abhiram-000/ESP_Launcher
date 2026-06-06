@@ -11,6 +11,7 @@
 #include "nvs_flash.h"
 #include "driver/rtc_io.h"
 #include "../config/sys_config.h"
+#include "../platform/board.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
@@ -18,11 +19,12 @@ static const char *TAG = "IDLE_MGR";
 
 #define IDLE_TIMEOUT_MS      50000  /* 50 seconds */
 #define COUNTDOWN_TIMEOUT_MS 10000  /* 10 seconds */
-#define WAKE_GPIO            16      /* SELECT button */
+#define WAKE_GPIO            LAUNCHER_PIN_SELECT
 
 static uint64_t s_last_activity_ms = 0;
 static idle_state_t s_state = IDLE_STATE_ACTIVE;
 static SemaphoreHandle_t s_mutex = NULL;
+static bool s_idle_disabled = false;
 
 static uint64_t get_now_ms(void) {
     return esp_timer_get_time() / 1000;
@@ -37,7 +39,10 @@ void idle_mgr_init(void) {
 }
 
 void idle_mgr_feed(void) {
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return;
+    }
     s_last_activity_ms = get_now_ms();
     if (s_state != IDLE_STATE_ACTIVE) {
         ESP_LOGI(TAG, "System Woken (Inactivity reset)");
@@ -70,7 +75,19 @@ static void enter_deep_sleep(void) {
 }
 
 void idle_mgr_process(void) {
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return;
+    }
+    
+    // If idle is disabled, keep feeding the timer and stay active
+    if (s_idle_disabled) {
+        s_last_activity_ms = get_now_ms();
+        s_state = IDLE_STATE_ACTIVE;
+        xSemaphoreGive(s_mutex);
+        return;
+    }
+    
     uint64_t now = get_now_ms();
     uint64_t elapsed = now - s_last_activity_ms;
 
@@ -99,14 +116,20 @@ void idle_mgr_process(void) {
 }
 
 idle_state_t idle_mgr_get_state(void) {
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return IDLE_STATE_ACTIVE;
+    }
     idle_state_t state = s_state;
     xSemaphoreGive(s_mutex);
     return state;
 }
 
 int idle_mgr_get_countdown_remaining(void) {
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return 0;
+    }
     if (s_state != IDLE_STATE_COUNTDOWN) {
         xSemaphoreGive(s_mutex);
         return 0;
@@ -118,4 +141,32 @@ int idle_mgr_get_countdown_remaining(void) {
     
     xSemaphoreGive(s_mutex);
     return (remaining < 0) ? 0 : remaining;
+}
+
+void idle_mgr_disable(void) {
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return;
+    }
+    if (!s_idle_disabled) {
+        ESP_LOGI(TAG, "Idle timeout DISABLED (sleep prevention active)");
+        s_idle_disabled = true;
+        s_last_activity_ms = get_now_ms();
+        s_state = IDLE_STATE_ACTIVE;
+    }
+    xSemaphoreGive(s_mutex);
+}
+
+void idle_mgr_enable(void) {
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return;
+    }
+    if (s_idle_disabled) {
+        ESP_LOGI(TAG, "Idle timeout ENABLED (normal sleep behavior restored)");
+        s_idle_disabled = false;
+        s_last_activity_ms = get_now_ms();
+        s_state = IDLE_STATE_ACTIVE;
+    }
+    xSemaphoreGive(s_mutex);
 }

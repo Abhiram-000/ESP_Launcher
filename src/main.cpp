@@ -24,10 +24,13 @@
 #include "system/boot_ctrl.h"
 #include "managers/input_mgr.h"
 #include "services/wifi_mgr.h"
+#include "services/ntp_service.h"
+#include "services/weather_service.h"
 #include "services/web_server.h"
 #include "services/idle_mgr.h"
 #include "services/game_store.h"
 #include "services/hack_store.h"
+#include "services/pomodoro_service.h"
 #include "ui/ui_task.h"
 
 static const char* TAG = "MAIN";
@@ -60,6 +63,12 @@ extern "C" void app_main(void) {
     if (gs_ret != GAME_STORE_ERR_OK) {
         ESP_LOGE(TAG, "Game Store init failed: %d", gs_ret);
     }
+    
+    // 3a. Initialize Pomodoro Service (timer + statistics)
+    pomo_err_t pomo_ret = pomodoro_service_init();
+    if (pomo_ret != POMO_ERR_OK) {
+        ESP_LOGE(TAG, "Pomodoro Service init failed: %d", pomo_ret);
+    }
 
     // 4. Start Heavy UI Renderer
     ui_task_init();
@@ -67,12 +76,23 @@ extern "C" void app_main(void) {
     // 5. Initialize Unified Wi-Fi (AP + STA)
     wifi_mgr_init();
 
-    // 5b. Initialize Hack Store
+    // 5a. Initialize NTP Time Service (after Wi-Fi, before apps need time)
+    ntp_err_t ntp_ret = ntp_service_init();
+    if (ntp_ret != NTP_ERR_OK) {
+        ESP_LOGW(TAG, "NTP service init warning: %d", ntp_ret);
+    }
+
+    // 5b. Initialize Weather Service (after Wi-Fi + NTP)
+    weather_err_t wx_ret = weather_service_init();
+    if (wx_ret != WEATHER_ERR_OK) {
+        ESP_LOGW(TAG, "Weather service init warning: %d", wx_ret);
+    }
+
+    // 5c. Initialize Hack Store
     hack_store_init();
 
     // 6. Start HTTP Server for OTA uploads
     web_server_init();
-
 
     // 7. Start Idle Manager
     idle_mgr_init();

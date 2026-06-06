@@ -7,6 +7,8 @@
 #include <string.h>
 #include <stdio.h>
 
+static const char* TAG = "APP_GAME";
+
 // ui_task provides switch_to_app / switch_to_grid
 extern void switch_to_app(IApp* app);
 extern void switch_to_grid();
@@ -47,11 +49,10 @@ App_GameStore::~App_GameStore() {
 //  IApp lifecycle
 // ─────────────────────────────────────────────────────────────────────────
 void App_GameStore::init() {
-    // Pre-compute colours that don't change with theme
-    LGFX_Sprite tmp(nullptr);
-    COLOR_GREEN  = tmp.color565(80, 220, 100);
-    COLOR_ORANGE = tmp.color565(240, 160, 30);
-    COLOR_RED    = tmp.color565(220, 70,  70);
+    // Pre-compute colours from theme
+    COLOR_GREEN  = theme_get_success();
+    COLOR_ORANGE = theme_get_accent();
+    COLOR_RED    = theme_get_fail();
 
     _anim_time     = 0.0f;
     _spinner_angle = 0.0f;
@@ -234,7 +235,7 @@ void App_GameStore::handleInput(input_event_t ev) {
 //  render dispatcher
 // ─────────────────────────────────────────────────────────────────────────
 void App_GameStore::render(LGFX_Sprite* c) {
-    c->fillScreen(C_BG());
+    c->fillSprite(C_BG());
     switch (_screen) {
         case Screen::LocalList:    _render_local_list(c);    break;
         case Screen::StoreList:    _render_store_list(c);    break;
@@ -251,42 +252,49 @@ void App_GameStore::render(LGFX_Sprite* c) {
 //  Render helpers
 // ─────────────────────────────────────────────────────────────────────────
 void App_GameStore::_draw_header(LGFX_Sprite* c, const char* title, uint16_t accent) {
-    c->fillRect(0, 0, 160, 14, C_PANEL());
-    c->drawFastHLine(0, 14, 160, accent);
+    const int32_t W = c->width();
+    const int32_t HEADER_H = c->height() / 9;
+    c->fillRect(0, 0, W, HEADER_H, C_PANEL());
+    c->drawFastHLine(0, HEADER_H, W, accent);
     c->setTextDatum(textdatum_t::middle_left);
     c->setFont(&fonts::Font0);
     c->setTextColor(C_TEXT());
-    c->drawString(title, 4, 7);
+    c->drawString(title, W / 40, HEADER_H / 2);
 }
 
 void App_GameStore::_draw_footer(LGFX_Sprite* c, const char* text) {
-    c->drawFastHLine(0, 120, 160, C_DIM());
+    const int32_t W = c->width();
+    const int32_t H = c->height();
+    const int32_t FOOTER_Y = H - 8;
+    c->drawFastHLine(0, FOOTER_Y, W, C_DIM());
     c->setTextDatum(textdatum_t::middle_center);
     c->setFont(&fonts::Font0);
     c->setTextColor(C_DIM());
-    c->drawString(text, 80, 124);
+    c->drawString(text, W / 2, FOOTER_Y + 4);
 }
 
 void App_GameStore::_draw_game_row(LGFX_Sprite* c, int y, const game_entry_t& e,
                                     bool selected, bool show_status)
 {
+    const int32_t W = c->width();
+    const int32_t H = c->height();
     uint16_t bg = selected ? C_ACCENT() : C_PANEL();
     uint16_t fg = selected ? C_BG()     : C_TEXT();
 
-    c->fillRoundRect(2, y, 156, 22, 4, bg);
+    c->fillRoundRect(W / 80, y, W - W / 40, H / 6, 4, bg);
 
     c->setTextDatum(textdatum_t::middle_left);
     c->setFont(&fonts::Font0);
     c->setTextColor(fg);
-    c->drawString(e.name, 8, y + 11);
+    c->drawString(e.name, W / 20, y + H / 12);
 
     if (show_status) {
         if (e.is_installed && e.has_update) {
             c->setTextColor(COLOR_ORANGE);
-            c->drawString("[+]", 138, y + 11);
+            c->drawString("[+]", W - W / 7, y + H / 12);
         } else if (e.is_installed) {
             c->setTextColor(COLOR_GREEN);
-            c->drawString("[v]", 138, y + 11);
+            c->drawString("[v]", W - W / 7, y + H / 12);
         }
     }
 }

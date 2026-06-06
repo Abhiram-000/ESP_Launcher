@@ -21,7 +21,7 @@ static const char* TAG = "App_NES";
 // ─── Globals shared with osd_esp32s3.c ────────────────────────────────────
 extern "C" {
     extern char                  active_nes_rom_path[256];
-    extern uint16_t*             nes_frame_buffer;
+    extern volatile uint16_t*         nes_frame_buffer;
     extern SemaphoreHandle_t     nes_frame_sem;
     extern volatile uint32_t     nes_input_state;
     extern volatile bool         nes_should_exit;
@@ -146,8 +146,8 @@ void App_NES::init() {
     ESP_LOGI(TAG, "ROM mapper %d — supported. Launching emulator.", mapper);
 
     // ── Allocate double-buffers in PSRAM (160x128 x 2 bytes = 40KB each) ─
-    _front_buffer = (uint16_t*)heap_caps_malloc(160 * 128 * 2, MALLOC_CAP_SPIRAM);
-    _back_buffer  = (uint16_t*)heap_caps_malloc(160 * 128 * 2, MALLOC_CAP_SPIRAM);
+    _front_buffer = (uint16_t*)heap_caps_malloc(160 * 128 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    _back_buffer  = (uint16_t*)heap_caps_malloc(160 * 128 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
     if (!_front_buffer || !_back_buffer) {
         ESP_LOGE(TAG, "Framebuffer alloc failed! PSRAM free: %u",
@@ -159,17 +159,19 @@ void App_NES::init() {
     memset(_front_buffer, 0, 160 * 128 * 2);
     memset(_back_buffer,  0, 160 * 128 * 2);
 
-    _buffer_mutex = xSemaphoreCreateMutex();
+    _buffer_mutex = xSemaphoreCreateBinary();
     if (!_buffer_mutex) {
-        ESP_LOGE(TAG, "Mutex creation failed");
+        ESP_LOGE(TAG, "Semaphore creation failed");
         _cleanup_resources();
         _emu_task_done = true;
         return;
     }
+    /* Give once so the first render() can swap immediately (binary sem starts empty) */
+    xSemaphoreGive(_buffer_mutex);
 
     // ── Set globals for OSD layer ────────────────────────────────────────
     strncpy(active_nes_rom_path, _rom_path, 255);
-    nes_frame_buffer = _back_buffer;
+    nes_frame_buffer = (volatile uint16_t*)_back_buffer;
     nes_frame_sem    = _buffer_mutex;
     nes_input_state  = 0;
     nes_should_exit  = false;
@@ -206,16 +208,14 @@ void App_NES::exit() {
     ESP_LOGI(TAG, "exit — stopping emulator");
     nes_should_exit = true;
 
-    // Give emulator 200 ms to wrap up, then force-delete
+    // Give emulator up to 1s to wrap up (it self-deletes via vTaskDelete(NULL))
     if (_emu_task) {
-        for (int i = 0; i < 20; i++) {
+        for (int i = 0; i < 100; i++) {
             vTaskDelay(pdMS_TO_TICKS(10));
             if (_emu_task_done) break;
         }
         if (!_emu_task_done) {
-            eTaskState st = eTaskGetState(_emu_task);
-            ESP_LOGW(TAG, "Force-deleting emulator task (state=%d)", (int)st);
-            vTaskDelete(_emu_task);
+            ESP_LOGW(TAG, "Emulator task did not exit in time");
         }
         _emu_task = nullptr;
     }
@@ -258,14 +258,16 @@ void App_NES::loop() {
 void App_NES::render(LGFX_Sprite* canvas) {
     // If init() failed (bad mapper, OOM), show an error and return
     if (!_buffer_mutex || !_front_buffer || !_back_buffer) {
-        canvas->fillScreen(canvas->color565(10, 0, 0));
+        canvas->fillSprite(theme_get_bg());
+        const int32_t CX = canvas->width() / 2;
+        const int32_t CY = canvas->height() / 2;
         canvas->setTextDatum(textdatum_t::middle_center);
         canvas->setFont(&fonts::Font0);
-        canvas->setTextColor(canvas->color565(220, 60, 60));
-        canvas->drawString("ROM unsupported or", 80, 52);
-        canvas->drawString("failed to load.", 80, 64);
-        canvas->setTextColor(canvas->color565(100, 100, 100));
-        canvas->drawString("Press any key", 80, 84);
+        canvas->setTextColor(theme_get_fail());
+        canvas->drawString("ROM unsupported or", CX, CY - 12);
+        canvas->drawString("failed to load.", CX, CY);
+        canvas->setTextColor(theme_get_text_dim());
+        canvas->drawString("Press any key", CX, CY + 20);
         return;
     }
 
@@ -274,7 +276,7 @@ void App_NES::render(LGFX_Sprite* canvas) {
         uint16_t* tmp  = _front_buffer;
         _front_buffer  = _back_buffer;
         _back_buffer   = tmp;
-        nes_frame_buffer = _back_buffer;
+        nes_frame_buffer = (volatile uint16_t*)_back_buffer;
         xSemaphoreGive(_buffer_mutex);
     }
 
@@ -282,14 +284,22 @@ void App_NES::render(LGFX_Sprite* canvas) {
 
     // ── Exit-confirmation overlay ─────────────────────────────────────────
     if (_exit_pending) {
-        canvas->fillRoundRect(20, 44, 120, 40, 6, canvas->color565(5, 5, 20));
-        canvas->drawRoundRect(20, 44, 120, 40, 6, theme_get_accent());
+        const int32_t W  = canvas->width();
+        const int32_t H  = canvas->height();
+        const int32_t CX = W / 2;
+        const int32_t CY = H / 2;
+        const int32_t OW = W * 3 / 4;
+        const int32_t OH = H * 5 / 16;
+        const int32_t OX = (W - OW) / 2;
+        const int32_t OY = (H - OH) / 2;
+        canvas->fillRoundRect(OX, OY, OW, OH, 6, theme_get_bg());
+        canvas->drawRoundRect(OX, OY, OW, OH, 6, theme_get_accent());
         canvas->setTextDatum(textdatum_t::middle_center);
         canvas->setFont(&fonts::Font0);
         canvas->setTextColor(theme_get_text());
-        canvas->drawString("Hold: Exit Game", 80, 56);
+        canvas->drawString("Hold: Exit Game", CX, CY - 8);
         canvas->setTextColor(theme_get_text_dim());
-        canvas->drawString("SELECT to cancel", 80, 68);
+        canvas->drawString("SELECT to cancel", CX, CY + 4);
     }
 }
 

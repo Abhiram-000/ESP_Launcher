@@ -133,7 +133,7 @@ static int l_i2c_read(lua_State* L) {
         lua_pushnil(L); return 1;
     }
     
-    uint8_t* buf = (uint8_t*)alloca(len);
+    uint8_t buf[128];
     esp_err_t e = i2c_master_receive(dev_handle, buf, len, -1);
     i2c_master_bus_rm_device(dev_handle);
     
@@ -180,7 +180,7 @@ static int l_uart_read(lua_State* L) {
     int max_len = luaL_checkinteger(L, 2);
     int timeout = (int)luaL_optinteger(L, 3, 100);
     if (max_len <= 0 || max_len > 256) { lua_pushnil(L); return 1; }
-    uint8_t* buf = (uint8_t*)alloca(max_len);
+    uint8_t buf[256];
     int n = uart_read_bytes((uart_port_t)port, buf, max_len, pdMS_TO_TICKS(timeout));
     if (n <= 0) { lua_pushnil(L); return 1; }
     lua_pushlstring(L, (const char*)buf, n); return 1;
@@ -268,7 +268,7 @@ static int l_fs_read(lua_State* L) {
     FILE* f = fopen(path, "rb");
     if (!f) { lua_pushnil(L); lua_pushstring(L, "file not found"); return 2; }
     fseek(f, 0, SEEK_END); long sz = ftell(f); fseek(f, 0, SEEK_SET);
-    char* buf = (char*)heap_caps_malloc(sz + 1, MALLOC_CAP_SPIRAM);
+    char* buf = (char*)heap_caps_malloc(sz + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buf) { fclose(f); lua_pushnil(L); return 1; }
     fread(buf, 1, sz, f); buf[sz] = '\0'; fclose(f);
     lua_pushlstring(L, buf, sz); heap_caps_free(buf); return 1;
@@ -277,9 +277,12 @@ static int l_fs_write(lua_State* L) {
     const char* path = luaL_checkstring(L, 1);
     size_t len; const char* data = luaL_checklstring(L, 2, &len);
     if (!_fs_path_allowed(path)) { lua_pushboolean(L, 0); return 1; }
-    FILE* f = fopen(path, "wb");
+    char tmp_path[128];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+    FILE* f = fopen(tmp_path, "wb");
     if (!f) { lua_pushboolean(L, 0); return 1; }
     fwrite(data, 1, len, f); fclose(f);
+    rename(tmp_path, path);
     lua_pushboolean(L, 1); return 1;
 }
 static int l_fs_list(lua_State* L) {
@@ -306,7 +309,12 @@ void LuaEngine::_bind_fs(lua_State* L) {
 }
 
 // ─── spi.* (stub — full init requires known MOSI/MISO/CLK) ──────────────────
-void LuaEngine::_bind_spi(lua_State* /*L*/) { /* TODO: implement in next iteration */ }
+void LuaEngine::_bind_spi(lua_State* L) {
+    // SPI pin assignment is board-specific and not yet configurable from Lua.
+    // Expose an empty table so scripts can check for availability.
+    lua_newtable(L);
+    lua_setglobal(L, "spi");
+}
 
 // ─── net.* ───────────────────────────────────────────────────────────────────
 static int l_net_fetch(lua_State* L) {
@@ -320,7 +328,7 @@ static int l_net_fetch(lua_State* L) {
     cfg.url = url;
     cfg.timeout_ms = 10000;
     esp_http_client_handle_t h = esp_http_client_init(&cfg);
-    char* out = (char*)heap_caps_malloc(4096, MALLOC_CAP_SPIRAM);
+    char* out = (char*)heap_caps_malloc(4096, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     int out_len = 0;
     if (out && esp_http_client_open(h, 0) == ESP_OK) {
         esp_http_client_fetch_headers(h);
@@ -339,7 +347,12 @@ void LuaEngine::_bind_net(lua_State* L) {
 }
 
 // ─── disp.* (minimal display bindings for Lua scripts) ──────────────────────
-void LuaEngine::_bind_disp(lua_State* /*L*/) { /* TODO: route through ui_task queue */ }
+// Display drawing from Lua requires routing commands through the ui_task queue.
+// This is not yet implemented — expose an empty table so scripts can detect it.
+void LuaEngine::_bind_disp(lua_State* L) {
+    lua_newtable(L);
+    lua_setglobal(L, "disp");
+}
 
 // ─── Master binding registration ─────────────────────────────────────────────
 void LuaEngine::_register_bindings() {

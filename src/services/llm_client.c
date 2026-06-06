@@ -92,20 +92,22 @@ static void _trim_history(void) {
         kept_start = ftell(f);
     }
     long kept_len = sz - kept_start;
-    char* buf = (char*)heap_caps_malloc(kept_len + 1, MALLOC_CAP_SPIRAM);
+    char* buf = (char*)heap_caps_malloc(kept_len + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buf) { fclose(f); return; }
     fseek(f, kept_start, SEEK_SET);
     fread(buf, 1, kept_len, f); fclose(f);
 
-    FILE* w = fopen(AI_HISTORY_PATH, "wb");
-    if (w) { fwrite(buf, 1, kept_len, w); fclose(w); }
+    char tmp_path[64];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", AI_HISTORY_PATH);
+    FILE* w = fopen(tmp_path, "wb");
+    if (w) { fwrite(buf, 1, kept_len, w); fclose(w); rename(tmp_path, AI_HISTORY_PATH); }
     heap_caps_free(buf);
 }
 
 static char* _escape_json(const char* input) {
     if (!input) return NULL;
     size_t len = strlen(input);
-    char* esc = (char*)heap_caps_malloc(len * 2 + 1, MALLOC_CAP_SPIRAM);
+    char* esc = (char*)heap_caps_malloc(len * 2 + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!esc) return NULL;
     size_t j = 0;
     for (size_t i = 0; i < len; i++) {
@@ -138,7 +140,7 @@ void llm_client_clear_history(void) { remove(AI_HISTORY_PATH); }
 
 void llm_client_commit_reply(const char* reply, size_t len) {
     if (!reply || len == 0) return;
-    char* temp = (char*)heap_caps_malloc(len + 1, MALLOC_CAP_SPIRAM);
+    char* temp = (char*)heap_caps_malloc(len + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!temp) return;
     memcpy(temp, reply, len);
     temp[len] = '\0';
@@ -156,7 +158,7 @@ static char* _build_payload(const char* user_msg) {
         s_model, AI_LLM_MAX_TOKENS);
 
     /* Load system prompt */
-    char sysprompt[1024] = "You are a helpful AI assistant on an ESP32-S3 handheld. "
+    static char sysprompt[1024] = "You are a helpful AI assistant on an ESP32-S3 handheld. "
         "Your responses MUST be extremely concise, brief, and under 150 characters total. Keep explanations minimal. "
         "For coding tasks, write clean, self-contained Lua 5.4 scripts using the available hardware libraries: "
         "sys (sleep(ms), time(), heap(), reboot()), "
@@ -169,7 +171,7 @@ static char* _build_payload(const char* user_msg) {
     FILE* fp = fopen(AI_SYSPROMPT_PATH, "r");
     if (fp) { fread(sysprompt, 1, sizeof(sysprompt) - 1, fp); fclose(fp); }
 
-    char* payload = (char*)heap_caps_malloc(AI_CONTEXT_MAX_CHARS + 2048, MALLOC_CAP_SPIRAM);
+    char* payload = (char*)heap_caps_malloc(AI_CONTEXT_MAX_CHARS + 2048, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!payload) return NULL;
     int pos = 0;
     
@@ -273,7 +275,7 @@ llm_err_t llm_client_send(const char* user_msg, llm_chunk_cb_t on_chunk, void* u
     char* payload = _build_payload(user_msg);
     if (!payload) return LLM_ERR_OOM;
 
-    char* reply_buf = (char*)heap_caps_calloc(1, AI_STREAM_BUF_SIZE, MALLOC_CAP_SPIRAM);
+    char* reply_buf = (char*)heap_caps_calloc(1, AI_STREAM_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!reply_buf) { heap_caps_free(payload); return LLM_ERR_OOM; }
 
     stream_ctx_t ctx = {

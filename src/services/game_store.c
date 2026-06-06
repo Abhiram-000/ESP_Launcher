@@ -2,6 +2,7 @@
 #include "sys_config.h"
 #include "wifi_mgr.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_littlefs.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
@@ -48,7 +49,9 @@ static volatile bool s_abort_requested = false;
 
 static void _gs_lock(void) {
     if (gs_mutex) {
-        xSemaphoreTake(gs_mutex, portMAX_DELAY);
+        if (xSemaphoreTake(gs_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+            ESP_LOGW(TAG, "Mutex timeout");
+        }
     }
 }
 
@@ -167,7 +170,7 @@ static void _gs_local_catalog_load(void) {
         return;
     }
 
-    char *json_data = malloc(size + 1);
+    char *json_data = heap_caps_malloc(size + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!json_data) {
         fclose(f);
         return;
@@ -491,7 +494,7 @@ static void _gs_cloud_fetch_task(void *pvParameters) {
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
     
-    char *buffer = heap_caps_malloc(GS_CATALOG_BUFFER_SIZE, MALLOC_CAP_SPIRAM);
+    char *buffer = heap_caps_malloc(GS_CATALOG_BUFFER_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buffer) {
         ESP_LOGE(TAG, "Failed to allocate buffer for catalog");
         _gs_status_set_error(GAME_STORE_ERR_FS_ERROR);
@@ -712,7 +715,7 @@ static void _gs_download_task(void *pvParameters) {
         };
         esp_http_client_handle_t client = esp_http_client_init(&config);
         
-        char *buffer = heap_caps_malloc(GAME_STORE_DL_CHUNK_SIZE, MALLOC_CAP_SPIRAM);
+        char *buffer = heap_caps_malloc(GAME_STORE_DL_CHUNK_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!buffer) {
             fclose(f);
             unlink(temp_path);

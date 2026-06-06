@@ -70,7 +70,10 @@ bool LuaEngine::init() {
         ESP_LOGE(TAG, "LuaEngine mutex allocation failed");
         return false;
     }
-    xSemaphoreTakeRecursive(m_exec_mutex, portMAX_DELAY);
+    if (xSemaphoreTakeRecursive(m_exec_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return false;
+    }
     if (m_L) {
         xSemaphoreGiveRecursive(m_exec_mutex);
         return true;
@@ -91,7 +94,9 @@ bool LuaEngine::init() {
 
 void LuaEngine::shutdown() {
     if (m_exec_mutex) {
-        xSemaphoreTakeRecursive(m_exec_mutex, portMAX_DELAY);
+        if (xSemaphoreTakeRecursive(m_exec_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+            ESP_LOGW(TAG, "Mutex timeout");
+        }
     }
     if (m_L) { lua_close(m_L); m_L = nullptr; }
     if (m_exec_mutex) {
@@ -127,7 +132,11 @@ void LuaEngine::_open_safe_libs() {
 lua_engine_result_t LuaEngine::exec_string(const char* code) {
     lua_engine_result_t r = {};
     if (!m_exec_mutex && !init()) { r.status = LUA_ENGINE_ERR_INIT; return r; }
-    xSemaphoreTakeRecursive(m_exec_mutex, portMAX_DELAY);
+    if (xSemaphoreTakeRecursive(m_exec_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        r.status = LUA_ENGINE_ERR_INIT;
+        return r;
+    }
     if (!m_L && !init()) { r.status = LUA_ENGINE_ERR_INIT; return r; }
     _start_ms = (uint32_t)(esp_timer_get_time() / 1000);
     _abort_requested = false;
@@ -157,7 +166,11 @@ lua_engine_result_t LuaEngine::exec_string(const char* code) {
 lua_engine_result_t LuaEngine::exec_file(const char* path) {
     lua_engine_result_t r = {};
     if (!m_exec_mutex && !init()) { r.status = LUA_ENGINE_ERR_INIT; return r; }
-    xSemaphoreTakeRecursive(m_exec_mutex, portMAX_DELAY);
+    if (xSemaphoreTakeRecursive(m_exec_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        r.status = LUA_ENGINE_ERR_INIT;
+        return r;
+    }
     FILE* f = fopen(path, "r");
     if (!f) {
         r.status = LUA_ENGINE_ERR_COMPILE;
@@ -165,7 +178,7 @@ lua_engine_result_t LuaEngine::exec_file(const char* path) {
         xSemaphoreGiveRecursive(m_exec_mutex);
         return r;
     }
-    char* buf = (char*)heap_caps_malloc(AI_LUA_MAX_SCRIPT_BYTES, MALLOC_CAP_SPIRAM);
+    char* buf = (char*)heap_caps_malloc(AI_LUA_MAX_SCRIPT_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buf) {
         fclose(f);
         r.status = LUA_ENGINE_ERR_INIT;
@@ -195,7 +208,10 @@ static std::string s_log_buffer;
 
 void LuaEngine::clear_log_buffer() {
     if (m_log_mutex) {
-        xSemaphoreTake(m_log_mutex, portMAX_DELAY);
+        if (xSemaphoreTake(m_log_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+            ESP_LOGW(TAG, "Mutex timeout");
+            return;
+        }
     }
     s_log_buffer.clear();
     if (m_log_mutex) {
@@ -204,7 +220,10 @@ void LuaEngine::clear_log_buffer() {
 }
 void LuaEngine::append_log(const char* text) {
     if (m_log_mutex) {
-        xSemaphoreTake(m_log_mutex, portMAX_DELAY);
+        if (xSemaphoreTake(m_log_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+            ESP_LOGW(TAG, "Mutex timeout");
+            return;
+        }
     }
     if (s_log_buffer.size() + strlen(text) < 4096) {
         s_log_buffer += text;
@@ -217,7 +236,11 @@ void LuaEngine::append_log(const char* text) {
 const char* LuaEngine::get_log_buffer() {
     static char s_copy_buf[4096];
     if (m_log_mutex) {
-        xSemaphoreTake(m_log_mutex, portMAX_DELAY);
+        if (xSemaphoreTake(m_log_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+            ESP_LOGW(TAG, "Mutex timeout");
+            s_copy_buf[0] = '\0';
+            return s_copy_buf;
+        }
     }
     strncpy(s_copy_buf, s_log_buffer.c_str(), sizeof(s_copy_buf) - 1);
     s_copy_buf[sizeof(s_copy_buf) - 1] = '\0';

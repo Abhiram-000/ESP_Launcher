@@ -55,7 +55,9 @@ static void _ota_lock(void) {
         s_ota_mutex = xSemaphoreCreateMutex();
         configASSERT(s_ota_mutex);
     }
-    xSemaphoreTake(s_ota_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(s_ota_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+    }
 }
 
 static void _ota_unlock(void) { xSemaphoreGive(s_ota_mutex); }
