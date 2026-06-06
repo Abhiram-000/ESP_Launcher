@@ -19,13 +19,8 @@ static QueueHandle_t s_input_queue = NULL;
 typedef struct {
     gpio_num_t pin;
     input_event_t event;
-<<<<<<< HEAD
     volatile uint32_t last_isr_time;
-    volatile uint32_t last_event_time;  /* Timestamp of last event sent for this button */
-=======
-    uint32_t last_isr_time;
-    uint32_t last_event_time;  /* Timestamp of last event sent for this button */
->>>>>>> fix/issue-1-iram-attr-gpio
+    volatile uint32_t last_event_time;
 } btn_state_t;
 
 static btn_state_t s_buttons[5] = {

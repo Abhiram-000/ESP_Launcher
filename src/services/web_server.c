@@ -344,17 +344,12 @@ static bool _web_llm_chunk(const char* token, size_t len, void* user) {
     }
     esc[j] = '\0';
 
-<<<<<<< HEAD
     char* chunk = heap_caps_malloc(1024, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!chunk) {
         free(esc);
         return false;
     }
     int n = snprintf(chunk, 1024, "data: {\"token\":\"%s\"}\n\n", esc);
-=======
-    static char chunk[1024];
-    int n = snprintf(chunk, sizeof(chunk), "data: {\"token\":\"%s\"}\n\n", esc);
->>>>>>> fix/issue-1-iram-attr-gpio
     free(esc);
 
     esp_err_t err = httpd_resp_send_chunk(req, chunk, n);
