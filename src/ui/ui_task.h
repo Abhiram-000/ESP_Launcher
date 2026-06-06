@@ -23,6 +23,18 @@ void ui_set_brightness(uint8_t val);
  */
 uint8_t ui_get_brightness(void);
 
+/**
+ * @brief Get current launcher theme.
+ * @return 0=Carousel, 1=Tile
+ */
+uint8_t ui_get_launcher_theme(void);
+
+/**
+ * @brief Set launcher theme and persist to NVS.
+ * @param theme 0=Carousel, 1=Tile
+ */
+void ui_set_launcher_theme(uint8_t theme);
+
 #ifdef __cplusplus
 }
 #endif

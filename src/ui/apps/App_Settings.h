@@ -14,6 +14,7 @@ private:
         STATE_THEMES,
         STATE_BRIGHTNESS,
         STATE_SLEEP_CONFIG,
+        STATE_LAUNCHER_THEME,
         STATE_WIFI_CONNECT
     };
 
@@ -25,6 +26,7 @@ private:
     int menu_cursor;
     int menu_scroll_offset; // For auto-scrolling
     int theme_cursor;
+    int launcher_theme_cursor;
     int temp_brightness;
     int sleep_config_cursor;
     

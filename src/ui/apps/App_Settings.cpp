@@ -33,7 +33,7 @@ static const char* SLEEP_LABELS[] = {
 };
 
 #define SLEEP_OPTION_COUNT 5
-#define MENU_ITEMS 5
+#define MENU_ITEMS 6
 #define MENU_VISIBLE_ITEMS 3
 
 App_Settings::App_Settings() {
@@ -44,6 +44,7 @@ App_Settings::App_Settings() {
     menu_cursor = 0;
     menu_scroll_offset = 0;
     theme_cursor = 0;
+    launcher_theme_cursor = 0;
     temp_brightness = 255;
     sleep_config_cursor = 0;
     free_heap = 0;
@@ -64,6 +65,7 @@ void App_Settings::init() {
     menu_cursor = 0;
     menu_scroll_offset = 0;
     theme_cursor = theme_get_current();
+    launcher_theme_cursor = ui_get_launcher_theme();
     temp_brightness = ui_get_brightness();
     sleep_config_cursor = _get_current_sleep_config();
     anim_time = 0.0f;
@@ -177,9 +179,10 @@ void App_Settings::handleInput(input_event_t event) {
         } else if (event == BTN_SELECT || event == BTN_RIGHT) {
             if (menu_cursor == 0) _change_state(STATE_SYS_INFO);
             else if (menu_cursor == 1) _change_state(STATE_THEMES);
-            else if (menu_cursor == 2) _change_state(STATE_BRIGHTNESS);
-            else if (menu_cursor == 3) _change_state(STATE_SLEEP_CONFIG);
-            else if (menu_cursor == 4) {
+            else if (menu_cursor == 2) _change_state(STATE_LAUNCHER_THEME);
+            else if (menu_cursor == 3) _change_state(STATE_BRIGHTNESS);
+            else if (menu_cursor == 4) _change_state(STATE_SLEEP_CONFIG);
+            else if (menu_cursor == 5) {
                 // WiFi Connect - open scanner overlay
                 _wifi_scanner_active = true;
                 _wifi_scanner.begin(
@@ -235,6 +238,17 @@ void App_Settings::handleInput(input_event_t event) {
             _change_state(STATE_MENU);
         }
     }
+    else if (current_state == STATE_LAUNCHER_THEME) {
+        if (event == BTN_UP || event == BTN_LEFT) {
+            if (launcher_theme_cursor > 0) launcher_theme_cursor--;
+            ui_set_launcher_theme((uint8_t)launcher_theme_cursor);
+        } else if (event == BTN_DOWN || event == BTN_RIGHT) {
+            if (launcher_theme_cursor < 1) launcher_theme_cursor++;  // Only 2 themes
+            ui_set_launcher_theme((uint8_t)launcher_theme_cursor);
+        } else if (event == BTN_SELECT) {
+            _change_state(STATE_MENU);
+        }
+    }
 }
 
 void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_offset) {
@@ -251,6 +265,7 @@ void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_o
         const char* options[] = {
             "SYSTEM INFO",
             "THEME SETUP",
+            "LAUNCHER STYLE",
             "BRIGHTNESS",
             "SLEEP CONFIG",
             "CONNECT WIFI"
@@ -495,6 +510,65 @@ void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_o
         canvas->setTextColor(theme_get_text_dim());
         canvas->setTextDatum(textdatum_t::bottom_center);
         canvas->drawString("L/R: Navigate  SEL: Apply", cx, bar_y + 25);
+    } else if (state == STATE_LAUNCHER_THEME) {
+        canvas->setTextColor(accent);
+        canvas->setTextDatum(textdatum_t::top_center);
+        canvas->drawString("LAUNCHER STYLE", cx, list_y);
+        list_y += 20;
+        
+        // Left/Right carousel arrows with bounce
+        int bounce = (int)(3.0f * sinf(anim_time * 5.0f));
+        canvas->setTextColor(accent);
+        canvas->setTextDatum(textdatum_t::middle_center);
+        
+        if (launcher_theme_cursor > 0) {
+            canvas->drawString("<", x_offset + 12 - bounce, list_y + 20);
+        }
+        if (launcher_theme_cursor < 1) {
+            canvas->drawString(">", x_offset + canvas->width() - 12 + bounce, list_y + 20);
+        }
+        
+        // Main display card
+        float pulse = 0.7f + 0.3f * sinf(anim_time * 5.0f);
+        float glow = 0.5f + 0.5f * sinf(anim_time * 3.0f);
+        
+        int card_w = 100;
+        int card_h = 40;
+        int card_x = cx - card_w/2;
+        int card_y = list_y + 5;
+        
+        // Glowing card
+        canvas->fillRoundRect(card_x - 2, card_y - 2, card_w + 4, card_h + 4, 8, color_blend(accent, bg, 0.25f * glow));
+        canvas->fillRoundRect(card_x, card_y, card_w, card_h, 7, color_blend(accent, bg, 0.18f));
+        canvas->drawRoundRect(card_x, card_y, card_w, card_h, 7, color_blend(accent, theme_get_text(), pulse));
+        
+        // Display current selection
+        canvas->setFont(&fonts::Font2);
+        canvas->setTextColor(theme_get_text());
+        canvas->setTextDatum(textdatum_t::middle_center);
+        
+        const char* launcher_names[] = {"CAROUSEL", "TILE"};
+        canvas->drawString(launcher_names[launcher_theme_cursor], cx, card_y + card_h/2);
+        
+        // Indicator dots
+        int bar_y = card_y + card_h + 15;
+        int dot_spacing = 20;
+        for (int i = 0; i < 2; i++) {
+            int dot_x = cx - dot_spacing/2 + (i * dot_spacing);
+            int dot_y = bar_y + 10;
+            if (i == launcher_theme_cursor) {
+                canvas->fillCircle(dot_x, dot_y, 3, accent);
+                canvas->drawCircle(dot_x, dot_y, 4, color_blend(accent, theme_get_text(), pulse));
+            } else {
+                canvas->fillCircle(dot_x, dot_y, 2, color_blend(theme_get_text_dim(), bg, 0.4f));
+            }
+        }
+        
+        // Hint text
+        canvas->setFont(&fonts::Font0);
+        canvas->setTextColor(theme_get_text_dim());
+        canvas->setTextDatum(textdatum_t::bottom_center);
+        canvas->drawString("L/R: Switch  SEL: Apply", cx, bar_y + 22);
     }
 }
 

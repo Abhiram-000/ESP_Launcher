@@ -71,6 +71,15 @@ static App_Pomodoro     app_pomodoro;
 
 static IApp* current_app = nullptr;
 
+uint8_t ui_get_launcher_theme(void) {
+    return (uint8_t)app_grid.getLauncherTheme();
+}
+
+void ui_set_launcher_theme(uint8_t theme) {
+    app_grid.setLauncherTheme((launcher_theme_t)theme);
+}
+
+
 static void _run_slide_transition(LGFX_Sprite* old_snap, LGFX_Sprite* new_snap) {
     const int SLIDE_FRAMES = 15;
     const int W = tft.width();
@@ -197,14 +206,14 @@ static void ui_task_runner(void *arg) {
 
     theme_init();
 
-    app_grid.registerApp("OTA System",  icon_ota,       &app_ota);
-    app_grid.registerApp("Torch",       icon_torch,     &app_torch);
-    app_grid.registerApp("AI Code",     icon_aicode,    &app_aicode);
-    app_grid.registerApp("Settings",    icon_settings,  &app_settings);
-    app_grid.registerApp("Game Store",  icon_games,     &app_gamestore);
-    app_grid.registerApp("Hack Store",  icon_app_store, &app_hackstore);
-    app_grid.registerApp("Clock",       icon_weather,   &app_clockweather);
-    app_grid.registerApp("Pomodoro",    icon_pomodoro,  &app_pomodoro);
+    app_grid.registerApp("OTA System",  icon_ota,       &app_ota,         "Firmware update via WiFi",            "System");
+    app_grid.registerApp("Torch",       icon_torch,     &app_torch,       "Flashlight with adjustable modes",    "Tools");
+    app_grid.registerApp("AI Code",     icon_aicode,    &app_aicode,      "AI-powered code assistant",           "Development");
+    app_grid.registerApp("Settings",    icon_settings,  &app_settings,    "System configuration and preferences", "System");
+    app_grid.registerApp("Game Store",  icon_games,     &app_gamestore,   "Browse and download NES ROMs",        "Entertainment");
+    app_grid.registerApp("Hack Store",  icon_app_store, &app_hackstore,   "Community scripts and extensions",    "Development");
+    app_grid.registerApp("Clock",       icon_weather,   &app_clockweather,"Time, weather, and forecast",         "Utilities");
+    app_grid.registerApp("Pomodoro",    icon_pomodoro,  &app_pomodoro,    "Focus timer and productivity tool",   "Productivity");
 
     // Use a direct init for the first launch — no slide needed at boot
     current_app = &app_grid;
