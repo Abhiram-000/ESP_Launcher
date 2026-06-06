@@ -25,6 +25,18 @@ void led_service_set_rgb(uint8_t r, uint8_t g, uint8_t b);
  */
 void led_service_off(void);
 
+/**
+ * @brief Set global brightness scaling.
+ * @param brightness  0 (off) to 255 (full).
+ */
+void led_service_set_brightness(uint8_t brightness);
+
+/**
+ * @brief Get current brightness.
+ * @return Brightness (0-255).
+ */
+uint8_t led_service_get_brightness(void);
+
 #ifdef __cplusplus
 }
 #endif
