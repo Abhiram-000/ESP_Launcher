@@ -146,8 +146,8 @@ void App_NES::init() {
     ESP_LOGI(TAG, "ROM mapper %d — supported. Launching emulator.", mapper);
 
     // ── Allocate double-buffers in PSRAM (160x128 x 2 bytes = 40KB each) ─
-    _front_buffer = (uint16_t*)heap_caps_malloc(160 * 128 * 2, MALLOC_CAP_SPIRAM);
-    _back_buffer  = (uint16_t*)heap_caps_malloc(160 * 128 * 2, MALLOC_CAP_SPIRAM);
+    _front_buffer = (uint16_t*)heap_caps_malloc(160 * 128 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    _back_buffer  = (uint16_t*)heap_caps_malloc(160 * 128 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
     if (!_front_buffer || !_back_buffer) {
         ESP_LOGE(TAG, "Framebuffer alloc failed! PSRAM free: %u",
@@ -258,14 +258,16 @@ void App_NES::loop() {
 void App_NES::render(LGFX_Sprite* canvas) {
     // If init() failed (bad mapper, OOM), show an error and return
     if (!_buffer_mutex || !_front_buffer || !_back_buffer) {
-        canvas->fillScreen(canvas->color565(10, 0, 0));
+        canvas->fillSprite(theme_get_bg());
+        const int32_t CX = canvas->width() / 2;
+        const int32_t CY = canvas->height() / 2;
         canvas->setTextDatum(textdatum_t::middle_center);
         canvas->setFont(&fonts::Font0);
-        canvas->setTextColor(canvas->color565(220, 60, 60));
-        canvas->drawString("ROM unsupported or", 80, 52);
-        canvas->drawString("failed to load.", 80, 64);
-        canvas->setTextColor(canvas->color565(100, 100, 100));
-        canvas->drawString("Press any key", 80, 84);
+        canvas->setTextColor(theme_get_fail());
+        canvas->drawString("ROM unsupported or", CX, CY - 12);
+        canvas->drawString("failed to load.", CX, CY);
+        canvas->setTextColor(theme_get_text_dim());
+        canvas->drawString("Press any key", CX, CY + 20);
         return;
     }
 
@@ -282,14 +284,22 @@ void App_NES::render(LGFX_Sprite* canvas) {
 
     // ── Exit-confirmation overlay ─────────────────────────────────────────
     if (_exit_pending) {
-        canvas->fillRoundRect(20, 44, 120, 40, 6, canvas->color565(5, 5, 20));
-        canvas->drawRoundRect(20, 44, 120, 40, 6, theme_get_accent());
+        const int32_t W  = canvas->width();
+        const int32_t H  = canvas->height();
+        const int32_t CX = W / 2;
+        const int32_t CY = H / 2;
+        const int32_t OW = W * 3 / 4;
+        const int32_t OH = H * 5 / 16;
+        const int32_t OX = (W - OW) / 2;
+        const int32_t OY = (H - OH) / 2;
+        canvas->fillRoundRect(OX, OY, OW, OH, 6, theme_get_bg());
+        canvas->drawRoundRect(OX, OY, OW, OH, 6, theme_get_accent());
         canvas->setTextDatum(textdatum_t::middle_center);
         canvas->setFont(&fonts::Font0);
         canvas->setTextColor(theme_get_text());
-        canvas->drawString("Hold: Exit Game", 80, 56);
+        canvas->drawString("Hold: Exit Game", CX, CY - 8);
         canvas->setTextColor(theme_get_text_dim());
-        canvas->drawString("SELECT to cancel", 80, 68);
+        canvas->drawString("SELECT to cancel", CX, CY + 4);
     }
 }
 

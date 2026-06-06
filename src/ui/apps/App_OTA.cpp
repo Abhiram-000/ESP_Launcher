@@ -13,14 +13,13 @@
 #include "../theme_mgr.h"
 #include "../../utils/color_utils.h"
 #include "esp_log.h"
+
+static const char* TAG = "APP_OTA";
 #include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
 extern void switch_to_grid();
-
-/* Hardcoded background for the liquid tank — matches the Cyberpunk theme */
-#define COLOR_BG  0x0821u
 
 static bool is_ota_ui_state(ota_state_t state) {
     return state >= OTA_STATE_IDLE && state <= OTA_STATE_FAILED;
@@ -161,7 +160,7 @@ void App_OTA::draw_liquid_tank(LGFX_Sprite* canvas,
                                 int cx, int cy, int radius,
                                 float progress, float time,
                                 float wave_activity, uint16_t color_water) {
-    canvas->fillCircle(cx, cy, radius, canvas->color565(10, 14, 22));
+    canvas->fillCircle(cx, cy, radius, theme_get_bg());
 
     float target_y = (float)radius - (2.0f * (float)radius * (progress / 100.0f));
 
@@ -180,13 +179,13 @@ void App_OTA::draw_liquid_tank(LGFX_Sprite* canvas,
 
         /* Surface highlight */
         canvas->drawPixel(cx + x, cy + sy,
-            color_blend(canvas->color565(220, 240, 255), color_water, 0.75f));
+            color_blend(theme_get_text(), color_water, 0.75f));
     }
 
     /* Outer bezel rings */
-    uint16_t bezel_dark  = canvas->color565(10, 16, 26);
-    uint16_t bezel_ring  = canvas->color565(30, 45, 65);
-    uint16_t bezel_shine = canvas->color565(80, 120, 160);
+    uint16_t bezel_dark  = color_blend(theme_get_text_dim(), theme_get_bg(), 0.85f);
+    uint16_t bezel_ring  = color_blend(theme_get_text_dim(), theme_get_bg(), 0.6f);
+    uint16_t bezel_shine = theme_get_accent();
     canvas->drawArc(cx, cy, radius + 4, radius + 1, 0, 360, bezel_ring);
     canvas->drawArc(cx, cy, radius + 5, radius + 4, 0, 360, bezel_dark);
     /* Specular highlight — top-left arc */
@@ -222,11 +221,11 @@ void App_OTA::draw_phase_dots(LGFX_Sprite* canvas, int cx, int bottom_y) {
             /* Animated active dot */
             float alpha = 0.5f + 0.5f * sinf(anim_time * 4.0f);
             col = color_blend(theme_get_accent(),
-                              canvas->color565(15, 25, 40), alpha);
+                              theme_get_bg(), alpha);
         } else if (is_past) {
             col = theme_get_success();
         } else {
-            col = canvas->color565(20, 30, 45);
+            col = theme_get_text_dim();
         }
 
         canvas->fillCircle(dx, bottom_y - 6, dot_r, col);
@@ -234,7 +233,7 @@ void App_OTA::draw_phase_dots(LGFX_Sprite* canvas, int cx, int bottom_y) {
         /* Connector line between dots */
         if (i < N - 1) {
             uint16_t lc = is_past ? theme_get_success()
-                                  : canvas->color565(18, 28, 42);
+                                  : theme_get_text_dim();
             canvas->drawFastHLine(dx + dot_r + 1, bottom_y - 6,
                                   spacing - 2 * dot_r - 2, lc);
         }
@@ -296,7 +295,7 @@ void App_OTA::render(LGFX_Sprite* canvas) {
             display_level = 12.0f + 3.0f * sinf(anim_time * 1.2f);
             break;
         case OTA_STATE_CONNECTED:
-            state_color   = canvas->color565(160, 60, 255);
+            state_color   = theme_get_accent();
             display_level = 28.0f + 6.0f * sinf(anim_time * 2.5f);
             break;
         case OTA_STATE_FLASHING:
@@ -328,7 +327,7 @@ void App_OTA::render(LGFX_Sprite* canvas) {
         snprintf(pct, sizeof(pct), "%d%%", (int)smooth_progress);
         canvas->setFont(&fonts::Font2);
         uint16_t txt_col = (display_level > 50.0f)
-                            ? canvas->color565(0, 0, 0)
+                            ? theme_get_bg()
                             : state_color;
         canvas->setTextDatum(textdatum_t::middle_center);
         /* Subtle shadow */

@@ -238,11 +238,13 @@ void App_Settings::handleInput(input_event_t event) {
 }
 
 void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_offset) {
-    int cx = canvas->width() / 2 + x_offset;
+    const int32_t W = canvas->width();
+    const int32_t H = canvas->height();
+    int cx = W / 2 + x_offset;
     uint16_t bg = theme_get_bg();
     uint16_t accent = theme_get_accent();
     
-    int list_y = 35;
+    int list_y = H / 4;
     canvas->setFont(&fonts::Font0); // 6x8
     
     if (state == STATE_MENU) {
@@ -500,8 +502,10 @@ void App_Settings::render(LGFX_Sprite* canvas) {
     uint16_t bg = theme_get_bg();
     theme_draw_wallpaper(canvas, anim_time);
 
-    int cx = canvas->width() / 2;
-    int header_y = 12;
+    const int32_t W = canvas->width();
+    const int32_t H = canvas->height();
+    int cx = W / 2;
+    int header_y = H / 10;
 
     // --- Stunning Modern Header ---
     uint16_t accent = theme_get_accent();
@@ -518,7 +522,7 @@ void App_Settings::render(LGFX_Sprite* canvas) {
     canvas->drawFastHLine(cx - line_w/2 + 10, header_y + 11, line_w - 20, color_blend(accent, bg, 0.4f));
 
     // --- Content Area with Smooth Transitions ---
-    canvas->setClipRect(0, 25, canvas->width(), canvas->height() - 40);
+    canvas->setClipRect(0, H / 5, W, H - H / 3);
 
     if (is_transitioning) {
         float t = transition_progress;

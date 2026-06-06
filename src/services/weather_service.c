@@ -13,6 +13,7 @@
 #include "ntp_service.h"
 #include "../config/sys_config.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
 #include "esp_littlefs.h"
@@ -39,7 +40,7 @@ static char* s_http_buffer = NULL;
 static int s_http_buffer_len = 0;
 
 // Helper macros
-#define LOCK()   if (s_mutex) xSemaphoreTake(s_mutex, portMAX_DELAY)
+#define LOCK()   do { if (s_mutex && xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) { ESP_LOGW(TAG, "Mutex timeout"); } } while(0)
 #define UNLOCK() if (s_mutex) xSemaphoreGive(s_mutex)
 
 // IANA to POSIX timezone mapping (top 50 common zones, ~3KB)
@@ -257,7 +258,9 @@ static weather_err_t _fetch_weather(const weather_location_t* loc, weather_curre
 }
 
 static void _save_to_cache(const weather_location_t* loc, const weather_current_t* wx) {
-    FILE* f = fopen(WEATHER_CONFIG_PATH, "w");
+    char tmp_path[64];
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", WEATHER_CONFIG_PATH);
+    FILE* f = fopen(tmp_path, "w");
     if (!f) {
         ESP_LOGW(TAG, "Failed to open cache file for writing");
         return;
@@ -284,6 +287,7 @@ static void _save_to_cache(const weather_location_t* loc, const weather_current_
     }
     cJSON_Delete(root);
     fclose(f);
+    rename(tmp_path, WEATHER_CONFIG_PATH);
     
     ESP_LOGI(TAG, "Weather cached to %s", WEATHER_CONFIG_PATH);
 }
@@ -301,7 +305,7 @@ static bool _load_from_cache(weather_location_t* loc, weather_current_t* wx, int
         return false;
     }
     
-    char* buffer = malloc(fsize + 1);
+    char* buffer = heap_caps_malloc(fsize + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buffer) {
         fclose(f);
         return false;

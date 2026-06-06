@@ -66,7 +66,9 @@ static char s_ota_id_buf[32] = {0};  // Stable buffer for ID passed to OTA task
 
 static void _hs_lock(void) {
     if (hs_mutex) {
-        xSemaphoreTake(hs_mutex, portMAX_DELAY);
+        if (xSemaphoreTake(hs_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+            ESP_LOGW(TAG, "Mutex timeout");
+        }
     }
 }
 
@@ -193,7 +195,7 @@ static void _cloud_fetch_task(void *pvParameters) {
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
     
-    char *buffer = heap_caps_malloc(16 * 1024, MALLOC_CAP_SPIRAM);
+    char *buffer = heap_caps_malloc(16 * 1024, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buffer) {
         ESP_LOGE(TAG, "Failed to alloc 16KB SPIRAM buffer for catalog");
         esp_http_client_cleanup(client);
@@ -384,7 +386,7 @@ static void _ota_download_task(void *pvParameters) {
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
     
-    char *buffer = heap_caps_malloc(DL_CHUNK_SIZE, MALLOC_CAP_SPIRAM);
+    char *buffer = heap_caps_malloc(DL_CHUNK_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buffer) {
         _hs_status_set_error(HACK_STORE_ERR_FLASHING);
         esp_http_client_cleanup(client);

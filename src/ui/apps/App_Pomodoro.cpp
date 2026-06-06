@@ -83,9 +83,9 @@ void App_Pomodoro::_format_time(uint32_t seconds, char* buf, size_t sz) {
 
 uint16_t App_Pomodoro::_session_color(pomo_session_type_t type) {
     switch (type) {
-        case POMO_SESSION_FOCUS:       return lgfx::v1::color565(255, 100, 100);  // Red
-        case POMO_SESSION_SHORT_BREAK: return lgfx::v1::color565(100, 255, 150);  // Green
-        case POMO_SESSION_LONG_BREAK:  return lgfx::v1::color565(100, 150, 255);  // Blue
+        case POMO_SESSION_FOCUS:       return theme_get_fail();
+        case POMO_SESSION_SHORT_BREAK: return theme_get_success();
+        case POMO_SESSION_LONG_BREAK:  return theme_get_accent();
         default: return theme_get_accent();
     }
 }
@@ -155,9 +155,7 @@ void App_Pomodoro::loop() {
         _completion_anim = 0;
     }
     
-    // Layout cache
-    _w = 160;
-    _h = 128;
+    // Layout cache — set from canvas in render()
     _cx = _w / 2;
     _cy = _h / 2;
 }
@@ -290,7 +288,7 @@ void App_Pomodoro::_draw_circular_progress(LGFX_Sprite* canvas, int cx, int cy, 
             int px = cx + (int)(radius * cosf(angle_rad));
             int py = cy + (int)(radius * sinf(angle_rad));
             canvas->fillCircle(px, py, 2, session_col);
-            canvas->fillCircle(px, py, 1, canvas->color565(255, 255, 255));
+            canvas->fillCircle(px, py, 1, theme_get_text());
         }
     }
     
@@ -516,9 +514,9 @@ void App_Pomodoro::_render_mode_select(LGFX_Sprite* canvas) {
     canvas->drawString("Focus Mode", _cx, 6);
     
     // Horizontal carousel
-    int card_w = 68, card_h = 72;
+    int card_w = _w * 4 / 10, card_h = _h * 9 / 16;
     int center_x = _cx;
-    int start_y = 24;
+    int start_y = _h / 5 + 2;
     
     for (int i = 0; i < POMO_MODE_COUNT; i++) {
         float offset = (float)i - _mode_scroll_offset;
@@ -536,7 +534,7 @@ void App_Pomodoro::_render_mode_select(LGFX_Sprite* canvas) {
         int adj_y = start_y + (card_h - adj_h) / 2;
         
         // Shadow
-        if (sel) canvas->fillRoundRect(adj_x + 2, adj_y + 2, adj_w, adj_h, 8, canvas->color565(0,0,0));
+        if (sel) canvas->fillRoundRect(adj_x + 2, adj_y + 2, adj_w, adj_h, 8, theme_get_bg());
         
         // Card
         uint16_t bg = sel ? _blend_color(theme_get_bg(), theme_get_accent(), 0.92f) : _blend_color(theme_get_bg(), theme_get_accent(), 0.97f);
@@ -634,9 +632,9 @@ void App_Pomodoro::_render_stats(LGFX_Sprite* canvas) {
     canvas->drawString("STATISTICS", _cx, 4);
     
     // Separator
-    canvas->drawFastHLine(18, 14, _w - 36, _blend_color(theme_get_accent(), theme_get_bg(), 0.7f));
+    canvas->drawFastHLine(_w / 8, 14, _w - _w / 4, _blend_color(theme_get_accent(), theme_get_bg(), 0.7f));
     
-    int y = 20;
+    int y = _h / 6 + 2;
     
     // Total focus time (hours)
     uint32_t hours = _status.stats.total_focus_seconds / 3600;
@@ -696,7 +694,7 @@ void App_Pomodoro::_render_settings(LGFX_Sprite* canvas) {
     canvas->setTextDatum(textdatum_t::top_center);
     canvas->setTextColor(theme_get_accent());
     canvas->drawString("SETTINGS", _cx, 4);
-    canvas->drawFastHLine(20, 14, _w - 40, theme_get_accent());
+    canvas->drawFastHLine(_w / 8, 14, _w - _w / 4, theme_get_accent());
     
     const char* items[] = {
         "Auto Progress",
@@ -705,7 +703,7 @@ void App_Pomodoro::_render_settings(LGFX_Sprite* canvas) {
         "Clear All Stats"
     };
     
-    int y = 22;
+    int y = _h / 6 + 2;
     for (int i = 0; i < 4; i++) {
         bool sel = (i == _settings_cursor);
         
@@ -743,7 +741,7 @@ void App_Pomodoro::_render_skip_confirm(LGFX_Sprite* canvas) {
     
     // Dim overlay
     for (int y = 0; y < _h; y += 2) {
-        canvas->drawFastHLine(0, y, _w, _blend_color(theme_get_bg(), canvas->color565(0, 0, 0), 0.5f));
+        canvas->drawFastHLine(0, y, _w, _blend_color(theme_get_bg(), theme_get_text_dim(), 0.5f));
     }
     
     // Modal panel
@@ -752,10 +750,10 @@ void App_Pomodoro::_render_skip_confirm(LGFX_Sprite* canvas) {
     int panel_y = (_h - panel_h) / 2;
     
     // Shadow
-    canvas->fillRoundRect(panel_x + 2, panel_y + 2, panel_w, panel_h, 8, canvas->color565(0, 0, 0));
+    canvas->fillRoundRect(panel_x + 2, panel_y + 2, panel_w, panel_h, 8, theme_get_bg());
     
     // Panel background
-    uint16_t panel_bg = _blend_color(theme_get_bg(), canvas->color565(15, 15, 25), 0.95f);
+    uint16_t panel_bg = _blend_color(theme_get_bg(), theme_get_text_dim(), 0.15f);
     canvas->fillRoundRect(panel_x, panel_y, panel_w, panel_h, 8, panel_bg);
     
     // Double border
@@ -799,6 +797,12 @@ void App_Pomodoro::_render_skip_confirm(LGFX_Sprite* canvas) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void App_Pomodoro::render(LGFX_Sprite* canvas) {
+    // Update dimensions from actual canvas for resolution independence
+    _w = canvas->width();
+    _h = canvas->height();
+    _cx = _w / 2;
+    _cy = _h / 2;
+
     if (_transitioning) {
         // Slide transition effect
         float t = _transition_progress;

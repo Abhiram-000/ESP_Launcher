@@ -1,7 +1,7 @@
 #include "App_Grid.h"
 #include "../theme_mgr.h"
 #include "../../platform/board.h"
-#include "../../hal/hal_gpio.h"
+#include "../../managers/input_mgr.h"
 #include "esp_log.h"
 #include <math.h>
 #include <string.h>
@@ -11,16 +11,7 @@ extern void switch_to_app(IApp* app);
 static const char* TAG = "APP_GRID";
 
 static bool _is_btn_physically_held(input_event_t btn) {
-    gpio_num_t pin;
-    switch (btn) {
-        case BTN_UP:     pin = (gpio_num_t)LAUNCHER_PIN_UP; break;
-        case BTN_DOWN:   pin = (gpio_num_t)LAUNCHER_PIN_DOWN; break;
-        case BTN_LEFT:   pin = (gpio_num_t)LAUNCHER_PIN_LEFT; break;
-        case BTN_RIGHT:  pin = (gpio_num_t)LAUNCHER_PIN_RIGHT; break;
-        case BTN_SELECT: pin = (gpio_num_t)LAUNCHER_PIN_SELECT; break;
-        default: return false;
-    }
-    return hal_gpio_get_level(pin) == 0;
+    return input_mgr_is_button_held(btn);
 }
 
 App_Grid::App_Grid() : app_count(0), selected_index(0),
@@ -264,7 +255,7 @@ void App_Grid::render(LGFX_Sprite* canvas) {
                 canvas->pushImage(x, y, 32, 32, apps[app_idx].cached_icon32);
             }
         } else {
-            canvas->fillRect(x, y, 32, 32, canvas->color565(30, 40, 50));
+            canvas->fillRect(x, y, 32, 32, theme_get_text_dim());
         }
         
         if (app_idx == selected_index) {

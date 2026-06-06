@@ -27,7 +27,9 @@ static bool s_scan_done = false;
 static SemaphoreHandle_t s_mutex = NULL;
 
 static void _lock(void) {
-    if (s_mutex) xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (s_mutex && xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+    }
 }
 
 static void _unlock(void) {

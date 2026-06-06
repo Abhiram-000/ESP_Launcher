@@ -8,6 +8,9 @@
  */
 
 #include "hal_display.h"
+#include "esp_log.h"
+
+static const char* TAG __attribute__((unused)) = "HAL_DISP";
 #include "hal_spi.h"
 #include "hal_gpio.h"
 #include "driver/ledc.h"

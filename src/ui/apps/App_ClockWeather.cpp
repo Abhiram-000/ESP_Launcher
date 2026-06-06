@@ -140,11 +140,10 @@ void App_ClockWeather::handleInput(input_event_t event) {
             if (_settings_cursor == 0) {
                 // Change location via keyboard
                 _keyboard_active = true;
-                _keyboard.begin(
+                    _keyboard.begin(
                     "City Name:",
                     [this](const char* city) {
                         ESP_LOGI(TAG, "User entered city: %s", city);
-                        // TODO: geocode city name and set location
                         this->_keyboard_active = false;
                     },
                     [this]() {
@@ -256,8 +255,8 @@ void App_ClockWeather::_draw_date_small(LGFX_Sprite* canvas, int cx, int cy) {
 void App_ClockWeather::_draw_weather_panel(LGFX_Sprite* canvas) {
     if (!_weather_has_data) return;
     
-    int panel_y = 70;
-    int panel_h = 40;
+    int panel_y = _h - 54;
+    int panel_h = _h / 3;
     
     // Beautiful rounded panel with gradient
     uint16_t panel_bg = _blend_color(theme_get_bg(), theme_get_accent(), 0.12f);
@@ -269,7 +268,7 @@ void App_ClockWeather::_draw_weather_panel(LGFX_Sprite* canvas) {
     
     // Draw a simple cloud icon (box-based, not emoji)
     uint16_t icon_color = _blend_color(theme_get_accent(), theme_get_text(), 0.7f);
-    int cloud_x = 16;
+    int cloud_x = _w / 10;
     int cloud_y = panel_y + 18 + (int)_weather_icon_bounce;
     
     // Draw cloud shape with circles
@@ -279,7 +278,7 @@ void App_ClockWeather::_draw_weather_panel(LGFX_Sprite* canvas) {
     canvas->fillRect(cloud_x - 4, cloud_y, 12, 5, icon_color);
     
     // RIGHT SIDE - Perfectly spaced in 3 rows
-    int right_start_x = 38;
+    int right_start_x = _w / 4 + 2;
     
     // ROW 1 (TOP): Temperature with degree dot - NO GAP before C
     char temp_buf[8];
@@ -372,14 +371,14 @@ void App_ClockWeather::_draw_clock_screen(LGFX_Sprite* canvas) {
         canvas->setFont(&fonts::Font0);
         canvas->setTextDatum(textdatum_t::top_center);
         canvas->setTextColor(theme_get_accent());
-        canvas->drawString(_city_name, _cx, 14);
+        canvas->drawString(_city_name, _cx, _h / 9);
     }
     
     // Large clock display (center)
-    _draw_time_large(canvas, _cx, 32);
+    _draw_time_large(canvas, _cx, _h / 4);
     
     // Date (below clock)
-    _draw_date_small(canvas, _cx, 58);
+    _draw_date_small(canvas, _cx, _h / 2 - 6);
     
     // Weather panel (bottom)
     _draw_weather_panel(canvas);
@@ -403,8 +402,8 @@ void App_ClockWeather::_draw_settings_screen(LGFX_Sprite* canvas) {
     
     // Menu items
     const char* items[] = {"Change Location", "Refresh Weather", "Back to Clock"};
-    int item_y = 24;
-    int item_h = 20;
+    int item_y = _h / 5 + 2;
+    int item_h = _h / 6 + 2;
     
     for (int i = 0; i < 3; i++) {
         bool selected = (i == _settings_cursor);
@@ -425,9 +424,9 @@ void App_ClockWeather::_draw_settings_screen(LGFX_Sprite* canvas) {
     canvas->setFont(&fonts::Font0);
     canvas->setTextDatum(textdatum_t::top_left);
     canvas->setTextColor(theme_get_text_dim());
-    canvas->drawString("Current:", 8, 88);
+    canvas->drawString("Current:", 8, _h - 36);
     canvas->setTextColor(theme_get_text());
-    canvas->drawString(_city_name, 8, 98);
+    canvas->drawString(_city_name, 8, _h - 26);
     
     // Footer
     canvas->setTextDatum(textdatum_t::bottom_center);
@@ -436,6 +435,11 @@ void App_ClockWeather::_draw_settings_screen(LGFX_Sprite* canvas) {
 }
 
 void App_ClockWeather::render(LGFX_Sprite* canvas) {
+    // Update dimensions from actual canvas for resolution independence
+    _w = canvas->width();
+    _h = canvas->height();
+    _cx = _w / 2;
+
     if (_keyboard_active) {
         // Draw base screen first
         if (_screen == SCREEN_CLOCK) {

@@ -1,5 +1,8 @@
 #include "hal_spi.h"
 #include <string.h>
+#include "esp_log.h"
+
+static const char* TAG __attribute__((unused)) = "HAL_SPI";
 
 esp_err_t hal_spi_bus_init(const hal_spi_bus_config_t* config) {
     spi_bus_config_t bus_cfg = {

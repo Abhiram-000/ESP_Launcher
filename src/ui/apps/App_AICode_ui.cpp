@@ -10,12 +10,15 @@
 #include "../../services/lua_engine.h"
 #include "../../services/llm_client.h"
 #include "../../services/wifi_mgr.h"
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <sys/stat.h>
 #include <dirent.h>
 #include <math.h>
 #include <string.h>
+
+static const char* TAG = "App_AICode_ui";
 
 extern void switch_to_grid();
 
@@ -163,10 +166,13 @@ void App_AICode::draw_chat(LGFX_Sprite* c) {
     std::string chat_display;
     bool llm_busy = _llm_busy;
     if (_state_mutex) {
-        xSemaphoreTake(_state_mutex, portMAX_DELAY);
-        chat_display = _chat_display;
-        llm_busy = _llm_busy;
-        xSemaphoreGive(_state_mutex);
+        if (xSemaphoreTake(_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            chat_display = _chat_display;
+            llm_busy = _llm_busy;
+            xSemaphoreGive(_state_mutex);
+        } else {
+            ESP_LOGW(TAG, "draw_chat: mutex timeout");
+        }
     } else {
         chat_display = _chat_display;
     }
@@ -255,9 +261,12 @@ void App_AICode::draw_lua_running(LGFX_Sprite* c) {
 void App_AICode::draw_lua_result(LGFX_Sprite* c) {
     lua_engine_result_t lua_result = _lua_result;
     if (_state_mutex) {
-        xSemaphoreTake(_state_mutex, portMAX_DELAY);
-        lua_result = _lua_result;
-        xSemaphoreGive(_state_mutex);
+        if (xSemaphoreTake(_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            lua_result = _lua_result;
+            xSemaphoreGive(_state_mutex);
+        } else {
+            ESP_LOGW(TAG, "draw_lua_result: mutex timeout");
+        }
     }
     bool ok = lua_result.status == LUA_ENGINE_OK;
     draw_header(c, ok ? "SCRIPT OK" : "SCRIPT ERROR");
@@ -334,10 +343,13 @@ void App_AICode::_refresh_scripts() {
 
 void App_AICode::_save_ide_file() {
     std::string path = std::string(AI_SCRIPTS_DIR "/") + _ide_filename;
-    FILE* f = fopen(path.c_str(), "w");
+    std::string tmp_path = path + ".tmp";
+    FILE* f = fopen(tmp_path.c_str(), "w");
     if (!f) return;
     fwrite(_ide_buf.c_str(), 1, _ide_buf.size(), f);
-    fclose(f); _ide_dirty = false;
+    fclose(f);
+    rename(tmp_path.c_str(), path.c_str());
+    _ide_dirty = false;
 }
 
 // LLM send runs on the AI worker task so the UI doesn't block
@@ -354,24 +366,32 @@ static void _llm_task(void* arg) {
 void App_AICode::_send_chat_message() {
     if (_chat_input.empty()) return;
     if (_state_mutex) {
-        xSemaphoreTake(_state_mutex, portMAX_DELAY);
-        if (_llm_busy) {
+        if (xSemaphoreTake(_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            if (_llm_busy) {
+                xSemaphoreGive(_state_mutex);
+                return;
+            }
+            _chat_display += "\n[You] " + _chat_input + "\n[AI] ";
+            _llm_busy = true;
+            _llm_done = false;
             xSemaphoreGive(_state_mutex);
+        } else {
+            ESP_LOGW(TAG, "_send_chat_message: mutex timeout");
             return;
         }
-        _chat_display += "\n[You] " + _chat_input + "\n[AI] ";
-        _llm_busy = true;
-        _llm_done = false;
-        xSemaphoreGive(_state_mutex);
     } else if (_llm_busy) {
         return;
     }
     auto* args = new _LLMSendArgs{};
     if (!args) {
         if (_state_mutex) {
-            xSemaphoreTake(_state_mutex, portMAX_DELAY);
-            _llm_busy = false;
-            xSemaphoreGive(_state_mutex);
+            if (xSemaphoreTake(_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                _llm_busy = false;
+                xSemaphoreGive(_state_mutex);
+            } else {
+                ESP_LOGW(TAG, "_send_chat_message alloc fail: mutex timeout");
+                _llm_busy = false;
+            }
         } else {
             _llm_busy = false;
         }
@@ -385,10 +405,15 @@ void App_AICode::_send_chat_message() {
     if (rc != pdPASS) {
         delete args;
         if (_state_mutex) {
-            xSemaphoreTake(_state_mutex, portMAX_DELAY);
-            _llm_busy = false;
-            _llm_done = true;
-            xSemaphoreGive(_state_mutex);
+            if (xSemaphoreTake(_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                _llm_busy = false;
+                _llm_done = true;
+                xSemaphoreGive(_state_mutex);
+            } else {
+                ESP_LOGW(TAG, "_send_chat_message task fail: mutex timeout");
+                _llm_busy = false;
+                _llm_done = true;
+            }
         } else {
             _llm_busy = false;
             _llm_done = true;

@@ -1,5 +1,8 @@
 #include "pool_allocator.h"
 #include <string.h>
+#include "esp_log.h"
+
+static const char* TAG = "POOL_ALLOC";
 
 #define BITMAP_BYTE_COUNT(blocks) (((blocks) + 7) / 8)
 

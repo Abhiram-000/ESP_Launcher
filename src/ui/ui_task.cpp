@@ -19,6 +19,7 @@
 #include "apps/App_ClockWeather.h"
 #include "apps/App_Pomodoro.h"
 #include "theme_mgr.h"
+#include "../utils/color_utils.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "../services/idle_mgr.h"
@@ -73,6 +74,7 @@ static IApp* current_app = nullptr;
 static void _run_slide_transition(LGFX_Sprite* old_snap, LGFX_Sprite* new_snap) {
     const int SLIDE_FRAMES = 15;
     const int W = tft.width();
+    TickType_t last_wake = xTaskGetTickCount();
 
     for (int i = 1; i <= SLIDE_FRAMES; i++) {
         float t = (float)i / (float)SLIDE_FRAMES;
@@ -83,8 +85,8 @@ static void _run_slide_transition(LGFX_Sprite* old_snap, LGFX_Sprite* new_snap) 
         
         int offset = (int)(eased * (float)W);
 
-        // Clear canvas with black first to ensure no ghosting in edges
-        canvas.fillSprite(tft.color565(0, 0, 0));
+        // Clear canvas with background color first to ensure no ghosting in edges
+        canvas.fillSprite(theme_get_bg());
 
         // Parallax effect: old frame slides out at half speed drawn onto canvas (0-based Y offset)
         int old_x = -(offset / 2);
@@ -92,9 +94,11 @@ static void _run_slide_transition(LGFX_Sprite* old_snap, LGFX_Sprite* new_snap) 
         
         // Subtle edge shadow/separator drawn onto canvas
         if (offset < W && W - offset > 0) {
-            canvas.drawFastVLine(W - offset - 1, 0, canvas.height(), canvas.color565(30, 30, 30));
+            canvas.drawFastVLine(W - offset - 1, 0, canvas.height(),
+                color_blend(theme_get_bg(), theme_get_text_dim(), 0.4f));
             if (W - offset > 1) {
-                canvas.drawFastVLine(W - offset - 2, 0, canvas.height(), canvas.color565(15, 15, 15));
+                canvas.drawFastVLine(W - offset - 2, 0, canvas.height(),
+                    color_blend(theme_get_bg(), theme_get_text_dim(), 0.2f));
             }
         }
 
@@ -104,7 +108,7 @@ static void _run_slide_transition(LGFX_Sprite* old_snap, LGFX_Sprite* new_snap) 
         // Push the completely rendered composite canvas frame to physical display at -4 Y offset
         canvas.pushSprite(&tft, 0, -4);
 
-        vTaskDelay(pdMS_TO_TICKS(20)); // ~50fps logic update
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(20)); // ~50fps logic update
     }
 }
 
@@ -238,14 +242,19 @@ static void ui_task_runner(void *arg) {
             int w = canvas.width();
             int h = canvas.height();
 
-            int bw = 140, bh = 60;
-            int bx = (w - bw) / 2, by = (h - bh) / 2;
+            int bw = w * 7 / 8;
+            int bh = h / 2;
+            int bx = (w - bw) / 2;
+            int by = (h - bh) / 2;
 
-            canvas.fillRoundRect(bx, by, bw, bh, 8, canvas.color565(5, 5, 15));
+            canvas.fillRoundRect(bx, by, bw, bh, 8,
+                color_blend(theme_get_bg(), theme_get_text_dim(), 0.15f));
             canvas.drawRoundRect(bx, by, bw, bh, 8, theme_get_accent());
 
-            int bar_w = 6, bar_max_h = bh - 20;
-            int bar_x = bx + 12, bar_y = by + 10;
+            int bar_w = w / 27;
+            int bar_max_h = bh - 20;
+            int bar_x = bx + 12;
+            int bar_y = by + 10;
 
             canvas.drawRect(bar_x, bar_y, bar_w, bar_max_h, theme_get_text_dim());
 

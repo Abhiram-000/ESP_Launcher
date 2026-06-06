@@ -1,9 +1,12 @@
 #include "App_Torch.h"
 #include "../theme_mgr.h"
 #include "../../utils/color_utils.h"
-#include "../../drivers/led_driver.h"
+#include "../../services/led_service.h"
+#include "esp_log.h"
 #include <math.h>
 #include <stdio.h>
+
+static const char* TAG = "APP_TORCH";
 
 extern void switch_to_grid();
 
@@ -18,7 +21,7 @@ App_Torch::App_Torch() {
 App_Torch::~App_Torch() {}
 
 void App_Torch::init() {
-    led_driver_init();
+    led_service_init();
     current_mode = MODE_WHITE;
     led_on = false;
     anim_time = 0.0f;
@@ -28,7 +31,7 @@ void App_Torch::init() {
 }
 
 void App_Torch::exit() {
-    led_driver_off();
+    led_service_off();
 }
 
 void App_Torch::hsv_to_rgb(float h, float s, float v, uint8_t &r, uint8_t &g, uint8_t &b) {
@@ -61,29 +64,29 @@ void App_Torch::hsv_to_rgb(float h, float s, float v, uint8_t &r, uint8_t &g, ui
 
 void App_Torch::update_led() {
     if (!led_on) {
-        led_driver_off();
+        led_service_off();
         return;
     }
 
     if (current_mode == MODE_WHITE) {
-        led_driver_set_rgb(255, 255, 255);
+        led_service_set_rgb(255, 255, 255);
     } else if (current_mode == MODE_RED_BEACON) {
-        led_driver_set_rgb(255, 0, 0);
+        led_service_set_rgb(255, 0, 0);
     } else if (current_mode == MODE_GREEN_BEACON) {
-        led_driver_set_rgb(0, 255, 0);
+        led_service_set_rgb(0, 255, 0);
     } else if (current_mode == MODE_BLUE_BEACON) {
-        led_driver_set_rgb(0, 0, 255);
+        led_service_set_rgb(0, 0, 255);
     } else if (current_mode == MODE_RAINBOW) {
         uint8_t r, g, b;
         hsv_to_rgb(anim_time * 60.0f, 1.0f, 1.0f, r, g, b);
-        led_driver_set_rgb(r, g, b);
+        led_service_set_rgb(r, g, b);
     } else if (current_mode == MODE_CYBER_PULSE) {
         uint16_t acc = theme_get_accent();
         uint8_t r = (acc >> 11) & 0x1F;
         uint8_t g = (acc >> 5) & 0x3F;
         uint8_t b = acc & 0x1F;
         float intensity = (sinf(anim_time * 3.0f) + 1.0f) * 0.5f; 
-        led_driver_set_rgb((uint8_t)(r * 8.0f * intensity), 
+        led_service_set_rgb((uint8_t)(r * 8.0f * intensity), 
                            (uint8_t)(g * 4.0f * intensity), 
                            (uint8_t)(b * 8.0f * intensity));
     } else if (current_mode == MODE_SOS) {
@@ -95,15 +98,15 @@ void App_Torch::update_led() {
         else if (t >= 8.0f && t < 20.0f) light_on = (fmodf(t - 8.0f, 4.0f) < 3.0f); // 3 dashes
         else if (t >= 22.0f && t < 28.0f) light_on = (fmodf(t - 22.0f, 2.0f) < 1.0f); // 3 dots
         
-        if (light_on) led_driver_set_rgb(255, 255, 255);
-        else led_driver_set_rgb(0, 0, 0);
+        if (light_on) led_service_set_rgb(255, 255, 255);
+        else led_service_set_rgb(0, 0, 0);
     } else if (current_mode == MODE_APEX_SIGNAL) {
         // Track/Traffic racing signal light
         float t = fmodf(anim_time, 4.0f);
-        if (t < 1.0f) led_driver_set_rgb(255, 0, 0); // Red
-        else if (t < 2.0f) led_driver_set_rgb(255, 120, 0); // Amber
-        else if (t < 3.0f) led_driver_set_rgb(0, 255, 0); // Green
-        else led_driver_set_rgb(0, 0, 0); // Off step
+        if (t < 1.0f) led_service_set_rgb(255, 0, 0); // Red
+        else if (t < 2.0f) led_service_set_rgb(255, 120, 0); // Amber
+        else if (t < 3.0f) led_service_set_rgb(0, 255, 0); // Green
+        else led_service_set_rgb(0, 0, 0); // Off step
     }
 }
 
@@ -150,20 +153,23 @@ void App_Torch::render(LGFX_Sprite* canvas) {
     uint16_t bg = theme_get_bg();
     canvas->fillSprite(bg);
     
-    int cx = canvas->width() / 2;
-    int cy = canvas->height() / 2 - 18; // Shifted UP to prevent overlap
+    const int32_t W = canvas->width();
+    const int32_t H = canvas->height();
+    const int32_t MARGIN = W / 16;
+    int cx = W / 2;
+    int cy = H / 2 - H / 7;
     
     canvas->setFont(&fonts::Font0); // 6x8
     canvas->setTextColor(theme_get_text_dim());
     canvas->setTextDatum(textdatum_t::top_center);
-    canvas->drawString("- TORCH UI -", cx, 4);
+    canvas->drawString("- TORCH UI -", cx, H / 30);
 
     uint16_t orb_color = theme_get_text_dim(); 
     if (led_on) {
-        if (current_mode == MODE_WHITE) orb_color = canvas->color565(255, 255, 255);
-        else if (current_mode == MODE_RED_BEACON) orb_color = canvas->color565(255, 50, 50);
-        else if (current_mode == MODE_GREEN_BEACON) orb_color = canvas->color565(50, 255, 50);
-        else if (current_mode == MODE_BLUE_BEACON) orb_color = canvas->color565(50, 100, 255);
+        if (current_mode == MODE_WHITE) orb_color = theme_get_text();
+        else if (current_mode == MODE_RED_BEACON) orb_color = theme_get_fail();
+        else if (current_mode == MODE_GREEN_BEACON) orb_color = theme_get_success();
+        else if (current_mode == MODE_BLUE_BEACON) orb_color = theme_get_accent();
         else if (current_mode == MODE_RAINBOW) {
             uint8_t r, g, b;
             hsv_to_rgb(anim_time * 60.0f, 1.0f, 1.0f, r, g, b);
@@ -179,13 +185,13 @@ void App_Torch::render(LGFX_Sprite* canvas) {
             if (t < 6.0f) on = (fmodf(t, 2.0f) < 1.0f);
             else if (t >= 8.0f && t < 20.0f) on = (fmodf(t - 8.0f, 4.0f) < 3.0f);
             else if (t >= 22.0f && t < 28.0f) on = (fmodf(t - 22.0f, 2.0f) < 1.0f);
-            orb_color = on ? canvas->color565(255, 255, 255) : theme_get_text_dim();
+            orb_color = on ? theme_get_text() : theme_get_text_dim();
         }
         else if (current_mode == MODE_APEX_SIGNAL) {
             float t = fmodf(anim_time, 4.0f);
-            if (t < 1.0f) orb_color = canvas->color565(255, 0, 0); // Red
-            else if (t < 2.0f) orb_color = canvas->color565(255, 120, 0); // Amber
-            else if (t < 3.0f) orb_color = canvas->color565(0, 255, 0); // Green
+            if (t < 1.0f) orb_color = theme_get_fail();
+            else if (t < 2.0f) orb_color = theme_get_accent();
+            else if (t < 3.0f) orb_color = theme_get_success();
             else orb_color = theme_get_text_dim();
         }
     }
@@ -199,13 +205,13 @@ void App_Torch::render(LGFX_Sprite* canvas) {
     }
     
     canvas->fillCircle(cx, cy, (int)dynamic_r, color_blend(orb_color, bg, led_on ? 0.9f : 0.3f));
-    canvas->drawCircle(cx, cy, (int)dynamic_r, led_on ? 0xFFFF : theme_get_text_dim());
+    canvas->drawCircle(cx, cy, (int)dynamic_r, led_on ? theme_get_text() : theme_get_text_dim());
     
     // 3D Glass Highlight
-    canvas->fillCircle(cx - (int)(dynamic_r * 0.3f), cy - (int)(dynamic_r * 0.3f), (int)(dynamic_r * 0.3f), color_blend(0xFFFF, orb_color, led_on ? 0.6f : 0.2f));
+    canvas->fillCircle(cx - (int)(dynamic_r * 0.3f), cy - (int)(dynamic_r * 0.3f), (int)(dynamic_r * 0.3f), color_blend(theme_get_text(), orb_color, led_on ? 0.6f : 0.2f));
 
     // Mode Label
-    int label_y = cy + 36;
+    int label_y = cy + H / 4;
     const char* mode_names[] = {
         "WHITE", "RED BCN", "GRN BCN", "BLU BCN", "RAINBOW", "CYBER", "SOS ALERT", "APEX R5"
     };
@@ -213,21 +219,21 @@ void App_Torch::render(LGFX_Sprite* canvas) {
     // Bouncing arrows
     int bounce = (int)(2.0f * sinf(anim_time * 5.0f));
     canvas->setTextColor(theme_get_accent());
-    canvas->drawString("<", 12 - bounce, label_y);
-    canvas->drawString(">", canvas->width() - 12 + bounce, label_y);
+    canvas->drawString("<", MARGIN - bounce, label_y);
+    canvas->drawString(">", W - MARGIN + bounce, label_y);
     
     canvas->setTextColor(led_on ? theme_get_text() : theme_get_text_dim());
     canvas->drawString(mode_names[current_mode], cx + (int)transition_val, label_y);
 
     // Pill UI element
-    int pill_w = 40;
-    int pill_h = 12;
+    int pill_w = W / 4;
+    int pill_h = H / 11;
     int pill_x = cx - pill_w/2;
-    int pill_y = label_y + 12;
+    int pill_y = label_y + H / 10;
     uint16_t pill_bg = led_on ? theme_get_success() : color_blend(theme_get_text_dim(), bg, 0.3f);
     
     canvas->fillRoundRect(pill_x, pill_y, pill_w, pill_h, 6, pill_bg);
-    canvas->setTextColor(led_on ? 0x0000 : theme_get_text()); 
+    canvas->setTextColor(led_on ? theme_get_bg() : theme_get_text()); 
     canvas->setTextDatum(textdatum_t::middle_center);
     canvas->drawString(led_on ? "ON" : "OFF", cx, pill_y + pill_h/2);
 

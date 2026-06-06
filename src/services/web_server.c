@@ -32,6 +32,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_system.h"
 #include "esp_chip_info.h"
 #include "esp_flash.h"
@@ -343,7 +344,7 @@ static bool _web_llm_chunk(const char* token, size_t len, void* user) {
     }
     esc[j] = '\0';
 
-    char chunk[1024];
+    static char chunk[1024];
     int n = snprintf(chunk, sizeof(chunk), "data: {\"token\":\"%s\"}\n\n", esc);
     free(esc);
 
@@ -397,7 +398,7 @@ static esp_err_t chat_send_get_handler(httpd_req_t *req) {
  * GET /chat/ide/files — Lists all script files in the LittleFS scripts dir
  * -------------------------------------------------------------------------- */
 static esp_err_t chat_ide_files_get_handler(httpd_req_t *req) {
-    char* json = malloc(2048);
+    char* json = heap_caps_malloc(2048, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!json) {
         return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
     }
@@ -456,7 +457,7 @@ static esp_err_t chat_ide_load_get_handler(httpd_req_t *req) {
         return _send_json_error(req, HTTPD_404_NOT_FOUND, "File not found");
     }
 
-    char* buf = malloc(4096);
+    char* buf = heap_caps_malloc(4096, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buf) {
         fclose(f);
         return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
@@ -477,7 +478,7 @@ static esp_err_t chat_ide_load_get_handler(httpd_req_t *req) {
  * -------------------------------------------------------------------------- */
 static esp_err_t chat_ide_save_post_handler(httpd_req_t *req) {
     int total_len = req->content_len;
-    char* buf = malloc(total_len + 1);
+    char* buf = heap_caps_malloc(total_len + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buf) {
         return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
     }
@@ -496,8 +497,8 @@ static esp_err_t chat_ide_save_post_handler(httpd_req_t *req) {
     char file[64] = {};
     httpd_query_key_value(buf, "file", file, sizeof(file));
 
-    char* code_enc = malloc(total_len + 1);
-    char* code = malloc(total_len + 1);
+    char* code_enc = heap_caps_malloc(total_len + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    char* code = heap_caps_malloc(total_len + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!code_enc || !code) {
         free(code_enc);
         free(code);
@@ -534,11 +535,14 @@ static esp_err_t chat_ide_save_post_handler(httpd_req_t *req) {
     }
 
     char path[128];
+    char tmp_path[136];
     snprintf(path, sizeof(path), "%s/%s", AI_SCRIPTS_DIR, file);
-    FILE* f = fopen(path, "w");
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
+    FILE* f = fopen(tmp_path, "w");
     if (f) {
         fwrite(code, 1, strlen(code), f);
         fclose(f);
+        rename(tmp_path, path);
     }
     free(code);
 
@@ -574,7 +578,7 @@ static esp_err_t chat_ide_run_get_handler(httpd_req_t *req) {
 
     const char* raw_logs = lua_engine_get_logs();
     size_t logs_len = strlen(raw_logs);
-    char* esc_logs = malloc(logs_len * 2 + 1);
+    char* esc_logs = heap_caps_malloc(logs_len * 2 + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!esc_logs) {
         return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
     }
@@ -595,7 +599,7 @@ static esp_err_t chat_ide_run_get_handler(httpd_req_t *req) {
     }
     esc_logs[j] = '\0';
 
-    char* json = malloc(logs_len * 2 + 512);
+    char* json = heap_caps_malloc(logs_len * 2 + 512, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!json) {
         free(esc_logs);
         return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");

@@ -3,6 +3,9 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include <LovyanGFX.hpp>
+#include "esp_log.h"
+
+static const char* TAG = "THEME";
 
 typedef struct {
     uint16_t bg;

@@ -1,4 +1,7 @@
 #include "hal_gpio.h"
+#include "esp_log.h"
+
+static const char* TAG __attribute__((unused)) = "HAL_GPIO";
 
 static bool s_isr_service_installed = false;
 

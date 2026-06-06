@@ -134,7 +134,10 @@ static void _check_daily_reset(void) {
 
 static void _record_session_complete(bool already_locked) {
     if (!already_locked) {
-        xSemaphoreTake(s_mutex, portMAX_DELAY);
+        if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+            ESP_LOGW(TAG, "Mutex timeout");
+            return;
+        }
     }
     
     if (s_timer.session_type == POMO_SESSION_FOCUS) {
@@ -236,7 +239,10 @@ pomo_err_t pomodoro_start_session(pomo_mode_t mode, pomo_session_type_t session_
     if (!s_initialized) return POMO_ERR_NOT_INIT;
     if (mode >= POMO_MODE_COUNT) return POMO_ERR_INVALID_ARG;
     
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return POMO_ERR_NOT_INIT;
+    }
     _check_daily_reset();
     _start_session_internal(mode, session_type);
     xSemaphoreGive(s_mutex);
@@ -250,7 +256,10 @@ pomo_err_t pomodoro_start_session(pomo_mode_t mode, pomo_session_type_t session_
 pomo_err_t pomodoro_pause(void) {
     if (!s_initialized) return POMO_ERR_NOT_INIT;
     
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return POMO_ERR_NOT_INIT;
+    }
     if (s_timer.state == POMO_STATE_RUNNING) {
         s_timer.state = POMO_STATE_PAUSED;
         ESP_LOGI(TAG, "Timer paused");
@@ -262,7 +271,10 @@ pomo_err_t pomodoro_pause(void) {
 pomo_err_t pomodoro_resume(void) {
     if (!s_initialized) return POMO_ERR_NOT_INIT;
     
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return POMO_ERR_NOT_INIT;
+    }
     if (s_timer.state == POMO_STATE_PAUSED) {
         s_timer.state = POMO_STATE_RUNNING;
         s_timer.last_update_us = _get_time_us();
@@ -275,7 +287,10 @@ pomo_err_t pomodoro_resume(void) {
 pomo_err_t pomodoro_skip(void) {
     if (!s_initialized) return POMO_ERR_NOT_INIT;
     
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return POMO_ERR_NOT_INIT;
+    }
     if (s_timer.state == POMO_STATE_IDLE) {
         xSemaphoreGive(s_mutex);
         return POMO_ERR_INVALID_ARG;
@@ -296,7 +311,10 @@ pomo_err_t pomodoro_skip(void) {
 pomo_err_t pomodoro_stop(void) {
     if (!s_initialized) return POMO_ERR_NOT_INIT;
     
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return POMO_ERR_NOT_INIT;
+    }
     s_timer.state = POMO_STATE_IDLE;
     s_timer.remaining_seconds = 0;
     s_timer.cycles_completed = 0;
@@ -309,7 +327,10 @@ pomo_err_t pomodoro_stop(void) {
 pomo_err_t pomodoro_adjust_time(int32_t delta_seconds) {
     if (!s_initialized) return POMO_ERR_NOT_INIT;
     
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return POMO_ERR_NOT_INIT;
+    }
     if (s_timer.state == POMO_STATE_IDLE) {
         xSemaphoreGive(s_mutex);
         return POMO_ERR_INVALID_ARG;
@@ -327,7 +348,10 @@ pomo_err_t pomodoro_adjust_time(int32_t delta_seconds) {
 pomo_err_t pomodoro_set_auto_progress(bool enabled) {
     if (!s_initialized) return POMO_ERR_NOT_INIT;
     
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return POMO_ERR_NOT_INIT;
+    }
     s_timer.auto_progress = enabled;
     xSemaphoreGive(s_mutex);
     
@@ -338,7 +362,10 @@ pomo_err_t pomodoro_set_auto_progress(bool enabled) {
 void pomodoro_get_mode_config(pomo_mode_t mode, pomo_mode_config_t* out) {
     if (!out || mode >= POMO_MODE_COUNT) return;
     
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return;
+    }
     if (mode == POMO_MODE_CUSTOM) {
         *out = s_custom_config;
     } else {
@@ -350,7 +377,10 @@ void pomodoro_get_mode_config(pomo_mode_t mode, pomo_mode_config_t* out) {
 pomo_err_t pomodoro_set_custom_config(const pomo_mode_config_t* config) {
     if (!s_initialized || !config) return POMO_ERR_INVALID_ARG;
     
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return POMO_ERR_NOT_INIT;
+    }
     s_custom_config = *config;
     _save_custom_config_to_nvs();
     xSemaphoreGive(s_mutex);
@@ -364,7 +394,10 @@ pomo_err_t pomodoro_set_custom_config(const pomo_mode_config_t* config) {
 void pomodoro_get_status(pomo_status_t* out) {
     if (!out) return;
     
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return;
+    }
     
     // Update timer if running
     if (s_timer.state == POMO_STATE_RUNNING) {
@@ -406,7 +439,10 @@ void pomodoro_get_status(pomo_status_t* out) {
 pomo_err_t pomodoro_reset_daily_stats(void) {
     if (!s_initialized) return POMO_ERR_NOT_INIT;
     
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return POMO_ERR_NOT_INIT;
+    }
     s_stats.sessions_today = 0;
     time(&s_stats.last_reset_date);
     _save_stats_to_nvs();
@@ -419,7 +455,10 @@ pomo_err_t pomodoro_reset_daily_stats(void) {
 pomo_err_t pomodoro_clear_all_stats(void) {
     if (!s_initialized) return POMO_ERR_NOT_INIT;
     
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "Mutex timeout");
+        return POMO_ERR_NOT_INIT;
+    }
     memset(&s_stats, 0, sizeof(s_stats));
     _save_stats_to_nvs();
     xSemaphoreGive(s_mutex);

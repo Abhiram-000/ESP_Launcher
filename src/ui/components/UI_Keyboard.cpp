@@ -178,11 +178,11 @@ void UI_Keyboard::render(LGFX_Sprite* canvas) {
     uint16_t dim    = theme_get_text_dim();
 
     // ── Full-screen dark overlay ───────────────────────────────────
-    canvas->fillRect(0, 0, 160, 128, color_blend(bg, 0x0000, 0.93f));
+    canvas->fillRect(0, 0, canvas->width(), canvas->height(), color_blend(bg, 0x0000, 0.93f));
 
     // ── Title bar ──────────────────────────────────────────────────
-    canvas->fillRect(0, 0, 160, 14, color_blend(bg, 0x0000, 0.93f));
-    canvas->drawFastHLine(0, 14, 160, accent);
+    canvas->fillRect(0, 0, canvas->width(), 14, color_blend(bg, 0x0000, 0.93f));
+    canvas->drawFastHLine(0, 14, canvas->width(), accent);
     canvas->setFont(&fonts::Font0);
     canvas->setTextDatum(textdatum_t::middle_left);
     canvas->setTextColor(accent);
@@ -190,12 +190,12 @@ void UI_Keyboard::render(LGFX_Sprite* canvas) {
 
     canvas->setTextDatum(textdatum_t::middle_right);
     canvas->setTextColor(dim);
-    if (_mode == 0)      canvas->drawString("abc", 156, 7);
-    else if (_mode == 1) canvas->drawString("ABC", 156, 7);
-    else                 canvas->drawString("123", 156, 7);
+    if (_mode == 0)      canvas->drawString("abc", canvas->width() - 4, 7);
+    else if (_mode == 1) canvas->drawString("ABC", canvas->width() - 4, 7);
+    else                 canvas->drawString("123", canvas->width() - 4, 7);
 
     // ── Text input box ─────────────────────────────────────────────
-    int box_x = 2, box_y = 18, box_w = 156, box_h = 16;
+    int box_x = 2, box_y = 18, box_w = canvas->width() - 4, box_h = 16;
     canvas->drawRoundRect(box_x, box_y, box_w, box_h, 3, dim);
 
     char vis[27];
@@ -230,7 +230,7 @@ void UI_Keyboard::render(LGFX_Sprite* canvas) {
     const int key_h = 14;  // Slightly taller
     const int gap   = 1;
     const int grid_w = COLS * key_w + (COLS - 1) * gap;
-    const int grid_x = (160 - grid_w) / 2;
+    const int grid_x = (canvas->width() - grid_w) / 2;
     const int grid_y = 44;
 
     for (int row = 0; row < ROWS; row++) {
@@ -279,19 +279,19 @@ void UI_Keyboard::render(LGFX_Sprite* canvas) {
 
             if (is_sel) {
                 if (is_ok) {
-                    k_bg = canvas->color565(80, 220, 100);
+                    k_bg = theme_get_success();
                     k_fg = bg;
                 } else if (is_bk) {
-                    k_bg = canvas->color565(220, 70, 70);
+                    k_bg = theme_get_fail();
                     k_fg = bg;
                 } else if (is_cl) {
-                    k_bg = canvas->color565(220, 70, 70);
+                    k_bg = theme_get_fail();
                     k_fg = bg;
                 } else if (is_caps) {
-                    k_bg = (_mode == 1) ? canvas->color565(100, 180, 255) : accent;
+                    k_bg = (_mode == 1) ? theme_get_accent() : accent;
                     k_fg = bg;
                 } else if (is_sym) {
-                    k_bg = canvas->color565(180, 120, 255);
+                    k_bg = theme_get_accent();
                     k_fg = bg;
                 } else if (is_space) {
                     k_bg = accent;
@@ -303,9 +303,9 @@ void UI_Keyboard::render(LGFX_Sprite* canvas) {
                 k_border = k_bg;
             } else {
                 if (is_caps && _mode == 1)
-                    k_border = canvas->color565(100, 180, 255);
+                    k_border = theme_get_accent();
                 else if (is_sym && _mode == 2)
-                    k_border = canvas->color565(180, 120, 255);
+                    k_border = theme_get_accent();
             }
 
             canvas->drawRoundRect(px, py, pw, key_h, 2, k_border);
@@ -333,5 +333,5 @@ void UI_Keyboard::render(LGFX_Sprite* canvas) {
     canvas->setFont(&fonts::Font0);
     canvas->setTextDatum(textdatum_t::bottom_center);
     canvas->setTextColor(dim);
-    canvas->drawString("Move   Select   Hold BK Back", 80, 126);
+    canvas->drawString("Move   Select   Hold BK Back", canvas->width() / 2, canvas->height() - 2);
 }
