@@ -6,6 +6,7 @@
 #include "esp_system.h"
 #include "esp_chip_info.h"
 #include "esp_flash.h"
+#include "esp_sleep.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_log.h"
@@ -33,7 +34,7 @@ static const char* SLEEP_LABELS[] = {
 };
 
 #define SLEEP_OPTION_COUNT 5
-#define MENU_ITEMS 6
+#define MENU_ITEMS 7
 #define MENU_VISIBLE_ITEMS 3
 
 App_Settings::App_Settings() {
@@ -197,6 +198,7 @@ void App_Settings::handleInput(input_event_t event) {
                     }
                 );
             }
+            else if (menu_cursor == 6) _change_state(STATE_SHUTDOWN_CONFIRM);
         }
     } 
     else if (current_state == STATE_SYS_INFO) {
@@ -249,6 +251,20 @@ void App_Settings::handleInput(input_event_t event) {
             _change_state(STATE_MENU);
         }
     }
+    else if (current_state == STATE_SHUTDOWN_CONFIRM) {
+        if (event == BTN_LEFT) {
+            _change_state(STATE_MENU);
+        } else if (event == BTN_SELECT) {
+            // Graceful shutdown
+            ESP_LOGI(TAG, "Initiating graceful shutdown...");
+            
+            // Stop all services (services will handle cleanup internally)
+            // Services are designed to be gracefully stopped
+            
+            // Enter deep sleep (only hardware reset can wake)
+            esp_deep_sleep_start();
+        }
+    }
 }
 
 void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_offset) {
@@ -268,7 +284,8 @@ void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_o
             "LAUNCHER STYLE",
             "BRIGHTNESS",
             "SLEEP CONFIG",
-            "CONNECT WIFI"
+            "CONNECT WIFI",
+            "SHUTDOWN"
         };
         
         // Scrollable menu with visible window
@@ -570,6 +587,58 @@ void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_o
         canvas->setTextColor(theme_get_text_dim());
         canvas->setTextDatum(textdatum_t::bottom_center);
         canvas->drawString("L/R: Switch  SEL: Apply", cx, bar_y + 22);
+    } else if (state == STATE_SHUTDOWN_CONFIRM) {
+        canvas->setTextColor(accent);
+        canvas->setTextDatum(textdatum_t::top_center);
+        canvas->drawString("SHUTDOWN", cx, list_y);
+        list_y += 14;
+        
+        // Warning icon
+        float warning_pulse = 0.6f + 0.4f * sinf(anim_time * 6.0f);
+        canvas->setTextColor(color_blend(canvas->color565(255, 100, 80), accent, warning_pulse));
+        canvas->setFont(&fonts::Font2);
+        canvas->drawString("!", cx, list_y);
+        list_y += 14;
+        
+        // Compact warning message
+        canvas->setFont(&fonts::Font0);
+        canvas->setTextColor(theme_get_text());
+        canvas->setTextDatum(textdatum_t::top_center);
+        canvas->drawString("Deep sleep mode", cx, list_y);
+        list_y += 9;
+        canvas->setTextColor(theme_get_text_dim());
+        canvas->drawString("Only restart works", cx, list_y);
+        list_y += 14;
+        
+        // Action buttons
+        float pulse = 0.7f + 0.3f * sinf(anim_time * 4.0f);
+        
+        int btn_w = 46;
+        int btn_h = 16;
+        int btn_spacing = 6;
+        int cancel_x = cx - btn_w - btn_spacing/2;
+        int confirm_x = cx + btn_spacing/2;
+        int btn_y = list_y;
+        
+        // Cancel button
+        canvas->fillRoundRect(cancel_x, btn_y, btn_w, btn_h, 4, color_blend(theme_get_text_dim(), bg, 0.15f));
+        canvas->drawRoundRect(cancel_x, btn_y, btn_w, btn_h, 4, color_blend(theme_get_text_dim(), bg, 0.4f));
+        canvas->setTextColor(theme_get_text());
+        canvas->setTextDatum(textdatum_t::middle_center);
+        canvas->drawString("CANCEL", cancel_x + btn_w/2, btn_y + btn_h/2);
+        
+        // Confirm button with pulse
+        canvas->fillRoundRect(confirm_x - 1, btn_y - 1, btn_w + 2, btn_h + 2, 5, color_blend(canvas->color565(255, 80, 60), bg, 0.25f * pulse));
+        canvas->fillRoundRect(confirm_x, btn_y, btn_w, btn_h, 4, color_blend(canvas->color565(255, 80, 60), bg, 0.2f));
+        canvas->drawRoundRect(confirm_x, btn_y, btn_w, btn_h, 4, color_blend(canvas->color565(255, 120, 100), theme_get_text(), pulse));
+        canvas->setTextColor(theme_get_text());
+        canvas->drawString("OFF", confirm_x + btn_w/2, btn_y + btn_h/2);
+        
+        // Hint at bottom
+        canvas->setFont(&fonts::Font0);
+        canvas->setTextColor(theme_get_text_dim());
+        canvas->setTextDatum(textdatum_t::top_center);
+        canvas->drawString("L:Back SEL:Confirm", cx, btn_y + btn_h + 4);
     }
 }
 

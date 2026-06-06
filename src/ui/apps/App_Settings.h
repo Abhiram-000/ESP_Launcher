@@ -15,7 +15,8 @@ private:
         STATE_BRIGHTNESS,
         STATE_SLEEP_CONFIG,
         STATE_LAUNCHER_THEME,
-        STATE_WIFI_CONNECT
+        STATE_WIFI_CONNECT,
+        STATE_SHUTDOWN_CONFIRM
     };
 
     State current_state;
