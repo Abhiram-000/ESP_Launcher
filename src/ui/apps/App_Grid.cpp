@@ -17,7 +17,7 @@ static bool _is_btn_physically_held(input_event_t btn) {
     return input_mgr_is_button_held(btn);
 }
 
-App_Grid::App_Grid() : app_count(0), selected_index(0),
+App_Grid::App_Grid() : app_count(0), selected_index(0), _current_page(0),
     _current_scroll(0.0f), _target_scroll(0.0f),
     _held_btn(BTN_NONE), _held_delay(0), _held_repeat(0), _move_pending(false),
     _launcher_theme(LAUNCHER_CAROUSEL) {
@@ -105,34 +105,78 @@ void App_Grid::exit() {
 void App_Grid::_move(input_event_t dir) {
     if (app_count == 0) return;
 
-    if (dir == BTN_DOWN) {
-        if (selected_index < app_count - 1) selected_index++;
-        else selected_index = 0;
-    }
-    else if (dir == BTN_UP) {
-        if (selected_index > 0) selected_index--;
-        else selected_index = app_count - 1;
-    }
-    else if (dir == BTN_RIGHT) {
-        // Page down
-        int next = selected_index + 3;
-        if (next >= app_count) next = app_count - 1;
-        selected_index = next;
-    }
-    else if (dir == BTN_LEFT) {
-        // Page up
-        int prev = selected_index - 3;
-        if (prev < 0) prev = 0;
-        selected_index = prev;
-    }
+    if (_launcher_theme == LAUNCHER_GRID) {
+        // Grid navigation: 3 columns × 2 rows
+        const int COLS = 3;
+        const int APPS_PER_PAGE = 6;
+        
+        int current_page = selected_index / APPS_PER_PAGE;
+        int page_start = current_page * APPS_PER_PAGE;
+        int local_idx = selected_index - page_start;
+        int row = local_idx / COLS;
+        int col = local_idx % COLS;
+        
+        if (dir == BTN_UP) {
+            if (row > 0) {
+                // Move up in same column
+                selected_index -= COLS;
+            } else if (current_page > 0) {
+                // Jump to previous page, same column
+                selected_index -= APPS_PER_PAGE;
+                if (selected_index < 0) selected_index = 0;
+            }
+        }
+        else if (dir == BTN_DOWN) {
+            if (row < 1 && selected_index + COLS < app_count) {
+                // Move down in same column
+                selected_index += COLS;
+            } else if ((current_page + 1) * APPS_PER_PAGE < app_count) {
+                // Jump to next page, same column
+                selected_index += APPS_PER_PAGE;
+                if (selected_index >= app_count) selected_index = app_count - 1;
+            }
+        }
+        else if (dir == BTN_LEFT) {
+            if (col > 0) {
+                selected_index--;
+            }
+        }
+        else if (dir == BTN_RIGHT) {
+            if (col < COLS - 1 && selected_index + 1 < app_count && local_idx + 1 < APPS_PER_PAGE) {
+                selected_index++;
+            }
+        }
+    } else {
+        // Carousel/Tile navigation (existing logic)
+        if (dir == BTN_DOWN) {
+            if (selected_index < app_count - 1) selected_index++;
+            else selected_index = 0;
+        }
+        else if (dir == BTN_UP) {
+            if (selected_index > 0) selected_index--;
+            else selected_index = app_count - 1;
+        }
+        else if (dir == BTN_RIGHT) {
+            // Page down
+            int next = selected_index + 3;
+            if (next >= app_count) next = app_count - 1;
+            selected_index = next;
+        }
+        else if (dir == BTN_LEFT) {
+            // Page up
+            int prev = selected_index - 3;
+            if (prev < 0) prev = 0;
+            selected_index = prev;
+        }
 
-    _target_scroll = selected_index;
-    
-    // Handle wrap-around distance for animation
-    if (_target_scroll == 0 && _current_scroll > app_count - 2) {
-         _current_scroll -= app_count; // Seamless scroll forward
-    } else if (_target_scroll == app_count - 1 && _current_scroll < 1) {
-         _current_scroll += app_count; // Seamless scroll backward
+        _target_scroll = selected_index;
+        
+        // Handle wrap-around distance for animation
+        if (_target_scroll == 0 && _current_scroll > app_count - 2) {
+             _current_scroll -= app_count; // Seamless scroll forward
+        } else if (_target_scroll == app_count - 1 && _current_scroll < 1) {
+             _current_scroll += app_count; // Seamless scroll backward
+        }
     }
 }
 
@@ -187,8 +231,10 @@ void App_Grid::handleInput(input_event_t event) {
 void App_Grid::render(LGFX_Sprite* canvas) {
     if (_launcher_theme == LAUNCHER_CAROUSEL) {
         _render_carousel(canvas);
-    } else {
+    } else if (_launcher_theme == LAUNCHER_TILE) {
         _render_tile(canvas);
+    } else {
+        _render_grid(canvas);
     }
 }
 
@@ -380,21 +426,22 @@ void App_Grid::_render_tile(LGFX_Sprite* canvas) {
     const uint16_t txt = theme_get_text();
     const uint16_t txt_dim = theme_get_text_dim();
 
-    // Layout: 48px left column for app list | remaining right panel for details
-    const int LEFT_W = 48;
+    // Layout: 50px left column | 2px divider | remaining right panel
+    const int LEFT_W = 50;
     const int RIGHT_X = LEFT_W + 2;
     const int RIGHT_W = W - RIGHT_X - 2;
     
-    // Left column background with subtle depth
+    // Left column background
     float pulse = 0.5f + 0.5f * sinf(anim_time * 2.5f);
     uint16_t panel_bg = color_blend(txt_dim, bg, 0.08f + pulse * 0.02f);
     canvas->fillRect(0, 0, LEFT_W, H, panel_bg);
-    canvas->drawFastVLine(LEFT_W, 0, H, color_blend(txt_dim, bg, 0.3f));
+    canvas->drawFastVLine(LEFT_W, 0, H, color_blend(txt_dim, bg, 0.35f));
+    canvas->drawFastVLine(LEFT_W + 1, 0, H, color_blend(txt_dim, bg, 0.15f));
     
-    // Render app icons in left column (32x32 centered)
-    const int ITEM_H = 36;
-    const int ICON_SIZE = 28;
-    int visible_count = (H - 4) / ITEM_H;
+    // Icon list parameters
+    const int ITEM_H = 34;
+    const int ICON_SIZE = 30;
+    int visible_count = H / ITEM_H;
     
     int scroll_offset = 0;
     if (selected_index >= visible_count - 1) {
@@ -402,18 +449,20 @@ void App_Grid::_render_tile(LGFX_Sprite* canvas) {
     }
     if (scroll_offset < 0) scroll_offset = 0;
     
-    for (int i = scroll_offset; i < app_count && (i - scroll_offset) * ITEM_H < H; i++) {
+    // Render icons in left column
+    for (int i = scroll_offset; i < app_count && (i - scroll_offset) < visible_count; i++) {
         int item_y = 2 + (i - scroll_offset) * ITEM_H;
         bool is_sel = (i == selected_index);
         
         if (is_sel) {
-            // Stunning selection highlight with glow
-            float glow = 0.7f + 0.3f * sinf(anim_time * 5.0f);
-            canvas->fillRoundRect(2, item_y, LEFT_W - 4, ITEM_H - 2, 5, color_blend(acc, bg, 0.2f * glow));
-            canvas->drawRoundRect(2, item_y, LEFT_W - 4, ITEM_H - 2, 5, color_blend(acc, txt, glow));
+            float glow = 0.75f + 0.25f * sinf(anim_time * 5.0f);
+            int border_w = 2;
+            canvas->fillRoundRect(3, item_y, LEFT_W - 6, ITEM_H - 2, 6, color_blend(acc, bg, 0.18f * glow));
+            canvas->drawRoundRect(3, item_y, LEFT_W - 6, ITEM_H - 2, 6, color_blend(acc, txt, 0.9f * glow));
+            canvas->drawRoundRect(3 + border_w, item_y + border_w, LEFT_W - 6 - border_w*2, ITEM_H - 2 - border_w*2, 5, color_blend(acc, txt, 0.5f * glow));
         }
         
-        // Icon rendering (32x32 downsampled, centered)
+        // Render icon
         int icon_x = (LEFT_W - ICON_SIZE) / 2;
         int icon_y = item_y + (ITEM_H - ICON_SIZE) / 2;
         
@@ -427,7 +476,6 @@ void App_Grid::_render_tile(LGFX_Sprite* canvas) {
             if (_sp32) {
                 _sp32->pushImage(0, 0, 32, 32, apps[i].cached_icon32);
                 
-                // Apply rounded corners
                 auto apply_corners = [&](LGFX_Sprite* sp, int w, int h, int r, uint16_t color) {
                     for (int y=0; y<r; y++) {
                         for (int x=0; x<r; x++) {
@@ -441,10 +489,9 @@ void App_Grid::_render_tile(LGFX_Sprite* canvas) {
                     }
                 };
                 
-                uint16_t corner_col = is_sel ? color_blend(acc, bg, 0.2f * (0.7f + 0.3f * sinf(anim_time * 5.0f))) : panel_bg;
-                apply_corners(_sp32, 32, 32, 6, corner_col);
+                uint16_t corner_col = is_sel ? color_blend(acc, bg, 0.18f * (0.75f + 0.25f * sinf(anim_time * 5.0f))) : panel_bg;
+                apply_corners(_sp32, 32, 32, 7, corner_col);
                 
-                // Scale to ICON_SIZE
                 float scale = (float)ICON_SIZE / 32.0f;
                 _sp32->pushRotateZoom(icon_x + ICON_SIZE/2, icon_y + ICON_SIZE/2, 0, scale, scale);
             }
@@ -456,29 +503,30 @@ void App_Grid::_render_tile(LGFX_Sprite* canvas) {
         canvas->setTextColor(acc);
         canvas->setTextDatum(textdatum_t::top_center);
         int bounce = (int)(2.0f * sinf(anim_time * 6.0f));
-        canvas->drawString("^", LEFT_W/2, 2 - bounce);
+        canvas->drawString("^", LEFT_W/2, 1 - bounce);
     }
     if (scroll_offset + visible_count < app_count) {
         canvas->setTextColor(acc);
         canvas->setTextDatum(textdatum_t::bottom_center);
         int bounce = (int)(2.0f * sinf(anim_time * 6.0f));
-        canvas->drawString("v", LEFT_W/2, H - 2 + bounce);
+        canvas->drawString("v", LEFT_W/2, H - 1 + bounce);
     }
     
     // Right panel: Selected app details
     if (selected_index < app_count) {
         const AppEntry& app = apps[selected_index];
         
-        // Panel background with depth
+        // Panel background
         uint16_t panel_fill = color_blend(txt_dim, bg, 0.12f);
-        canvas->fillRoundRect(RIGHT_X, 2, RIGHT_W, H - 4, 6, panel_fill);
-        canvas->drawRoundRect(RIGHT_X, 2, RIGHT_W, H - 4, 6, color_blend(txt_dim, bg, 0.35f));
+        canvas->fillRoundRect(RIGHT_X, 2, RIGHT_W, H - 4, 7, panel_fill);
+        canvas->drawRoundRect(RIGHT_X, 2, RIGHT_W, H - 4, 7, color_blend(txt_dim, bg, 0.4f));
         
         int panel_cx = RIGHT_X + RIGHT_W / 2;
-        int content_y = 8;
+        int content_y = 6;
+        const int USABLE_H = H - 12;  // 6px top + 6px bottom margin
         
-        // Large icon at top (48x48)
-        const int HERO_ICON = 48;
+        // Hero icon (42×42 to fit better)
+        const int HERO_ICON = 42;
         
         if (app.icon_rgb565) {
             if (!_sp64) {
@@ -490,7 +538,6 @@ void App_Grid::_render_tile(LGFX_Sprite* canvas) {
             if (_sp64) {
                 _sp64->pushImage(0, 0, 64, 64, app.icon_rgb565);
                 
-                // Premium rounded corners with glow
                 auto apply_corners = [&](LGFX_Sprite* sp, int w, int h, int r, uint16_t color) {
                     for (int y=0; y<r; y++) {
                         for (int x=0; x<r; x++) {
@@ -504,98 +551,227 @@ void App_Grid::_render_tile(LGFX_Sprite* canvas) {
                     }
                 };
                 
-                apply_corners(_sp64, 64, 64, 12, panel_fill);
+                apply_corners(_sp64, 64, 64, 11, panel_fill);
                 
                 float scale = (float)HERO_ICON / 64.0f;
                 _sp64->pushRotateZoom(panel_cx, content_y + HERO_ICON/2, 0, scale, scale);
             }
         }
         
-        content_y += HERO_ICON + 6;
+        content_y += HERO_ICON + 4;
         
-        // App name with stunning typography
+        // App name
         canvas->setFont(&fonts::Font2);
         canvas->setTextColor(txt);
         canvas->setTextDatum(textdatum_t::top_center);
         canvas->drawString(app.name, panel_cx, content_y);
-        content_y += 12;
+        content_y += 11;
         
-        // Separator line with glow effect
-        float glow = 0.6f + 0.4f * sinf(anim_time * 3.0f);
-        int sep_w = RIGHT_W - 12;
-        canvas->drawFastHLine(RIGHT_X + 6, content_y, sep_w, color_blend(acc, bg, 0.5f * glow));
-        content_y += 4;
+        // Separator with glow
+        float glow = 0.65f + 0.35f * sinf(anim_time * 3.0f);
+        int sep_w = RIGHT_W - 16;
+        canvas->drawFastHLine(RIGHT_X + 8, content_y, sep_w, color_blend(acc, bg, 0.55f * glow));
+        content_y += 3;
         
-        // Category badge
+        // Category (compact single line)
         if (app.category) {
             canvas->setFont(&fonts::Font0);
-            canvas->setTextColor(color_blend(acc, txt, 0.8f));
-            canvas->setTextDatum(textdatum_t::top_left);
-            canvas->drawString("CATEGORY", RIGHT_X + 6, content_y);
-            
-            canvas->setTextColor(txt_dim);
-            canvas->setTextDatum(textdatum_t::top_right);
-            canvas->drawString(app.category, RIGHT_X + RIGHT_W - 6, content_y);
-            content_y += 10;
+            canvas->setTextColor(color_blend(acc, txt, 0.75f));
+            canvas->setTextDatum(textdatum_t::top_center);
+            canvas->drawString(app.category, panel_cx, content_y);
+            content_y += 9;
         }
         
-        // Description with word wrap
+        // Description with proper word-wrap and line limiting
         if (app.desc) {
+            const int MAX_DESC_LINES = 3;
+            const int LINE_H = 9;
+            const int DESC_MAX_Y = 6 + USABLE_H - 8;  // Reserve 8px bottom
+            
             canvas->setFont(&fonts::Font0);
             canvas->setTextColor(txt_dim);
             canvas->setTextDatum(textdatum_t::top_left);
             
-            // Simple word-wrap rendering
             int desc_x = RIGHT_X + 6;
             int desc_w = RIGHT_W - 12;
-            int line_h = 9;
+            int lines_rendered = 0;
             
-            const char* desc = app.desc;
-            char line_buf[32];
-            int buf_idx = 0;
+            const char* p = app.desc;
+            char line_buf[48];
+            int line_idx = 0;
             
-            while (*desc && content_y < H - 20) {
-                if (*desc == ' ' || *desc == '\0') {
-                    if (buf_idx > 0) {
-                        line_buf[buf_idx] = '\0';
-                        
-                        if (canvas->textWidth(line_buf) > desc_w) {
-                            canvas->drawString(line_buf, desc_x, content_y);
-                            content_y += line_h;
-                            buf_idx = 0;
-                        }
-                    }
-                    if (*desc == ' ') desc++;
-                } else {
-                    if (buf_idx < 31) {
-                        line_buf[buf_idx++] = *desc;
-                    }
-                    desc++;
+            while (*p && lines_rendered < MAX_DESC_LINES && content_y + LINE_H <= DESC_MAX_Y) {
+                // Build word
+                while (*p && *p != ' ' && line_idx < 47) {
+                    line_buf[line_idx++] = *p++;
                 }
                 
-                if (buf_idx > 0 && (*desc == '\0' || *(desc+1) == '\0')) {
-                    line_buf[buf_idx] = '\0';
+                // Check if adding space + next word would overflow
+                if (*p == ' ') {
+                    line_buf[line_idx++] = ' ';
+                    p++;
+                }
+                
+                line_buf[line_idx] = '\0';
+                
+                // If line exceeds width, render accumulated text and start new line
+                if (canvas->textWidth(line_buf) > desc_w || *p == '\0') {
+                    // Trim trailing space
+                    if (line_idx > 0 && line_buf[line_idx-1] == ' ') {
+                        line_buf[line_idx-1] = '\0';
+                    }
+                    
                     canvas->drawString(line_buf, desc_x, content_y);
-                    content_y += line_h;
-                    buf_idx = 0;
+                    content_y += LINE_H;
+                    lines_rendered++;
+                    line_idx = 0;
                 }
             }
         }
         
-        // Launch button at bottom with pulse
-        int btn_h = 16;
-        int btn_y = H - btn_h - 4;
-        int btn_w = RIGHT_W - 12;
-        int btn_x = RIGHT_X + 6;
-        
-        float btn_pulse = 0.75f + 0.25f * sinf(anim_time * 4.0f);
-        canvas->fillRoundRect(btn_x - 1, btn_y - 1, btn_w + 2, btn_h + 2, 6, color_blend(acc, bg, 0.3f * btn_pulse));
-        canvas->fillRoundRect(btn_x, btn_y, btn_w, btn_h, 5, color_blend(acc, bg, 0.2f));
-        canvas->drawRoundRect(btn_x, btn_y, btn_w, btn_h, 5, color_blend(acc, txt, btn_pulse));
-        
-        canvas->setFont(&fonts::Font0);
-        canvas->setTextColor(txt);
+        // Clean bottom accent bar
+        int bar_y = H - 8;
+        int bar_w = RIGHT_W - 20;
+        int bar_x = panel_cx - bar_w/2;
+        float bar_pulse = 0.7f + 0.3f * sinf(anim_time * 3.5f);
+        canvas->fillRoundRect(bar_x, bar_y, bar_w, 2, 1, color_blend(acc, txt, bar_pulse));
+    }
+}
+
+void App_Grid::_render_grid(LGFX_Sprite* canvas) {
+    const uint16_t bg = theme_get_bg();
+    theme_draw_wallpaper(canvas, anim_time);
+
+    if (app_count == 0) {
+        canvas->setTextColor(theme_get_text_dim());
         canvas->setTextDatum(textdatum_t::middle_center);
-        canvas->drawString("[ SEL TO LAUNCH ]", panel_cx, btn_y + btn_h/2);
+        canvas->drawString("NO APPS", canvas->width()/2, canvas->height()/2);
+        return;
+    }
+
+    const int32_t W = canvas->width();
+    const int32_t H = canvas->height();
+    const uint16_t acc = theme_get_accent();
+    const uint16_t txt = theme_get_text();
+    const uint16_t txt_dim = theme_get_text_dim();
+
+    // 3×2 grid layout
+    const int COLS = 3;
+    const int ROWS = 2;
+    const int APPS_PER_PAGE = COLS * ROWS;
+    
+    // Calculate grid metrics with margins
+    const int MARGIN_X = 8;
+    const int MARGIN_Y = 10;
+    const int SPACING_X = 6;
+    const int SPACING_Y = 8;
+    const int FOOTER_H = 10;
+    
+    const int GRID_W = W - (MARGIN_X * 2);
+    const int GRID_H = H - MARGIN_Y - FOOTER_H;
+    
+    const int CELL_W = (GRID_W - (SPACING_X * (COLS - 1))) / COLS;
+    const int CELL_H = (GRID_H - (SPACING_Y * (ROWS - 1))) / ROWS;
+    
+    // Calculate page from selected index
+    _current_page = selected_index / APPS_PER_PAGE;
+    int page_start = _current_page * APPS_PER_PAGE;
+    int page_end = page_start + APPS_PER_PAGE;
+    if (page_end > app_count) page_end = app_count;
+    
+    // Render grid items
+    for (int i = page_start; i < page_end; i++) {
+        int grid_idx = i - page_start;
+        int col = grid_idx % COLS;
+        int row = grid_idx / COLS;
+        
+        int cell_x = MARGIN_X + col * (CELL_W + SPACING_X);
+        int cell_y = MARGIN_Y + row * (CELL_H + SPACING_Y);
+        
+        bool is_sel = (i == selected_index);
+        
+        // Cell background with selection state
+        if (is_sel) {
+            float glow = 0.8f + 0.2f * sinf(anim_time * 5.0f);
+            canvas->fillRoundRect(cell_x - 1, cell_y - 1, CELL_W + 2, CELL_H + 2, 6, color_blend(acc, bg, 0.15f * glow));
+            canvas->fillRoundRect(cell_x, cell_y, CELL_W, CELL_H, 5, color_blend(acc, bg, 0.1f));
+            canvas->drawRoundRect(cell_x, cell_y, CELL_W, CELL_H, 5, color_blend(acc, txt, 0.85f * glow));
+            canvas->drawRoundRect(cell_x + 1, cell_y + 1, CELL_W - 2, CELL_H - 2, 4, color_blend(acc, txt, 0.4f * glow));
+        } else {
+            canvas->fillRoundRect(cell_x, cell_y, CELL_W, CELL_H, 5, color_blend(txt_dim, bg, 0.06f));
+            canvas->drawRoundRect(cell_x, cell_y, CELL_W, CELL_H, 5, color_blend(txt_dim, bg, 0.25f));
+        }
+        
+        // Icon rendering (32×32 centered in cell)
+        const int ICON_SIZE = 32;
+        int icon_cx = cell_x + CELL_W / 2;
+        int icon_cy = cell_y + (CELL_H - 10) / 2;  // Reserve 10px for label
+        
+        if (apps[i].cached_icon32) {
+            if (!_sp32) {
+                _sp32 = new LGFX_Sprite(canvas);
+                _sp32->setPsram(true);
+                _sp32->createSprite(32, 32);
+            }
+            
+            if (_sp32) {
+                _sp32->pushImage(0, 0, 32, 32, apps[i].cached_icon32);
+                
+                auto apply_corners = [&](LGFX_Sprite* sp, int w, int h, int r, uint16_t color) {
+                    for (int y=0; y<r; y++) {
+                        for (int x=0; x<r; x++) {
+                            if ((r-x)*(r-x) + (r-y)*(r-y) >= r*r) {
+                                sp->drawPixel(x, y, color);
+                                sp->drawPixel(w-1-x, y, color);
+                                sp->drawPixel(x, h-1-y, color);
+                                sp->drawPixel(w-1-x, h-1-y, color);
+                            }
+                        }
+                    }
+                };
+                
+                uint16_t corner_col = is_sel ? color_blend(acc, bg, 0.1f) : color_blend(txt_dim, bg, 0.06f);
+                apply_corners(_sp32, 32, 32, 6, corner_col);
+                
+                _sp32->pushSprite(icon_cx - ICON_SIZE/2, icon_cy - ICON_SIZE/2);
+            }
+        }
+        
+        // App name label below icon
+        canvas->setFont(&fonts::Font0);
+        canvas->setTextColor(is_sel ? txt : txt_dim);
+        canvas->setTextDatum(textdatum_t::bottom_center);
+        
+        // Truncate if needed
+        char label[16];
+        strncpy(label, apps[i].name, 15);
+        label[15] = '\0';
+        if (strlen(apps[i].name) > 12) {
+            label[12] = '.';
+            label[13] = '.';
+            label[14] = '\0';
+        }
+        
+        canvas->drawString(label, icon_cx, cell_y + CELL_H - 2);
+    }
+    
+    // Page indicator at bottom
+    int total_pages = (app_count + APPS_PER_PAGE - 1) / APPS_PER_PAGE;
+    if (total_pages > 1) {
+        int dot_spacing = 8;
+        int indicator_w = total_pages * dot_spacing;
+        int indicator_x = W / 2 - indicator_w / 2;
+        int indicator_y = H - 5;
+        
+        for (int p = 0; p < total_pages; p++) {
+            int dot_x = indicator_x + p * dot_spacing;
+            if (p == _current_page) {
+                float pulse = 0.75f + 0.25f * sinf(anim_time * 4.0f);
+                canvas->fillCircle(dot_x, indicator_y, 3, color_blend(acc, txt, pulse));
+                canvas->drawCircle(dot_x, indicator_y, 4, color_blend(acc, txt, 0.6f * pulse));
+            } else {
+                canvas->fillCircle(dot_x, indicator_y, 2, color_blend(txt_dim, bg, 0.4f));
+            }
+        }
     }
 }

@@ -16,7 +16,8 @@ struct AppEntry {
 
 typedef enum {
     LAUNCHER_CAROUSEL = 0,
-    LAUNCHER_TILE     = 1
+    LAUNCHER_TILE     = 1,
+    LAUNCHER_GRID     = 2
 } launcher_theme_t;
 
 class App_Grid : public IApp {
@@ -24,6 +25,7 @@ private:
     AppEntry apps[MAX_TOTAL_APPS];
     uint8_t app_count;
     uint8_t selected_index;
+    uint8_t _current_page;  // For grid theme pagination
     float anim_time;
     float _current_scroll;
     float _target_scroll;
@@ -41,6 +43,7 @@ private:
     void _move(input_event_t dir);
     void _render_carousel(LGFX_Sprite* canvas);
     void _render_tile(LGFX_Sprite* canvas);
+    void _render_grid(LGFX_Sprite* canvas);
 
 public:
     App_Grid();

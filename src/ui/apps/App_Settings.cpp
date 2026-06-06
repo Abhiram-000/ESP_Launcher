@@ -243,7 +243,7 @@ void App_Settings::handleInput(input_event_t event) {
             if (launcher_theme_cursor > 0) launcher_theme_cursor--;
             ui_set_launcher_theme((uint8_t)launcher_theme_cursor);
         } else if (event == BTN_DOWN || event == BTN_RIGHT) {
-            if (launcher_theme_cursor < 1) launcher_theme_cursor++;  // Only 2 themes
+            if (launcher_theme_cursor < 2) launcher_theme_cursor++;  // 3 themes
             ui_set_launcher_theme((uint8_t)launcher_theme_cursor);
         } else if (event == BTN_SELECT) {
             _change_state(STATE_MENU);
@@ -524,7 +524,7 @@ void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_o
         if (launcher_theme_cursor > 0) {
             canvas->drawString("<", x_offset + 12 - bounce, list_y + 20);
         }
-        if (launcher_theme_cursor < 1) {
+        if (launcher_theme_cursor < 2) {
             canvas->drawString(">", x_offset + canvas->width() - 12 + bounce, list_y + 20);
         }
         
@@ -547,14 +547,15 @@ void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_o
         canvas->setTextColor(theme_get_text());
         canvas->setTextDatum(textdatum_t::middle_center);
         
-        const char* launcher_names[] = {"CAROUSEL", "TILE"};
+        const char* launcher_names[] = {"CAROUSEL", "TILE", "GRID"};
         canvas->drawString(launcher_names[launcher_theme_cursor], cx, card_y + card_h/2);
         
         // Indicator dots
         int bar_y = card_y + card_h + 15;
-        int dot_spacing = 20;
-        for (int i = 0; i < 2; i++) {
-            int dot_x = cx - dot_spacing/2 + (i * dot_spacing);
+        int dot_spacing = 16;
+        int dot_start_x = cx - dot_spacing;
+        for (int i = 0; i < 3; i++) {
+            int dot_x = dot_start_x + (i * dot_spacing);
             int dot_y = bar_y + 10;
             if (i == launcher_theme_cursor) {
                 canvas->fillCircle(dot_x, dot_y, 3, accent);
