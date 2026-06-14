@@ -1,1 +1,0 @@
-/home/abhiram/Project/ESP_Launcher/components/lua54/doc/OSIApproved_100X125.png
