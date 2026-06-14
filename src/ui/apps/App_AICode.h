@@ -82,6 +82,11 @@ public:
     std::string _llm_reply_acc;        /* Accumulates streamed reply       */
     SemaphoreHandle_t _state_mutex;
 
+    /* ── Cached state for render (copied under mutex in loop()) ────── */
+    std::string _cached_chat_display;
+    bool        _cached_llm_busy;
+    lua_engine_result_t _cached_lua_result;
+
     /* ── IDE / Editor ────────────────────────────────────────────────── */
     std::string  _ide_buf;             /* Script text                      */
     std::string  _ide_filename;        /* Filename (without path)          */

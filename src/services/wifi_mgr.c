@@ -62,6 +62,10 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                 s_sta_ip[sizeof(s_sta_ip) - 1] = '\0';
                 _unlock();
                 ESP_LOGI(TAG, "STA Disconnected");
+                esp_err_t reconnect_err = esp_wifi_connect();
+                if (reconnect_err != ESP_OK) {
+                    ESP_LOGW(TAG, "Reconnect failed: %s", esp_err_to_name(reconnect_err));
+                }
                 break;
             case WIFI_EVENT_SCAN_DONE:
                 _lock();
@@ -84,10 +88,19 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         nvs_handle_t h;
         if (nvs_open("wifi_creds", NVS_READWRITE, &h) == ESP_OK) {
             _lock();
-            nvs_set_str(h, "ssid", s_sta_ssid);
-            nvs_set_str(h, "pass", s_sta_pass);
+            esp_err_t err1 = nvs_set_str(h, "ssid", s_sta_ssid);
+            esp_err_t err2 = nvs_set_str(h, "pass", s_sta_pass);
             _unlock();
-            nvs_commit(h);
+            if (err1 != ESP_OK) {
+                ESP_LOGW(TAG, "NVS set ssid failed: %s", esp_err_to_name(err1));
+            }
+            if (err2 != ESP_OK) {
+                ESP_LOGW(TAG, "NVS set pass failed: %s", esp_err_to_name(err2));
+            }
+            esp_err_t err3 = nvs_commit(h);
+            if (err3 != ESP_OK) {
+                ESP_LOGW(TAG, "NVS commit failed: %s", esp_err_to_name(err3));
+            }
             nvs_close(h);
             ESP_LOGI(TAG, "STA Credentials saved to NVS");
         }
@@ -150,8 +163,14 @@ void wifi_mgr_init(void) {
             strncpy((char*)sta_cfg.sta.ssid, s_sta_ssid, sizeof(sta_cfg.sta.ssid)-1);
             strncpy((char*)sta_cfg.sta.password, s_sta_pass, sizeof(sta_cfg.sta.password)-1);
             _unlock();
-            esp_wifi_set_config(WIFI_IF_STA, &sta_cfg);
-            esp_wifi_connect();
+            esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &sta_cfg);
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "NVS restore set_config failed: %s", esp_err_to_name(err));
+            }
+            err = esp_wifi_connect();
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "NVS restore connect failed: %s", esp_err_to_name(err));
+            }
         } else {
             _unlock();
         }
@@ -166,7 +185,10 @@ void wifi_mgr_scan_start(void) {
     s_scan_done = false;
     _unlock();
     wifi_scan_config_t scan_config = { .show_hidden = false };
-    esp_wifi_scan_start(&scan_config, false);
+    esp_err_t err = esp_wifi_scan_start(&scan_config, false);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Scan start failed: %s", esp_err_to_name(err));
+    }
 }
 
 bool wifi_mgr_is_scan_done(void) {
@@ -179,8 +201,8 @@ bool wifi_mgr_is_scan_done(void) {
 int wifi_mgr_get_scan_results(wifi_scan_info_t* results, int max_results) {
     if (!results || max_results <= 0) return 0;
 
-    uint16_t number = max_results;
-    wifi_ap_record_t ap_info[max_results];
+    uint16_t number = (uint16_t)(max_results < MAX_WIFI_NETWORKS ? max_results : MAX_WIFI_NETWORKS);
+    wifi_ap_record_t ap_info[MAX_WIFI_NETWORKS]; /* fixed-size — no VLA; fits within 512B stack limit */
     if (esp_wifi_scan_get_ap_records(&number, ap_info) != ESP_OK) return 0;
     for (int i = 0; i < number; i++) {
         strncpy(results[i].ssid, (char*)ap_info[i].ssid, sizeof(results[i].ssid)-1);
@@ -199,12 +221,21 @@ void wifi_mgr_connect(const char* ssid, const char* password) {
     wifi_config_t sta_config = {0};
     strncpy((char*)sta_config.sta.ssid, ssid, sizeof(sta_config.sta.ssid)-1);
     strncpy((char*)sta_config.sta.password, password, sizeof(sta_config.sta.password)-1);
-    esp_wifi_set_config(WIFI_IF_STA, &sta_config);
-    esp_wifi_connect();
+    esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &sta_config);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Connect set_config failed: %s", esp_err_to_name(err));
+    }
+    err = esp_wifi_connect();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Connect failed: %s", esp_err_to_name(err));
+    }
 }
 
 void wifi_mgr_disconnect(void) {
-    esp_wifi_disconnect();
+    esp_err_t err = esp_wifi_disconnect();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Disconnect failed: %s", esp_err_to_name(err));
+    }
 }
 
 bool wifi_mgr_is_connected(void) {

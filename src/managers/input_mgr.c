@@ -50,14 +50,6 @@ static void IRAM_ATTR gpio_isr_handler(void* arg) {
             const input_event_t ev = btn->event;
             xQueueSendFromISR(s_input_queue, &ev, &xHigherPriorityTaskWoken);
 
-            static const char* btn_names[] = {"UP","DOWN","LEFT","RIGHT","SELECT"};
-            int idx = (int)(btn->event - BTN_UP);
-            if (idx >= 0 && idx <= 4) {
-                ESP_DRAM_LOGI("IN_ISR", ">> ISR fire: %s pin=%d level=%d q_spaces=%d",
-                    btn_names[idx], btn->pin, hal_gpio_get_level(btn->pin),
-                    (int)uxQueueSpacesAvailable(s_input_queue));
-            }
-
             if (xHigherPriorityTaskWoken) {
                 portYIELD_FROM_ISR();
             }

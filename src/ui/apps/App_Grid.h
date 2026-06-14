@@ -23,10 +23,10 @@ typedef enum {
 class App_Grid : public IApp {
 private:
     AppEntry apps[MAX_TOTAL_APPS];
-    uint8_t app_count;
-    uint8_t selected_index;
+    uint8_t _app_count;
+    uint8_t _selected_index;
     uint8_t _current_page;  // For grid theme pagination
-    float anim_time;
+    float _anim_time;
     float _current_scroll;
     float _target_scroll;
 

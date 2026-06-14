@@ -11,6 +11,7 @@
 #include "../../services/llm_client.h"
 #include "../../services/wifi_mgr.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <sys/stat.h>
@@ -20,7 +21,7 @@
 
 static const char* TAG = "App_AICode_ui";
 
-extern void switch_to_grid();
+#include "../ui_task.h"
 
 void App_AICode::draw_header(LGFX_Sprite* c, const char* title) {
     uint16_t acc = theme_get_accent();
@@ -63,34 +64,41 @@ void App_AICode::draw_api_key_entry(LGFX_Sprite* c) {
     char key[128] = {};
     bool has_key = llm_client_get_api_key(key, sizeof(key)) && key[0];
 
+    const int32_t H = c->height();
     if (has_key) {
         c->setTextColor(theme_get_success());
-        c->drawString("Key saved.", cx, 38);
+        c->drawString("Key saved.", cx, H * 30 / 100);
         c->setTextColor(theme_get_text_dim());
-        c->drawString("SEL=Change  L=Continue", cx, 56);
+        c->drawString("SEL=Change  L=Continue", cx, H * 44 / 100);
     } else {
         c->setTextColor(theme_get_text());
-        c->drawString("No API key set.", cx, 38);
+        c->drawString("No API key set.", cx, H * 30 / 100);
         c->setTextColor(theme_get_text_dim());
-        c->drawString("Press SELECT to type key.", cx, 56);
-        c->drawString("L=Skip", cx, 74);
+        c->drawString("Press SELECT to type key.", cx, H * 44 / 100);
+        c->drawString("L=Skip", cx, H * 58 / 100);
     }
 }
 
 void App_AICode::draw_main_menu(LGFX_Sprite* c) {
     draw_header(c, "AI ASSISTANT");
-    int cy = 24, h = 22;
+    const int32_t W  = c->width();
+    const int32_t H  = c->height();
+    const int32_t HEADER_H = H / 9;
+    const int32_t ITEM_H   = H / 5;
+    const int32_t MARGIN   = W / 20;
+    const int32_t cy = HEADER_H + 4;
     for (int i = 0; i < MENU_ITEMS; i++) {
         bool sel = i == _menu_sel;
+        const int32_t iy = cy + i * ITEM_H;
         if (sel) {
             float pulse = 0.5f + 0.5f * sinf(_anim * 4.0f);
-            c->fillRoundRect(8, cy + i*h, c->width()-16, h-2, 5,
+            c->fillRoundRect(MARGIN, iy, W - MARGIN * 2, ITEM_H - 2, 5,
                 color_blend(theme_get_accent(), theme_get_bg(), 0.3f * pulse + 0.2f));
-            c->drawRoundRect(8, cy + i*h, c->width()-16, h-2, 5, theme_get_accent());
+            c->drawRoundRect(MARGIN, iy, W - MARGIN * 2, ITEM_H - 2, 5, theme_get_accent());
         }
         c->setTextDatum(textdatum_t::middle_left);
         c->setTextColor(sel ? theme_get_text() : theme_get_text_dim());
-        c->drawString(MENU_LABELS[i], 18, cy + i*h + h/2 - 1);
+        c->drawString(MENU_LABELS[i], MARGIN + W / 25, iy + ITEM_H / 2);
     }
     c->setTextDatum(textdatum_t::bottom_left);
     c->setTextColor(theme_get_text_dim());
@@ -99,59 +107,78 @@ void App_AICode::draw_main_menu(LGFX_Sprite* c) {
 
 void App_AICode::draw_chat_select(LGFX_Sprite* c) {
     draw_header(c, "SELECT INPUT");
-    int W = c->width();
-    int cy = 30, h = 34;
+    const int32_t W      = c->width();
+    const int32_t H      = c->height();
+    const int32_t HEADER_H = H / 9;
+    const int32_t MARGIN = W / 20;
+    const int32_t ITEM_H = H * 27 / 100;
+    const int32_t GAP    = H / 16;
+    const int32_t cy     = HEADER_H + GAP;
     const char* options[] = {"Inbuilt Keyboard", "From Phone"};
     const char* subs[]    = {"Type on device",   "Connect via WiFi"};
 
     for (int i = 0; i < 2; i++) {
         bool sel = i == _chat_select_sel;
-        int y = cy + i * (h + 8);
+        const int32_t y = cy + i * (ITEM_H + GAP);
         if (sel) {
             float pulse = 0.5f + 0.5f * sinf(_anim * 4.0f);
-            c->fillRoundRect(8, y, W-16, h, 6,
+            c->fillRoundRect(MARGIN, y, W - MARGIN * 2, ITEM_H, 6,
                 color_blend(theme_get_accent(), theme_get_bg(), 0.3f * pulse + 0.2f));
-            c->drawRoundRect(8, y, W-16, h, 6, theme_get_accent());
+            c->drawRoundRect(MARGIN, y, W - MARGIN * 2, ITEM_H, 6, theme_get_accent());
         } else {
-            c->fillRoundRect(8, y, W-16, h, 6, color_blend(theme_get_text_dim(), theme_get_bg(), 0.1f));
-            c->drawRoundRect(8, y, W-16, h, 6, theme_get_text_dim());
+            c->fillRoundRect(MARGIN, y, W - MARGIN * 2, ITEM_H, 6,
+                color_blend(theme_get_text_dim(), theme_get_bg(), 0.1f));
+            c->drawRoundRect(MARGIN, y, W - MARGIN * 2, ITEM_H, 6, theme_get_text_dim());
         }
         c->setFont(&fonts::Font0);
         c->setTextDatum(textdatum_t::top_left);
         c->setTextColor(sel ? theme_get_text() : theme_get_text_dim());
-        c->drawString(options[i], 16, y + 4);
+        c->drawString(options[i], MARGIN + W / 30, y + ITEM_H / 5);
         c->setTextColor(theme_get_text_dim());
-        c->drawString(subs[i], 16, y + 18);
+        c->drawString(subs[i],    MARGIN + W / 30, y + ITEM_H * 55 / 100);
     }
     c->setTextDatum(textdatum_t::bottom_center);
-    c->drawString("SELECT=Confirm  L=Back", W/2, c->height()-2);
+    c->drawString("SELECT=Confirm  L=Back", W / 2, H - 2);
 }
 
 void App_AICode::draw_chat_phone(LGFX_Sprite* c) {
     draw_header(c, "PHONE CHAT");
-    int W = c->width();
+    const int32_t W        = c->width();
+    const int32_t H        = c->height();
+    const int32_t HEADER_H = H / 9;
+    const int32_t MARGIN   = W / 20;
+    const int32_t BOX_H    = H / 6;
+    const int32_t LBL_Y1   = HEADER_H + H / 16;
+    const int32_t BOX_Y1   = LBL_Y1 + H / 10;
+    const int32_t LBL_Y2   = BOX_Y1 + BOX_H + H / 16;
+    const int32_t BOX_Y2   = LBL_Y2 + H / 10;
+    const int32_t STATUS_Y = H - H / 12;
+
     c->setFont(&fonts::Font0);
     c->setTextColor(theme_get_text());
     c->setTextDatum(textdatum_t::top_left);
-    c->drawString("Connect your phone to:", 8, 20);
+    c->drawString("Connect your phone to:", MARGIN, LBL_Y1);
 
-    c->fillRoundRect(6, 32, W-12, 22, 4, color_blend(theme_get_accent(), theme_get_bg(), 0.15f));
-    c->drawRoundRect(6, 32, W-12, 22, 4, theme_get_accent());
+    c->fillRoundRect(MARGIN - 2, BOX_Y1, W - MARGIN * 2 + 4, BOX_H, 4,
+                     color_blend(theme_get_accent(), theme_get_bg(), 0.15f));
+    c->drawRoundRect(MARGIN - 2, BOX_Y1, W - MARGIN * 2 + 4, BOX_H, 4, theme_get_accent());
     c->setTextColor(theme_get_accent());
-    c->drawString(APP_WIFI_SSID, 12, 38);
+    c->drawString(APP_WIFI_SSID, MARGIN + 2, BOX_Y1 + BOX_H / 3);
 
     c->setTextColor(theme_get_text());
-    c->drawString("Then open browser at:", 8, 60);
+    c->drawString("Then open browser at:", MARGIN, LBL_Y2);
 
-    c->fillRoundRect(6, 72, W-12, 22, 4, color_blend(theme_get_accent(), theme_get_bg(), 0.15f));
-    c->drawRoundRect(6, 72, W-12, 22, 4, theme_get_accent());
+    c->fillRoundRect(MARGIN - 2, BOX_Y2, W - MARGIN * 2 + 4, BOX_H, 4,
+                     color_blend(theme_get_accent(), theme_get_bg(), 0.15f));
+    c->drawRoundRect(MARGIN - 2, BOX_Y2, W - MARGIN * 2 + 4, BOX_H, 4, theme_get_accent());
     c->setTextColor(theme_get_accent());
-    c->drawString("http://192.168.4.1/chat", 12, 78);
+    c->drawString("http://192.168.4.1/chat", MARGIN + 2, BOX_Y2 + BOX_H / 3);
 
     float pulse = 0.6f + 0.4f * sinf(_anim * 5.0f);
-    c->fillCircle(12, 108, 4, color_blend(theme_get_success(), theme_get_bg(), pulse));
+    c->fillCircle(MARGIN / 2, STATUS_Y, H / 30,
+                  color_blend(theme_get_success(), theme_get_bg(), pulse));
     c->setTextColor(theme_get_text_dim());
-    c->drawString("Hosting local portal...", 22, 104);
+    c->drawString("Hosting local portal...", MARGIN, STATUS_Y - H / 30);
 
     c->setTextDatum(textdatum_t::bottom_center);
     c->drawString("SELECT=Back", W/2, c->height()-2);
@@ -163,19 +190,9 @@ void App_AICode::draw_chat(LGFX_Sprite* c) {
     c->setFont(&fonts::Font0); c->setTextColor(theme_get_text());
     c->setTextDatum(textdatum_t::top_left);
     int y = 18, line_h = 10;
-    std::string chat_display;
-    bool llm_busy = _llm_busy;
-    if (_state_mutex) {
-        if (xSemaphoreTake(_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-            chat_display = _chat_display;
-            llm_busy = _llm_busy;
-            xSemaphoreGive(_state_mutex);
-        } else {
-            ESP_LOGW(TAG, "draw_chat: mutex timeout");
-        }
-    } else {
-        chat_display = _chat_display;
-    }
+    // Read cached state — no mutex in render path (cached in loop())
+    const std::string& chat_display = _cached_chat_display;
+    bool llm_busy = _cached_llm_busy;
     const char* txt = chat_display.c_str();
     int start = (int)chat_display.size() - (H - 50) / line_h * 20;
     if (start < 0) start = 0;
@@ -259,15 +276,8 @@ void App_AICode::draw_lua_running(LGFX_Sprite* c) {
 }
 
 void App_AICode::draw_lua_result(LGFX_Sprite* c) {
-    lua_engine_result_t lua_result = _lua_result;
-    if (_state_mutex) {
-        if (xSemaphoreTake(_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-            lua_result = _lua_result;
-            xSemaphoreGive(_state_mutex);
-        } else {
-            ESP_LOGW(TAG, "draw_lua_result: mutex timeout");
-        }
-    }
+    // Read cached state — no mutex in render path (cached in loop())
+    lua_engine_result_t lua_result = _cached_lua_result;
     bool ok = lua_result.status == LUA_ENGINE_OK;
     draw_header(c, ok ? "SCRIPT OK" : "SCRIPT ERROR");
     uint16_t col = ok ? theme_get_success() : theme_get_fail();
@@ -314,9 +324,10 @@ void App_AICode::handle_script_list_input(input_event_t ev) {
         std::string path = std::string(AI_SCRIPTS_DIR "/") + _scripts[_script_sel];
         FILE* f = fopen(path.c_str(), "r");
         if (f) {
-            char* buf = new char[AI_LUA_MAX_SCRIPT_BYTES];
+            char* buf = (char*)heap_caps_malloc(AI_LUA_MAX_SCRIPT_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if (!buf) { ESP_LOGE(TAG, "PSRAM alloc failed for script read"); fclose(f); return; }
             size_t n = fread(buf, 1, AI_LUA_MAX_SCRIPT_BYTES-1, f); buf[n]='\0';
-            _ide_buf = buf; delete[] buf; fclose(f);
+            _ide_buf = buf; heap_caps_free(buf); fclose(f);
             _ide_filename = _scripts[_script_sel];
             _ide_cursor = 0; _ide_scroll_line = 0; _ide_dirty = false;
             _screen = Screen::IDE_EDITOR;

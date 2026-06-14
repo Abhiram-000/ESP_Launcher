@@ -91,6 +91,30 @@ weather_err_t weather_service_refresh(void);
 weather_err_t weather_service_set_location(const char* city_name, float lat, float lon, const char* tz_iana);
 
 /**
+ * @brief Clear manual location override and revert to IP geolocation.
+ * 
+ * Removes the NVS-stored manual location. Next refresh will use IP geolocation.
+ * 
+ * @return WEATHER_ERR_OK on success.
+ */
+weather_err_t weather_service_clear_manual_location(void);
+
+/**
+ * @brief Set location by city name (geocodes via Open-Meteo, persists to NVS).
+ * 
+ * @param city_name City name to search for (e.g., "Mahbubnagar").
+ * @return WEATHER_ERR_OK on success.
+ */
+weather_err_t weather_service_set_city(const char* city_name);
+
+/**
+ * @brief Check if a manual location override is active.
+ * 
+ * @return true if user has set a manual location, false if using IP geolocation.
+ */
+bool weather_service_has_manual_location(void);
+
+/**
  * @brief Get current location (from cache or last fetch).
  * 
  * @param out Pointer to location struct to populate.

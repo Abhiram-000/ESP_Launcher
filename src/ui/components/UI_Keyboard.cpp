@@ -1,6 +1,7 @@
 #include "UI_Keyboard.h"
 #include "../theme_mgr.h"
 #include "../../utils/color_utils.h"
+#include "../../config/sys_config.h"
 #include "esp_log.h"
 #include <string.h>
 
@@ -178,10 +179,10 @@ void UI_Keyboard::render(LGFX_Sprite* canvas) {
     uint16_t dim    = theme_get_text_dim();
 
     // ── Full-screen dark overlay ───────────────────────────────────
-    canvas->fillRect(0, 0, canvas->width(), canvas->height(), color_blend(bg, 0x0000, 0.93f));
+    canvas->fillRect(0, 0, canvas->width(), canvas->height(), color_blend(bg, RGB565_BLACK, 0.93f));
 
     // ── Title bar ──────────────────────────────────────────────────
-    canvas->fillRect(0, 0, canvas->width(), 14, color_blend(bg, 0x0000, 0.93f));
+    canvas->fillRect(0, 0, canvas->width(), 14, color_blend(bg, RGB565_BLACK, 0.93f));
     canvas->drawFastHLine(0, 14, canvas->width(), accent);
     canvas->setFont(&fonts::Font0);
     canvas->setTextDatum(textdatum_t::middle_left);

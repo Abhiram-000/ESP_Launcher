@@ -71,6 +71,18 @@ static const char *TAG = "BOOT_CTRL";
 
 /* Boot magic constants are defined in sys_config.h */
 
+/* Splash color constants — theme system not initialized during boot */
+static const uint16_t SPLASH_BG       = 0x0001;  // Near-black (color565(3, 4, 12))
+static const uint16_t SPLASH_TEXT     = 0xFFFF;  // White (color565(255, 255, 255))
+static const uint16_t SPLASH_ACCENT   = 0x07FF;  // Cyan (color565(0, 255, 255))
+static const uint16_t SPLASH_DIM      = 0x1084;  // Dark blue (color565(12, 18, 38))
+static const uint16_t SPLASH_HINT_BOT = 0x0519;  // Darker cyan (color565(0, 160, 200))
+static const uint16_t SPLASH_PROG_BLUE = 0x065F; // Progress blue (color565(0, 200, 255))
+static const uint16_t SPLASH_PROG_WARN = 0xFDA0; // Progress orange (color565(255, 180, 0))
+static const uint16_t SPLASH_PROG_CRIT = 0xF985; // Progress red (color565(255, 50, 40))
+static const uint16_t SPLASH_BAR_EDGE = 0x01EB;  // Bar border (color565(0, 60, 90))
+static const uint16_t SPLASH_BAR_BG   = 0x20E7;  // Bar background (color565(20, 30, 60))
+
 /* ---- Internal helpers ---- */
 
 /*
@@ -239,8 +251,8 @@ static bool display_init_for_splash(void) {
     s_tft->setBrightness(200);
 
     s_canvas->setPsram(true); /* Allocate in 8MB PSRAM to save internal memory */
+    s_canvas->setColorDepth(16); /* Must be set before createSprite */
     s_canvas->createSprite(s_tft->width(), s_tft->height() + 4);
-    s_canvas->setColorDepth(16);
     return true;
 }
 
@@ -252,9 +264,9 @@ static void display_deinit_splash(void) {
 static void draw_splash(float elapsed_ms, float total_ms) {
     if (!s_tft || !s_canvas) return;
 
-    const int W  = s_canvas->width();
-    const int H  = s_canvas->height();
-    const int cx = W / 2;
+    const int32_t W  = LAUNCHER_DISPLAY_W;
+    const int32_t H  = LAUNCHER_DISPLAY_H;
+    const int32_t cx = W / 2;
 
     float remain = (total_ms - elapsed_ms) / 1000.0f;
     if (remain < 0.0f) remain = 0.0f;
@@ -263,19 +275,18 @@ static void draw_splash(float elapsed_ms, float total_ms) {
     if (frac > 1.0f) frac = 1.0f;
 
     /* ─── Background ───────────────────────────────────────────────────── */
-    s_canvas->fillSprite(s_canvas->color565(3, 4, 12));
+    s_canvas->fillSprite(SPLASH_BG);
 
-    const uint16_t dot_col = s_canvas->color565(12, 18, 38);
     for (int y = 8; y < H; y += 14)
         for (int x = 6; x < W; x += 14)
-            s_canvas->drawPixel(x, y, dot_col);
+            s_canvas->drawPixel(x, y, SPLASH_DIM);
 
     /* ─── Top hint (two lines) ──────────────────────────────────────────── */
     s_canvas->setFont(&fonts::Font0);
     s_canvas->setTextDatum(textdatum_t::top_center);
-    s_canvas->setTextColor(s_canvas->color565(0, 255, 255));
+    s_canvas->setTextColor(SPLASH_ACCENT);
     s_canvas->drawString("Press SELECT", cx, 6);
-    s_canvas->setTextColor(s_canvas->color565(0, 160, 200));
+    s_canvas->setTextColor(SPLASH_HINT_BOT);
     s_canvas->drawString("to stay in Launcher", cx, 16);
 
     /* ─── Boot logo (rotated 90° CW, scaled up, lower half) ────────────── */
@@ -290,21 +301,21 @@ static void draw_splash(float elapsed_ms, float total_ms) {
     }
 
     /* ─── Progress bar ──────────────────────────────────────────────────── */
-    const int BAR_X = 12;
-    const int BAR_Y = 122;
-    const int BAR_W = W - 24;
-    const int BAR_H = 5;
+    const int32_t BAR_X = W / 13;
+    const int32_t BAR_Y = H - 6;
+    const int32_t BAR_W = W - 2 * BAR_X;
+    const int32_t BAR_H = 4;
     const int fill  = (int)(frac * (float)(BAR_W - 2));
 
     uint16_t bar_col;
-    if (frac < 0.60f)       bar_col = s_canvas->color565(0, 200, 255);
-    else if (frac < 0.85f)  bar_col = s_canvas->color565(255, 180, 0);
-    else                    bar_col = s_canvas->color565(255, 50, 40);
+    if (frac < 0.60f)       bar_col = SPLASH_PROG_BLUE;
+    else if (frac < 0.85f)  bar_col = SPLASH_PROG_WARN;
+    else                    bar_col = SPLASH_PROG_CRIT;
 
     s_canvas->drawRect(BAR_X - 1, BAR_Y - 1, BAR_W + 2, BAR_H + 2,
-                       s_canvas->color565(0, 60, 90));
+                       SPLASH_BAR_EDGE);
     s_canvas->drawRect(BAR_X, BAR_Y, BAR_W, BAR_H,
-                       s_canvas->color565(20, 30, 60));
+                       SPLASH_BAR_BG);
     if (fill > 0) {
         s_canvas->fillRect(BAR_X + 1, BAR_Y + 1, fill, BAR_H - 2, bar_col);
     }
@@ -314,7 +325,7 @@ static void draw_splash(float elapsed_ms, float total_ms) {
     snprintf(buf, sizeof(buf), "%.1fs", remain);
     s_canvas->setFont(&fonts::Font0);
     s_canvas->setTextDatum(textdatum_t::middle_right);
-    s_canvas->setTextColor(s_canvas->color565(255, 255, 255));
+    s_canvas->setTextColor(SPLASH_TEXT);
     s_canvas->drawString(buf, BAR_X + BAR_W, BAR_Y - 5);
 
     s_canvas->pushSprite(0, -4);

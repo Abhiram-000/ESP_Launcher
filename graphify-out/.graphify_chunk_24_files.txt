@@ -1,0 +1,13 @@
+/home/abhiram/Project/ESP_Launcher/tools/.opencode/docs/_metadata.json
+/home/abhiram/Project/ESP_Launcher/tools/.opencode/docs/agentrouter_org.md
+/home/abhiram/Project/ESP_Launcher/tools/.opencode/docs/agentrouter_org_pricing.md
+/home/abhiram/Project/ESP_Launcher/tools/.opencode/docs/docs_agentrouter_org.md
+/home/abhiram/Project/ESP_Launcher/tools/.opencode/docs/docs_agentrouter_org_codexhtml.md
+/home/abhiram/Project/ESP_Launcher/tools/.opencode/docs/docs_agentrouter_org_geminihtml.md
+/home/abhiram/Project/ESP_Launcher/tools/.opencode/docs/docs_agentrouter_org_kilocodehtml.md
+/home/abhiram/Project/ESP_Launcher/tools/.opencode/docs/docs_agentrouter_org_qwencodehtml.md
+/home/abhiram/Project/ESP_Launcher/tools/.opencode/docs/docs_agentrouter_org_roocodehtml.md
+/home/abhiram/Project/ESP_Launcher/tools/.opencode/docs/docs_agentrouter_org_starthtml.md
+/home/abhiram/Project/ESP_Launcher/tools/.opencode/docs/github_com_opencode-ai_opencode.md
+/home/abhiram/Project/ESP_Launcher/tools/.opencode/docs/github_com_opencode-ai_opencode_blob_main_internal_config_con.md
+/home/abhiram/Project/ESP_Launcher/tools/.opencode/docs/raw_githubusercontent_com_opencode-ai_opencode_main_READMEmd.md

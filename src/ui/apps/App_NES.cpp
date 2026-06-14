@@ -4,6 +4,7 @@
 #include "sys_config.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "osd.h"
 #include <string.h>
 
 static const char* TAG = "App_NES";
@@ -19,19 +20,15 @@ static const char* TAG = "App_NES";
 #define INP_PAD_RIGHT   0x80
 
 // ─── Globals shared with osd_esp32s3.c ────────────────────────────────────
-extern "C" {
-    extern char                  active_nes_rom_path[256];
-    extern volatile uint16_t*         nes_frame_buffer;
-    extern SemaphoreHandle_t     nes_frame_sem;
-    extern volatile uint32_t     nes_input_state;
-    extern volatile bool         nes_should_exit;
-    extern volatile uint8_t      nes_state_cmd;
+extern char                  active_nes_rom_path[256];
+extern volatile uint16_t*         nes_frame_buffer;
+extern SemaphoreHandle_t     nes_frame_sem;
+extern volatile uint32_t     nes_input_state;
+extern volatile bool         nes_should_exit;
+extern volatile uint8_t      nes_state_cmd;
 
-    typedef struct { int type; int data; } nesinput_t;
-    extern nesinput_t joypad_p1;
-
-    int osd_main(int argc, char* argv[]);
-}
+typedef struct { int type; int data; } nesinput_t;
+extern nesinput_t joypad_p1;
 
 #define INP_JOYPAD0 0x0001
 
@@ -103,13 +100,18 @@ App_NES::App_NES()
       _front_buffer(nullptr), _back_buffer(nullptr),
       _emu_task(nullptr), _buffer_mutex(nullptr),
       _nes_buttons(0), _select_held(false), _select_held_since(0),
-      _exit_pending(false), _exit_prompt_shown_at(0)
+      _exit_pending(false), _exit_prompt_shown_at(0),
+      _back_ready(false)
 {
     _rom_path[0] = '\0';
     onEmulatorExit = nullptr;
 }
 
-App_NES::~App_NES() {}
+App_NES::~App_NES() {
+    // Safe cleanup: by the time delete is called (after switch_to_app transition),
+    // the emulator has had ~300ms to honour nes_should_exit and stop writing.
+    _cleanup_resources();
+}
 
 void App_NES::_cleanup_resources() {
     if (_buffer_mutex) { vSemaphoreDelete(_buffer_mutex); _buffer_mutex = nullptr; }
@@ -166,12 +168,17 @@ void App_NES::init() {
         _emu_task_done = true;
         return;
     }
-    /* Give once so the first render() can swap immediately (binary sem starts empty) */
-    xSemaphoreGive(_buffer_mutex);
+    /* Do NOT give the semaphore here — the emulator will give it when
+     * the first frame is ready. The _back_ready flag tracks frame availability. */
 
     // ── Set globals for OSD layer ────────────────────────────────────────
+    SemaphoreHandle_t rom_mutex = osd_get_rom_path_mutex();
+    if (rom_mutex) xSemaphoreTake(rom_mutex, pdMS_TO_TICKS(100));
     strncpy(active_nes_rom_path, _rom_path, 255);
+    active_nes_rom_path[255] = '\0';
+    if (rom_mutex) xSemaphoreGive(rom_mutex);
     nes_frame_buffer = (volatile uint16_t*)_back_buffer;
+    _back_ready = false;
     nes_frame_sem    = _buffer_mutex;
     nes_input_state  = 0;
     nes_should_exit  = false;
@@ -183,6 +190,7 @@ void App_NES::init() {
     _select_held          = false;
     _exit_pending         = false;
     _exit_prompt_shown_at = 0;
+    _back_ready           = false;
 
     // ── Reset boot-loop counter so emulator crashes don't trigger OTA ───
     _reset_boot_count();
@@ -205,25 +213,30 @@ void App_NES::init() {
 }
 
 void App_NES::exit() {
-    ESP_LOGI(TAG, "exit — stopping emulator");
+    ESP_LOGI(TAG, "exit — signalling emulator stop");
     nes_should_exit = true;
-
-    // Give emulator up to 1s to wrap up (it self-deletes via vTaskDelete(NULL))
-    if (_emu_task) {
-        for (int i = 0; i < 100; i++) {
-            vTaskDelay(pdMS_TO_TICKS(10));
-            if (_emu_task_done) break;
-        }
-        if (!_emu_task_done) {
-            ESP_LOGW(TAG, "Emulator task did not exit in time");
-        }
-        _emu_task = nullptr;
-    }
-
-    _cleanup_resources();
+    // Do NOT call _cleanup_resources() here. The emulator task on Core 0 may
+    // still be writing to _back_buffer for up to one more frame after the signal.
+    // switch_to_app() plays a ~300ms transition giving the task time to stop.
+    // Cleanup runs safely from loop() on natural exit, or from ~App_NES() otherwise.
+    _emu_task = nullptr;
 }
 
 void App_NES::loop() {
+    // ── Buffer swap — move from render() to loop() for render-lock safety ─
+    // Emulator gives nes_frame_sem when a frame is done rendering.
+    // Drain any pending signals and mark back buffer ready.
+    while (xSemaphoreTake(_buffer_mutex, 0) == pdTRUE) {
+        _back_ready = true;
+    }
+    if (_back_ready) {
+        uint16_t* tmp = _front_buffer;
+        _front_buffer = _back_buffer;
+        _back_buffer = tmp;
+        nes_frame_buffer = (volatile uint16_t*)_back_buffer;
+        _back_ready = false;
+    }
+
     // ── Detect emulator task finishing naturally ─────────────────────────
     // If the task has exited on its own (ROM finished, unsupported mapper,
     // or OSD returned), fire the exit callback and let caller switch app.
@@ -271,15 +284,9 @@ void App_NES::render(LGFX_Sprite* canvas) {
         return;
     }
 
-    // ── Swap buffers — try to get new frame, skip if emulator is slow ───
-    if (xSemaphoreTake(_buffer_mutex, pdMS_TO_TICKS(5)) == pdTRUE) {
-        uint16_t* tmp  = _front_buffer;
-        _front_buffer  = _back_buffer;
-        _back_buffer   = tmp;
-        nes_frame_buffer = (volatile uint16_t*)_back_buffer;
-        xSemaphoreGive(_buffer_mutex);
-    }
+    // ── Buffer swap was moved to loop() — just use _front_buffer directly ──
 
+    canvas->fillSprite(theme_get_bg());
     canvas->pushImage(0, 0, 160, 128, _front_buffer);
 
     // ── Exit-confirmation overlay ─────────────────────────────────────────

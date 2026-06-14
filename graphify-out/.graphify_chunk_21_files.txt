@@ -1,0 +1,8 @@
+/home/abhiram/Project/ESP_Launcher/src/system/boot_ctrl.cpp
+/home/abhiram/Project/ESP_Launcher/src/system/boot_ctrl.h
+/home/abhiram/Project/ESP_Launcher/src/system/sys_mgr.c
+/home/abhiram/Project/ESP_Launcher/src/system/sys_mgr.h
+/home/abhiram/Project/ESP_Launcher/src/ui/theme_mgr.cpp
+/home/abhiram/Project/ESP_Launcher/src/ui/theme_mgr.h
+/home/abhiram/Project/ESP_Launcher/src/ui/ui_task.cpp
+/home/abhiram/Project/ESP_Launcher/src/ui/ui_task.h

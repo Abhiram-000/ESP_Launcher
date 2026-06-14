@@ -6,6 +6,7 @@
 #include "dns_server.h"
 #include "lwip/sockets.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <string.h>
@@ -13,7 +14,8 @@
 static const char *TAG = "DNS_SRV";
 static TaskHandle_t s_dns_task_handle = NULL;
 static volatile bool s_run_dns = false;
-static int s_dns_socket = -1;
+static volatile int s_dns_socket = -1;
+static const uint8_t s_captive_ip[4] = {192, 168, 4, 1};
 
 typedef struct __attribute__((packed)) {
     uint16_t id;
@@ -42,7 +44,10 @@ static void dns_server_task(void *pvParameters) {
 
     // Set non-blocking or timeout to allow clean shutdowns
     struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };
-    setsockopt(s_dns_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    int ret = setsockopt(s_dns_socket, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    if (ret < 0) {
+        ESP_LOGW(TAG, "setsockopt failed: errno %d", errno);
+    }
 
     if (bind(s_dns_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         ESP_LOGE(TAG, "Failed to bind socket: errno %d", errno);
@@ -52,9 +57,9 @@ static void dns_server_task(void *pvParameters) {
         return;
     }
 
-    uint8_t *rx_buf = malloc(512);
+    uint8_t *rx_buf = heap_caps_malloc(512, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!rx_buf) {
-        ESP_LOGE(TAG, "OOM allocating Rx buffer");
+        ESP_LOGE(TAG, "PSRAM alloc failed: 512 bytes");
         close(s_dns_socket);
         s_dns_socket = -1;
         vTaskDelete(NULL);
@@ -92,7 +97,8 @@ static void dns_server_task(void *pvParameters) {
 
             // Skip QTYPE (2 bytes) & QCLASS (2 bytes)
             int q_end = qname_idx + 4;
-            if (q_end <= len) {
+            // Answer record is 16 bytes; ensure it fits within the 512-byte buffer
+            if (q_end <= len && q_end + 16 <= 512) {
                 // Construct the answer record at the end of the query
                 uint8_t *answer = rx_buf + q_end;
                 
@@ -119,18 +125,21 @@ static void dns_server_task(void *pvParameters) {
                 answer[11] = 0x04;
                 
                 // Resolved IP: 192.168.4.1
-                answer[12] = 192;
-                answer[13] = 168;
-                answer[14] = 4;
-                answer[15] = 1;
+                answer[12] = s_captive_ip[0];
+                answer[13] = s_captive_ip[1];
+                answer[14] = s_captive_ip[2];
+                answer[15] = s_captive_ip[3];
 
                 int resp_len = q_end + 16;
-                sendto(s_dns_socket, rx_buf, resp_len, 0, (struct sockaddr *)&source_addr, socklen);
+                int sent = sendto(s_dns_socket, rx_buf, resp_len, 0, (struct sockaddr *)&source_addr, socklen);
+                if (sent < 0) {
+                    ESP_LOGW(TAG, "sendto failed: errno %d", errno);
+                }
             }
         }
     }
 
-    free(rx_buf);
+    heap_caps_free(rx_buf);
     close(s_dns_socket);
     s_dns_socket = -1;
     s_dns_task_handle = NULL;

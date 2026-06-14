@@ -41,16 +41,18 @@ static bool s_initialized = false;
 static SemaphoreHandle_t s_mutex = NULL;
 static pomo_mode_config_t s_custom_config;
 
-static struct {
-    pomo_state_t state;
-    pomo_mode_t mode;
+typedef struct {
+    pomo_state_t        state;
+    pomo_mode_t         mode;
     pomo_session_type_t session_type;
-    uint32_t remaining_seconds;
-    uint32_t total_seconds;
-    uint8_t cycles_completed;
-    bool auto_progress;
-    uint64_t last_update_us;  // esp_timer timestamp of last tick
-} s_timer;
+    uint32_t            remaining_seconds;
+    uint32_t            total_seconds;
+    uint8_t             cycles_completed;
+    bool                auto_progress;
+    uint64_t            last_update_us;
+} pomo_timer_state_t;
+
+static pomo_timer_state_t s_timer;
 
 static pomo_statistics_t s_stats;
 
@@ -65,8 +67,14 @@ static uint64_t _get_time_us(void) {
 static void _save_stats_to_nvs(void) {
     nvs_handle_t h;
     if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
-        nvs_set_blob(h, NVS_KEY_STATS, &s_stats, sizeof(s_stats));
-        nvs_commit(h);
+        esp_err_t err1 = nvs_set_blob(h, NVS_KEY_STATS, &s_stats, sizeof(s_stats));
+        esp_err_t err2 = nvs_commit(h);
+        if (err1 != ESP_OK) {
+            ESP_LOGW(TAG, "NVS set stats failed: %s", esp_err_to_name(err1));
+        }
+        if (err2 != ESP_OK) {
+            ESP_LOGW(TAG, "NVS commit stats failed: %s", esp_err_to_name(err2));
+        }
         nvs_close(h);
     }
 }
@@ -87,8 +95,14 @@ static void _load_stats_from_nvs(void) {
 static void _save_custom_config_to_nvs(void) {
     nvs_handle_t h;
     if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
-        nvs_set_blob(h, NVS_KEY_CUSTOM_CFG, &s_custom_config, sizeof(s_custom_config));
-        nvs_commit(h);
+        esp_err_t err1 = nvs_set_blob(h, NVS_KEY_CUSTOM_CFG, &s_custom_config, sizeof(s_custom_config));
+        esp_err_t err2 = nvs_commit(h);
+        if (err1 != ESP_OK) {
+            ESP_LOGW(TAG, "NVS set custom config failed: %s", esp_err_to_name(err1));
+        }
+        if (err2 != ESP_OK) {
+            ESP_LOGW(TAG, "NVS commit custom config failed: %s", esp_err_to_name(err2));
+        }
         nvs_close(h);
     }
 }

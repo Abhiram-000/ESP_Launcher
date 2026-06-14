@@ -9,9 +9,7 @@
 
 static const char* TAG = "APP_GAME";
 
-// ui_task provides switch_to_app / switch_to_grid
-extern void switch_to_app(IApp* app);
-extern void switch_to_grid();
+#include "../ui_task.h"
 
 // ─────────────────────────────────────────────────────────────────────────
 //  Colour palette (derived at runtime from theme_get_*)
@@ -21,10 +19,10 @@ static inline uint16_t C_TEXT()    { return theme_get_text(); }
 static inline uint16_t C_DIM()     { return theme_get_text_dim(); }
 static inline uint16_t C_BG()      { return theme_get_bg(); }
 static inline uint16_t C_PANEL()   { return theme_get_bg(); }
-
-static uint16_t COLOR_GREEN;
-static uint16_t COLOR_ORANGE;
-static uint16_t COLOR_RED;
+// Semantic aliases — resolved from theme at call time, never cached as statics
+static inline uint16_t C_SUCCESS() { return theme_get_success(); }
+static inline uint16_t C_WARN()    { return theme_get_accent(); }
+static inline uint16_t C_FAIL()    { return theme_get_fail(); }
 
 // ─────────────────────────────────────────────────────────────────────────
 //  Constructor / Destructor
@@ -39,6 +37,7 @@ App_GameStore::App_GameStore()
 {
     memset(_catalog,  0, sizeof(_catalog));
     memset(_del_candidates, -1, sizeof(_del_candidates));
+    memset(_install_id_buf, 0, sizeof(_install_id_buf));
 }
 
 App_GameStore::~App_GameStore() {
@@ -49,11 +48,6 @@ App_GameStore::~App_GameStore() {
 //  IApp lifecycle
 // ─────────────────────────────────────────────────────────────────────────
 void App_GameStore::init() {
-    // Pre-compute colours from theme
-    COLOR_GREEN  = theme_get_success();
-    COLOR_ORANGE = theme_get_accent();
-    COLOR_RED    = theme_get_fail();
-
     _anim_time     = 0.0f;
     _spinner_angle = 0.0f;
     _list_sel      = 0;
@@ -78,6 +72,9 @@ void App_GameStore::loop() {
 
     game_store_status_t st = {};
     game_store_get_status(&st);
+
+    // Cache for render (no service calls in render path)
+    _download_status = st;
 
     // Watch for completed downloads while on the downloading screen
     if (_screen == Screen::Downloading && !st.is_busy) {
@@ -290,10 +287,10 @@ void App_GameStore::_draw_game_row(LGFX_Sprite* c, int y, const game_entry_t& e,
 
     if (show_status) {
         if (e.is_installed && e.has_update) {
-            c->setTextColor(COLOR_ORANGE);
+            c->setTextColor(C_WARN());
             c->drawString("[+]", W - W / 7, y + H / 12);
         } else if (e.is_installed) {
-            c->setTextColor(COLOR_GREEN);
+            c->setTextColor(C_SUCCESS());
             c->drawString("[v]", W - W / 7, y + H / 12);
         }
     }
@@ -329,18 +326,26 @@ void App_GameStore::_render_local_list(LGFX_Sprite* c) {
     for (int i = 0; i < _catalog_count; i++)
         if (_catalog[i].is_installed) installed++;
 
+    const int32_t W  = c->width();
+    const int32_t H  = c->height();
+    const int32_t CX = W / 2;
+    const int32_t HEADER_H = H / 9;
+    const int32_t ROW_H  = H / 5;
+    const int32_t ROW_Y0 = HEADER_H + 4;
+    const int32_t FOOTER_Y = H - 10;
+
     if (installed == 0) {
         c->setTextDatum(textdatum_t::middle_center);
         c->setFont(&fonts::Font0);
         c->setTextColor(C_DIM());
-        c->drawString("No games installed.", 80, 55);
-        c->drawString("RIGHT -> Store", 80, 70);
+        c->drawString("No games installed.", CX, H * 43 / 100);
+        c->drawString("RIGHT -> Store",      CX, H * 55 / 100);
     } else {
         int row = 0, n = 0;
         for (int i = 0; i < _catalog_count && row < 4; i++) {
             if (!_catalog[i].is_installed) continue;
             if (n >= _list_scroll && row < 4) {
-                _draw_game_row(c, 18 + row * 25, _catalog[i], (n == _list_sel), false);
+                _draw_game_row(c, ROW_Y0 + row * ROW_H, _catalog[i], (n == _list_sel), false);
                 row++;
             }
             n++;
@@ -357,20 +362,23 @@ void App_GameStore::_render_local_list(LGFX_Sprite* c) {
         c->setTextDatum(textdatum_t::middle_left);
         c->setFont(&fonts::Font0);
         c->setTextColor(C_DIM());
-        c->drawString(buf, 4, 116);
-        _draw_progress_bar(c, 70, 112, 86, 8, pct, C_ACCENT());
+        c->drawString(buf, W / 40, FOOTER_Y);
+        _draw_progress_bar(c, W * 44 / 100, FOOTER_Y - 4, W * 54 / 100, H / 16, pct, C_ACCENT());
     }
 
     _draw_footer(c, "SEL=Launch  R=Store  L=Back");
 }
 
 void App_GameStore::_render_store_list(LGFX_Sprite* c) {
-    _draw_header(c, "GAME STORE", COLOR_ORANGE);
+    _draw_header(c, "GAME STORE", C_WARN());
+    const int32_t HEADER_H = c->height() / 9;
+    const int32_t ROW_H  = c->height() / 5;
+    const int32_t ROW_Y0 = HEADER_H + 4;
 
     for (int row = 0; row < 4; row++) {
         int i = _list_scroll + row;
         if (i >= _catalog_count) break;
-        _draw_game_row(c, 18 + row * 25, _catalog[i], (i == _list_sel), true);
+        _draw_game_row(c, ROW_Y0 + row * ROW_H, _catalog[i], (i == _list_sel), true);
     }
 
     _draw_footer(c, "SEL=Detail  L=MyGames");
@@ -385,93 +393,117 @@ void App_GameStore::_render_detail(LGFX_Sprite* c) {
     c->setTextDatum(textdatum_t::top_left);
     c->setFont(&fonts::Font0);
 
+    const int32_t W  = c->width();
+    const int32_t H  = c->height();
+    const int32_t CX = W / 2;
+    const int32_t HEADER_H = H / 9;
+    const int32_t META_Y   = HEADER_H + 4;
+    const int32_t DESC_Y   = META_Y + H / 14;
+    const int32_t BTN_Y    = H * 70 / 100;
+    const int32_t BTN_H    = H / 7;
+    const int32_t MARGIN   = W / 40;
+
     c->setTextColor(C_DIM());
-    c->drawString(g.genre, 4, 18);
+    c->drawString(g.genre, MARGIN, META_Y);
 
     char sz[32];
     snprintf(sz, sizeof(sz), "%dKB  v%s", (int)(g.size_bytes / 1024), g.version);
-    c->drawString(sz, 80, 18);
+    c->drawString(sz, CX, META_Y);
 
-    // Description (word-wrapped manually up to 3 lines)
     c->setTextColor(C_TEXT());
     char desc[129];
     strncpy(desc, g.description, 128); desc[128] = '\0';
-    // Simple fixed-width wrap at 26 chars
     for (int line = 0; line < 3; line++) {
         int start = line * 26;
         if (start >= (int)strlen(g.description)) break;
         char chunk[27]; strncpy(chunk, g.description + start, 26); chunk[26] = '\0';
-        c->drawString(chunk, 4, 30 + line * 10);
+        c->drawString(chunk, MARGIN, DESC_Y + line * (H / 13));
     }
 
-    // Action buttons
     if (g.is_installed) {
-        c->fillRoundRect(4,   90, 72, 18, 4, COLOR_GREEN);
-        c->fillRoundRect(84,  90, 72, 18, 4, COLOR_RED);
+        const int32_t BTN_W = (W - MARGIN * 3) / 2;
+        c->fillRoundRect(MARGIN,           BTN_Y, BTN_W, BTN_H, 4, C_SUCCESS());
+        c->fillRoundRect(MARGIN * 2 + BTN_W, BTN_Y, BTN_W, BTN_H, 4, C_FAIL());
         c->setTextDatum(textdatum_t::middle_center);
         c->setTextColor(C_BG());
-        c->drawString("PLAY",   40, 99);
-        c->drawString("DELETE", 120, 99);
+        c->drawString("PLAY",   MARGIN + BTN_W / 2,           BTN_Y + BTN_H / 2);
+        c->drawString("DELETE", MARGIN * 2 + BTN_W + BTN_W / 2, BTN_Y + BTN_H / 2);
         c->setTextColor(C_DIM());
         c->setFont(&fonts::Font0);
-        c->drawString("SEL=Play  DOWN=Delete", 80, 114);
+        c->drawString("SEL=Play  DOWN=Delete", CX, BTN_Y + BTN_H + H / 22);
     } else {
-        c->fillRoundRect(44, 90, 72, 18, 4, C_ACCENT());
+        const int32_t BTN_W = W / 2;
+        c->fillRoundRect((W - BTN_W) / 2, BTN_Y, BTN_W, BTN_H, 4, C_ACCENT());
         c->setTextDatum(textdatum_t::middle_center);
         c->setTextColor(C_BG());
-        c->drawString(g.has_update ? "UPDATE" : "INSTALL", 80, 99);
+        c->drawString(g.has_update ? "UPDATE" : "INSTALL", CX, BTN_Y + BTN_H / 2);
         c->setTextColor(C_DIM());
         c->setFont(&fonts::Font0);
-        c->drawString("SEL=Install  L=Back", 80, 114);
+        c->drawString("SEL=Install  L=Back", CX, BTN_Y + BTN_H + H / 22);
     }
 
     _draw_footer(c, "L=Back");
 }
 
 void App_GameStore::_render_downloading(LGFX_Sprite* c) {
-    game_store_status_t st = {};
-    game_store_get_status(&st);
+    // Read cached status — no service calls in render path (cached in loop())
+    const game_store_status_t& st = _download_status;
 
     _draw_header(c, "DOWNLOADING", C_ACCENT());
 
-    // Game name
+    const int32_t W  = c->width();
+    const int32_t H  = c->height();
+    const int32_t CX = W / 2;
+    const int32_t HEADER_H = H / 9;
+    const int32_t MARGIN   = W / 20;
+    const int32_t NAME_Y   = HEADER_H + H / 6;
+    const int32_t BAR_Y    = H * 36 / 100;
+    const int32_t BAR_H    = H / 6;
+    const int32_t PCT_Y    = BAR_Y + BAR_H + H / 14;
+    const int32_t KB_Y     = PCT_Y + H / 10;
+
     c->setTextDatum(textdatum_t::middle_center);
     c->setFont(&fonts::Font0);
     c->setTextColor(C_TEXT());
     if (_pending_install_idx >= 0)
-        c->drawString(_catalog[_pending_install_idx].name, 80, 34);
+        c->drawString(_catalog[_pending_install_idx].name, CX, NAME_Y);
 
-    // Liquid progress bar (large)
-    _draw_progress_bar(c, 8, 46, 144, 20, st.progress_pct, C_ACCENT());
+    _draw_progress_bar(c, MARGIN, BAR_Y, W - MARGIN * 2, BAR_H, st.progress_pct, C_ACCENT());
 
-    // Percentage
     char pct_str[8];
     snprintf(pct_str, sizeof(pct_str), "%d%%", st.progress_pct);
     c->setTextColor(C_TEXT());
-    c->drawString(pct_str, 80, 76);
+    c->drawString(pct_str, CX, PCT_Y);
 
-    // KB done / total
     char kb[32];
     snprintf(kb, sizeof(kb), "%dKB / %dKB",
              st.bytes_done / 1024, st.bytes_total / 1024);
     c->setTextColor(C_DIM());
-    c->drawString(kb, 80, 90);
+    c->drawString(kb, CX, KB_Y);
 
     _draw_footer(c, "SEL=Cancel");
 }
 
 void App_GameStore::_render_space_warn(LGFX_Sprite* c) {
-    _draw_header(c, "NOT ENOUGH SPACE", COLOR_ORANGE);
+    _draw_header(c, "NOT ENOUGH SPACE", C_WARN());
+
+    const int32_t W  = c->width();
+    const int32_t H  = c->height();
+    const int32_t CX = W / 2;
+    const int32_t HEADER_H = H / 9;
+    const int32_t MSG_Y    = HEADER_H + H / 14;
+    const int32_t ROW_Y0   = MSG_Y + H / 9;
+    const int32_t ROW_H    = H / 6;
 
     c->setTextDatum(textdatum_t::top_center);
     c->setFont(&fonts::Font0);
     c->setTextColor(C_TEXT());
-    c->drawString("Delete a game to free space:", 80, 18);
+    c->drawString("Delete a game to free space:", CX, MSG_Y);
 
     for (int row = 0; row < _del_count && row < 4; row++) {
         int ci = _del_candidates[row];
         if (ci < 0) continue;
-        _draw_game_row(c, 30 + row * 22, _catalog[ci], (row == _del_sel), false);
+        _draw_game_row(c, ROW_Y0 + row * ROW_H, _catalog[ci], (row == _del_sel), false);
     }
 
     _draw_footer(c, "SEL=Delete  L=Back");
@@ -479,32 +511,38 @@ void App_GameStore::_render_space_warn(LGFX_Sprite* c) {
 
 void App_GameStore::_render_cloud_loading(LGFX_Sprite* c) {
     _draw_header(c, "CONNECTING", C_ACCENT());
-    _draw_spinner(c, 80, 64, 18);
+    const int32_t CX = c->width() / 2;
+    const int32_t H  = c->height();
+    _draw_spinner(c, CX, H / 2, H / 7);
     c->setTextDatum(textdatum_t::middle_center);
     c->setFont(&fonts::Font0);
     c->setTextColor(C_DIM());
-    c->drawString("Fetching catalog...", 80, 95);
+    c->drawString("Fetching catalog...", CX, H * 74 / 100);
 }
 
 void App_GameStore::_render_error(LGFX_Sprite* c) {
-    _draw_header(c, "ERROR", COLOR_RED);
+    _draw_header(c, "ERROR", C_FAIL());
+    const int32_t CX = c->width() / 2;
+    const int32_t H  = c->height();
     c->setTextDatum(textdatum_t::middle_center);
     c->setFont(&fonts::Font0);
-    c->setTextColor(COLOR_RED);
-    c->drawString(_err_string(_last_err), 80, 50);
+    c->setTextColor(C_FAIL());
+    c->drawString(_err_string(_last_err), CX, H * 39 / 100);
     c->setTextColor(C_DIM());
-    c->drawString("SEL=Retry  L=Back", 80, 80);
+    c->drawString("SEL=Retry  L=Back",    CX, H * 63 / 100);
 }
 
 void App_GameStore::_render_no_wifi(LGFX_Sprite* c) {
-    _draw_header(c, "NO WI-FI", COLOR_ORANGE);
+    _draw_header(c, "NO WI-FI", C_WARN());
+    const int32_t CX = c->width() / 2;
+    const int32_t H  = c->height();
     c->setTextDatum(textdatum_t::middle_center);
     c->setFont(&fonts::Font0);
     c->setTextColor(C_TEXT());
-    c->drawString("Connect to Wi-Fi first.", 80, 50);
+    c->drawString("Connect to Wi-Fi first.", CX, H * 39 / 100);
     c->setTextColor(C_DIM());
-    c->drawString("Use Settings -> Wi-Fi", 80, 65);
-    c->drawString("L=Back", 80, 90);
+    c->drawString("Use Settings -> Wi-Fi",  CX, H * 51 / 100);
+    c->drawString("L=Back",                 CX, H * 70 / 100);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -539,11 +577,19 @@ void App_GameStore::_begin_install(int catalog_idx) {
     }
 
     _screen = Screen::Downloading;
-    const char* gid = _catalog[catalog_idx].id;
+    /* Copy the game ID into a stable buffer so the async task has a valid
+     * pointer even if the app is destroyed while the download is in flight. */
+    strncpy(_install_id_buf, _catalog[catalog_idx].id, sizeof(_install_id_buf) - 1);
+    _install_id_buf[sizeof(_install_id_buf) - 1] = '\0';
+
+    // Copy ID to static storage for the task (avoids dangling pointer into app member)
+    static char s_task_id_buf[32];
+    strlcpy(s_task_id_buf, _install_id_buf, sizeof(s_task_id_buf));
+
     xTaskCreate([](void* arg) {
         game_store_install((const char*)arg);
         vTaskDelete(NULL);
-    }, "gs_install", 8192, (void*)gid, 4, nullptr);
+    }, "gs_install", 8192, (void*)s_task_id_buf, 4, nullptr);
 }
 
 void App_GameStore::_build_delete_candidates(uint32_t needed_bytes) {

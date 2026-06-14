@@ -50,6 +50,9 @@ private:
     uint32_t _install_epoch_launched;
     uint32_t _install_epoch_confirmed;
 
+    // Cached download status for render (copied in loop(), read in render)
+    hack_store_status_t _download_status;
+
     void _refresh_catalog_local();
     void _begin_cloud_fetch();
     void _begin_install(int catalog_idx);

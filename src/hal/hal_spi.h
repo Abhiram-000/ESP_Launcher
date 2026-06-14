@@ -10,16 +10,16 @@ extern "C" {
 
 typedef struct {
     spi_host_device_t host;
-    int mosi_pin;
-    int miso_pin;
-    int sclk_pin;
-    int max_transfer_sz;
+    int8_t mosi_pin;
+    int8_t miso_pin;
+    int8_t sclk_pin;
+    size_t max_transfer_sz;
     uint32_t dma_chan;
 } hal_spi_bus_config_t;
 
 typedef struct {
-    int cs_pin;
-    int dc_pin;
+    int8_t cs_pin;
+    int8_t dc_pin;
     uint32_t clock_speed_hz;
     uint8_t mode;
     uint8_t queue_size;

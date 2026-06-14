@@ -20,6 +20,14 @@ extern "C" {
 // LED Settings
 #define LAUNCHER_PIN_LED          48
 
+// Display SPI pins
+#define LAUNCHER_PIN_SCLK    12
+#define LAUNCHER_PIN_MOSI    11
+#define LAUNCHER_PIN_DC       9
+#define LAUNCHER_PIN_CS       8
+#define LAUNCHER_PIN_RST     10
+#define LAUNCHER_PIN_BL       4
+
 #ifdef __cplusplus
 }
 #endif

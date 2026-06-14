@@ -19,7 +19,7 @@ static const char* TAG = "APP_OTA";
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-extern void switch_to_grid();
+#include "../ui_task.h"
 
 static bool is_ota_ui_state(ota_state_t state) {
     return state >= OTA_STATE_IDLE && state <= OTA_STATE_FAILED;
@@ -27,7 +27,7 @@ static bool is_ota_ui_state(ota_state_t state) {
 
 App_OTA::App_OTA()
     : smooth_progress(0), last_progress(0), activity(0),
-      anim_time(0), shockwave_r(0),
+      _anim_time(0), shockwave_r(0),
       display_kbps(0), start_tick_ms(0), elapsed_ms(0),
       reboot_countdown_ms(0) {
     local_msg.state    = OTA_STATE_IDLE;
@@ -46,7 +46,7 @@ void App_OTA::init() {
     display_kbps        = 0;
     start_tick_ms       = 0;   /* Must reset so elapsed doesn't carry over */
     elapsed_ms          = 0;
-    anim_time           = 0;
+    _anim_time           = 0;
     reboot_countdown_ms = 0;   /* Reset reboot countdown */
     local_msg.state    = OTA_STATE_IDLE;
     local_msg.progress = 0.0f;
@@ -114,7 +114,7 @@ void App_OTA::loop() {
         elapsed_ms = xTaskGetTickCount() * portTICK_PERIOD_MS - start_tick_ms;
     }
 
-    anim_time += 0.05f;
+    _anim_time += 0.05f;
 }
 
 void App_OTA::handleInput(input_event_t event) {
@@ -219,7 +219,7 @@ void App_OTA::draw_phase_dots(LGFX_Sprite* canvas, int cx, int bottom_y) {
             col = theme_get_fail();
         } else if (is_current) {
             /* Animated active dot */
-            float alpha = 0.5f + 0.5f * sinf(anim_time * 4.0f);
+            float alpha = 0.5f + 0.5f * sinf(_anim_time * 4.0f);
             col = color_blend(theme_get_accent(),
                               theme_get_bg(), alpha);
         } else if (is_past) {
@@ -283,7 +283,15 @@ void App_OTA::render(LGFX_Sprite* canvas) {
     canvas->setFont(&fonts::Font0);
     canvas->setTextDatum(textdatum_t::top_center);
     canvas->setTextColor(theme_get_text_dim());
-    canvas->drawString("OTA FIRMWARE UPDATE", cx, 3);
+    canvas->drawString("OTA FIRMWARE UPDATE", cx, H / 42);
+
+    /* ---- IP instruction for IDLE/CONNECTED states ---- */
+    if (local_msg.state == OTA_STATE_IDLE ||
+        local_msg.state == OTA_STATE_CONNECTED) {
+        canvas->setTextColor(theme_get_accent());
+        canvas->setTextDatum(textdatum_t::top_center);
+        canvas->drawString("Open 192.168.4.1", cx, H / 10);
+    }
 
     /* ---- Determine tank level & colour per state ---- */
     uint16_t state_color    = theme_get_accent();
@@ -292,11 +300,11 @@ void App_OTA::render(LGFX_Sprite* canvas) {
     switch (local_msg.state) {
         case OTA_STATE_IDLE:
             state_color   = theme_get_text_dim();
-            display_level = 12.0f + 3.0f * sinf(anim_time * 1.2f);
+            display_level = 12.0f + 3.0f * sinf(_anim_time * 1.2f);
             break;
         case OTA_STATE_CONNECTED:
             state_color   = theme_get_accent();
-            display_level = 28.0f + 6.0f * sinf(anim_time * 2.5f);
+            display_level = 28.0f + 6.0f * sinf(_anim_time * 2.5f);
             break;
         case OTA_STATE_FLASHING:
         case OTA_STATE_VALIDATING:
@@ -318,7 +326,7 @@ void App_OTA::render(LGFX_Sprite* canvas) {
     /* ---- Tank (centre of screen, offset up to leave room below) ---- */
     const int tank_cy = H / 2 - 8;
     draw_liquid_tank(canvas, cx, tank_cy, 30, display_level,
-                     anim_time, activity, state_color);
+                     _anim_time, activity, state_color);
 
     /* ---- Percent label inside tank ---- */
     if (local_msg.state == OTA_STATE_FLASHING ||
@@ -377,26 +385,28 @@ void App_OTA::render(LGFX_Sprite* canvas) {
     }
 
     /* ---- Phase dot indicator ---- */
-    draw_phase_dots(canvas, cx, H - 30);
+    draw_phase_dots(canvas, cx, H - 27);
 
     /* ---- Stats row (KB/s + elapsed) ---- */
-    draw_stats_row(canvas, cx, H - 22);
+    draw_stats_row(canvas, cx, H - 19);
 
     /* ---- Status message ---- */
     canvas->setFont(&fonts::Font0);
     canvas->setTextDatum(textdatum_t::bottom_center);
     canvas->setTextColor(state_color);
-    canvas->drawString(local_msg.msg, cx, H - 12);
+    canvas->drawString(local_msg.msg, cx, H - 16);
 
     /* ---- Network info footer ---- */
     if (local_msg.state == OTA_STATE_IDLE ||
         local_msg.state == OTA_STATE_CONNECTED) {
         canvas->setTextColor(theme_get_text_dim());
+        canvas->setTextDatum(textdatum_t::bottom_center);
         char ap_str[28];
         snprintf(ap_str, sizeof(ap_str), "AP: %.20s", APP_WIFI_SSID);
         canvas->drawString(ap_str, cx, H - 4);
     } else if (local_msg.state != OTA_STATE_FLASHING) {
         canvas->setTextColor(theme_get_success());
+        canvas->setTextDatum(textdatum_t::bottom_center);
         canvas->drawString("192.168.4.1", cx, H - 4);
     }
 }

@@ -97,4 +97,10 @@ private:
 
     // Pending install index (set before entering SpaceWarn)
     int  _pending_install_idx;
+
+    // Stable ID buffer for async install task — prevents dangling pointer into _catalog
+    char _install_id_buf[32];
+
+    // Cached download status for render (copied in loop(), read in render)
+    game_store_status_t _download_status;
 };

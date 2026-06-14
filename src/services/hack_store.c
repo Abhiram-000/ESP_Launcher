@@ -20,7 +20,7 @@
 #include "freertos/semphr.h"
 #include <string.h>
 
-static const char* TAG = "HackStore";
+static const char* TAG = "HACK_STORE";
 
 static void _set_boot_allow_ota1_and_restart(void) {
     esp_partition_pos_t allow_ota1 = {
@@ -29,7 +29,7 @@ static void _set_boot_allow_ota1_and_restart(void) {
     };
     bootloader_common_update_rtc_retain_mem(&allow_ota1, false);
     ESP_LOGI(TAG, "RTC flag set (BOOT_ALLOW_OTA1) — hook will let ota_1 boot");
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(HS_PRE_REBOOT_DELAY_MS));
     esp_restart();
 }
 
@@ -43,11 +43,6 @@ static bool _url_is_valid(const char *url) {
     return (strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 8) == 0);
 }
 
-#define CATALOG_URL "https://raw.githubusercontent.com/Abhiram9641/ESP_Store/main/firmware_catalog.json"
-
-#define HTTP_TIMEOUT_MS 10000
-#define DL_CHUNK_SIZE 8192
-
 static hack_store_status_t hs_status;
 static hack_entry_t hs_catalog[HACK_STORE_MAX_FIRMS];
 static int hs_catalog_count = 0;
@@ -60,7 +55,7 @@ static EventGroupHandle_t hs_event_group = NULL;
 #define HS_EVT_DL_DONE      (1 << 2)
 #define HS_EVT_DL_FAIL      (1 << 3)
 
-static TaskHandle_t current_task_handle = NULL;
+static TaskHandle_t s_current_task_handle = NULL;
 static volatile bool s_abort_requested = false;
 static char s_ota_id_buf[32] = {0};  // Stable buffer for ID passed to OTA task
 
@@ -128,8 +123,14 @@ static void _load_installed_id(void) {
 static void _save_installed_id(const char* id) {
     nvs_handle_t h;
     if (nvs_open("hack_store", NVS_READWRITE, &h) == ESP_OK) {
-        nvs_set_str(h, "installed_id", id);
-        nvs_commit(h);
+        esp_err_t err1 = nvs_set_str(h, "installed_id", id);
+        esp_err_t err2 = nvs_commit(h);
+        if (err1 != ESP_OK) {
+            ESP_LOGW(TAG, "NVS set installed_id failed: %s", esp_err_to_name(err1));
+        }
+        if (err2 != ESP_OK) {
+            ESP_LOGW(TAG, "NVS commit installed_id failed: %s", esp_err_to_name(err2));
+        }
         nvs_close(h);
     }
     _hs_lock();
@@ -178,7 +179,7 @@ static void _cloud_fetch_task(void *pvParameters) {
     (void)pvParameters;
     _hs_status_set_error(HACK_STORE_ERR_OK);
 
-    ESP_LOGI(TAG, "Starting cloud fetch from: %s", CATALOG_URL);
+    ESP_LOGI(TAG, "Starting cloud fetch from: %s", HS_CATALOG_URL);
     if (!wifi_mgr_is_connected()) {
         ESP_LOGE(TAG, "Cloud fetch failed: No Wi-Fi connection");
         _hs_status_set_error(HACK_STORE_ERR_NO_WIFI);
@@ -186,20 +187,20 @@ static void _cloud_fetch_task(void *pvParameters) {
     }
 
     char fetch_url[256];
-    snprintf(fetch_url, sizeof(fetch_url), "%s?t=%lu", CATALOG_URL, (unsigned long)esp_random());
+    snprintf(fetch_url, sizeof(fetch_url), "%s?t=%lu", HS_CATALOG_URL, (unsigned long)esp_random());
     
     esp_http_client_config_t config = {
         .url = fetch_url,
         .crt_bundle_attach = esp_crt_bundle_attach,
-        .timeout_ms = HTTP_TIMEOUT_MS,
+        .timeout_ms = HS_HTTP_TIMEOUT_MS,
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
-    
-    char *buffer = heap_caps_malloc(16 * 1024, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+
+    char *buffer = heap_caps_malloc(HS_CATALOG_BUFFER_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buffer) {
-        ESP_LOGE(TAG, "Failed to alloc 16KB SPIRAM buffer for catalog");
+        ESP_LOGE(TAG, "Failed to alloc %u B SPIRAM buffer for catalog", HS_CATALOG_BUFFER_SIZE);
         esp_http_client_cleanup(client);
-        _hs_status_set_error(HACK_STORE_ERR_FLASHING);
+        _hs_status_set_error(HACK_STORE_ERR_NETWORK);
         goto fetch_fail;
     }
 
@@ -207,7 +208,7 @@ static void _cloud_fetch_task(void *pvParameters) {
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_http_client_open failed: %s", esp_err_to_name(err));
         _hs_status_set_error(HACK_STORE_ERR_NETWORK);
-        free(buffer);
+        heap_caps_free(buffer);
         esp_http_client_cleanup(client);
         goto fetch_fail;
     }
@@ -217,15 +218,15 @@ static void _cloud_fetch_task(void *pvParameters) {
     ESP_LOGI(TAG, "HTTP fetch headers complete, status code: %d", status_code);
     if (content_len < 0) {
         _hs_status_set_error(HACK_STORE_ERR_NETWORK);
-        free(buffer);
+        heap_caps_free(buffer);
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
         goto fetch_fail;
     }
-    if (content_len >= (16 * 1024)) {
+    if (content_len >= (int)HS_CATALOG_BUFFER_SIZE) {
         ESP_LOGE(TAG, "Firmware catalog too large: %d bytes", content_len);
         _hs_status_set_error(HACK_STORE_ERR_BAD_METADATA);
-        free(buffer);
+        heap_caps_free(buffer);
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
         goto fetch_fail;
@@ -233,13 +234,14 @@ static void _cloud_fetch_task(void *pvParameters) {
 
     int read_len = 0;
     int total_read = 0;
-    while ((read_len = esp_http_client_read(client, buffer + total_read, 16384 - total_read - 1)) > 0) {
+    while ((read_len = esp_http_client_read(client, buffer + total_read,
+                                            (int)HS_CATALOG_BUFFER_SIZE - total_read - 1)) > 0) {
         if (s_abort_requested) {
             _hs_status_set_error(HACK_STORE_ERR_ABORTED);
             break;
         }
         total_read += read_len;
-        if (total_read >= (16 * 1024) - 1) {
+        if (total_read >= (int)HS_CATALOG_BUFFER_SIZE - 1) {
             _hs_status_set_error(HACK_STORE_ERR_BAD_METADATA);
             break;
         }
@@ -259,14 +261,14 @@ static void _cloud_fetch_task(void *pvParameters) {
     }
 
     if (status.last_error != HACK_STORE_ERR_OK) {
-        free(buffer);
+        heap_caps_free(buffer);
         goto fetch_fail;
     }
 
     if (total_read <= 0 || status_code != 200) {
         ESP_LOGE(TAG, "Network error or bad status code. read=%d, status=%d", total_read, status_code);
         _hs_status_set_error(HACK_STORE_ERR_NETWORK);
-        free(buffer);
+        heap_caps_free(buffer);
         goto fetch_fail;
     }
 
@@ -280,12 +282,12 @@ static void _cloud_fetch_task(void *pvParameters) {
         } else {
             ESP_LOGE(TAG, "JSON Parse Error (unknown)");
         }
-        free(buffer);
+        heap_caps_free(buffer);
         _hs_status_set_error(HACK_STORE_ERR_BAD_METADATA);
         goto fetch_fail;
     }
     
-    free(buffer);
+    heap_caps_free(buffer);
 
     _hs_lock();
     hs_catalog_count = 0;
@@ -323,7 +325,7 @@ static void _cloud_fetch_task(void *pvParameters) {
     ESP_LOGI(TAG, "Catalog fetch successful. Total items: %d", catalog_count);
     _hs_status_set_busy(false);
     s_abort_requested = false;
-    current_task_handle = NULL;
+    s_current_task_handle = NULL;
     xEventGroupSetBits(hs_event_group, HS_EVT_CATALOG_DONE);
     vTaskDelete(NULL);
     return;
@@ -331,7 +333,7 @@ static void _cloud_fetch_task(void *pvParameters) {
 fetch_fail:
     _hs_status_set_busy(false);
     s_abort_requested = false;
-    current_task_handle = NULL;
+    s_current_task_handle = NULL;
     xEventGroupSetBits(hs_event_group, HS_EVT_CATALOG_FAIL);
     vTaskDelete(NULL);
 }
@@ -380,13 +382,13 @@ static void _ota_download_task(void *pvParameters) {
     esp_http_client_config_t config = {
         .url = url_buf,
         .crt_bundle_attach = esp_crt_bundle_attach,
-        .timeout_ms = HTTP_TIMEOUT_MS,
+        .timeout_ms = HS_HTTP_TIMEOUT_MS,
         .event_handler = _http_event_handle,
         .max_redirection_count = 3, // GitHub releases redirect to AWS
     };
     esp_http_client_handle_t client = esp_http_client_init(&config);
-    
-    char *buffer = heap_caps_malloc(DL_CHUNK_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+
+    char *buffer = heap_caps_malloc(HS_DL_CHUNK_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buffer) {
         _hs_status_set_error(HACK_STORE_ERR_FLASHING);
         esp_http_client_cleanup(client);
@@ -395,7 +397,7 @@ static void _ota_download_task(void *pvParameters) {
 
     if (esp_http_client_open(client, 0) != ESP_OK) {
         _hs_status_set_error(HACK_STORE_ERR_NETWORK);
-        free(buffer);
+        heap_caps_free(buffer);
         esp_http_client_cleanup(client);
         goto dl_fail;
     }
@@ -407,7 +409,7 @@ static void _ota_download_task(void *pvParameters) {
     if (esp_ota_begin(ota1, OTA_WITH_SEQUENTIAL_WRITES, &update_handle) != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_begin failed");
         _hs_status_set_error(HACK_STORE_ERR_FLASHING);
-        free(buffer);
+        heap_caps_free(buffer);
         esp_http_client_close(client);
         esp_http_client_cleanup(client);
         goto dl_fail;
@@ -415,7 +417,7 @@ static void _ota_download_task(void *pvParameters) {
 
     // 4. Stream data
     int read_len;
-    while ((read_len = esp_http_client_read(client, buffer, DL_CHUNK_SIZE)) > 0) {
+    while ((read_len = esp_http_client_read(client, buffer, HS_DL_CHUNK_SIZE)) > 0) {
         if (s_abort_requested) {
             ESP_LOGW(TAG, "Aborted cooperatively");
             _hs_status_set_error(HACK_STORE_ERR_ABORTED);
@@ -436,7 +438,7 @@ static void _ota_download_task(void *pvParameters) {
         }
     }
 
-    free(buffer);
+    heap_caps_free(buffer);
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
 
@@ -459,7 +461,7 @@ static void _ota_download_task(void *pvParameters) {
 dl_fail:
     _hs_status_set_busy(false);
     s_abort_requested = false;
-    current_task_handle = NULL;
+    s_current_task_handle = NULL;
     xEventGroupSetBits(hs_event_group, HS_EVT_DL_FAIL);
     vTaskDelete(NULL);
 }
@@ -479,7 +481,7 @@ hack_store_err_t hack_store_init(void) {
     configASSERT(hs_mutex != NULL);
     _load_installed_id();
     ESP_LOGI(TAG, "HackStore initialized. Installed ID: '%s'", hs_installed_id);
-    ESP_LOGI(TAG, "Catalog URL: %s", CATALOG_URL);
+    ESP_LOGI(TAG, "Catalog URL: %s", HS_CATALOG_URL);
     ESP_LOGI(TAG, "Free heap: %lu B, Free PSRAM: %lu B",
              (unsigned long)esp_get_free_heap_size(),
              (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
@@ -538,11 +540,11 @@ hack_store_err_t hack_store_refresh_catalog(void) {
         _cloud_fetch_task, "hs_cat",
         12288,          /* 12KB — TLS + HTTP + cJSON headroom */
         NULL, 5,
-        &current_task_handle, 0);
+        &s_current_task_handle, 0);
 
     if (rc != pdPASS) {
         ESP_LOGE(TAG, "Failed to create hs_cat task (out of memory?)");
-        current_task_handle = NULL;
+        s_current_task_handle = NULL;
         _hs_status_set_busy(false);
         _hs_status_set_error(HACK_STORE_ERR_NETWORK);
         return HACK_STORE_ERR_NETWORK;
@@ -600,11 +602,11 @@ hack_store_err_t hack_store_install(const char* id) {
     BaseType_t rc = xTaskCreatePinnedToCore(
         _ota_download_task, "hs_dl",
         12288, (void*)s_ota_id_buf, 5,
-        &current_task_handle, 0);
+        &s_current_task_handle, 0);
 
     if (rc != pdPASS) {
         ESP_LOGE(TAG, "Failed to create hs_dl task (out of memory?)");
-        current_task_handle = NULL;
+        s_current_task_handle = NULL;
         _hs_status_set_busy(false);
         _hs_status_set_error(HACK_STORE_ERR_NETWORK);
         return HACK_STORE_ERR_NETWORK;
@@ -616,19 +618,11 @@ hack_store_err_t hack_store_install(const char* id) {
 hack_store_err_t hack_store_abort(void) {
     hack_store_status_t status;
     _hs_status_snapshot(&status);
-    if (!status.is_busy || !current_task_handle) {
+    if (!status.is_busy || !s_current_task_handle) {
         return HACK_STORE_ERR_OK;
     }
 
     s_abort_requested = true;
-    for (int i = 0; i < 30; i++) {
-        vTaskDelay(pdMS_TO_TICKS(20));
-        if (current_task_handle == NULL) {
-            _hs_status_set_error(HACK_STORE_ERR_ABORTED);
-            return HACK_STORE_ERR_OK;
-        }
-    }
-
     _hs_status_set_error(HACK_STORE_ERR_ABORTED);
     return HACK_STORE_ERR_OK;
 }

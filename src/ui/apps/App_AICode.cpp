@@ -13,7 +13,7 @@
 
 static const char* TAG = "App_AICode";
 
-extern void switch_to_grid();
+#include "../ui_task.h"
 
 const char* App_AICode::MENU_LABELS[App_AICode::MENU_ITEMS] = {
     "Chat with AI", "Lua IDE", "Scripts", "Settings"
@@ -46,6 +46,8 @@ App_AICode::App_AICode()
       _chat_select_sel(0),
       _llm_busy(false), _llm_done(false),
       _state_mutex(nullptr),
+      _cached_llm_busy(false),
+      _cached_lua_result({}),
       _ide_cursor(0), _ide_scroll_line(0), _ide_dirty(false),
       _script_sel(0),
       _lua_done(false)
@@ -147,8 +149,12 @@ void App_AICode::loop() {
     _anim += 0.05f;
     _wifi_scanner.loop();
 
+    // Cache shared state under mutex for render helpers (no mutex in render path)
     if (_state_mutex) {
         if (xSemaphoreTake(_state_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            _cached_chat_display = _chat_display;
+            _cached_llm_busy = _llm_busy;
+            _cached_lua_result = _lua_result;
             if (_lua_done) {
                 _lua_done = false;
                 _screen = Screen::LUA_RESULT;

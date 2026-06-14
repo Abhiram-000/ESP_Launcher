@@ -1,6 +1,7 @@
 #pragma once
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
+#include "platform/board.h"
 
 class LGFX_ESP32S3_ST7735 : public lgfx::LGFX_Device {
   lgfx::Panel_ST7735S _panel_instance;
@@ -15,10 +16,10 @@ public:
       cfg.spi_mode = 0;
       cfg.freq_write = 40000000;    // Increased from 27MHz to 40MHz for ST7735S
       cfg.freq_read = 16000000;
-      cfg.pin_sclk = 12;            
-      cfg.pin_mosi = 11;            
-      cfg.pin_miso = -1;            
-      cfg.pin_dc   = 9;
+      cfg.pin_sclk = LAUNCHER_PIN_SCLK;
+      cfg.pin_mosi = LAUNCHER_PIN_MOSI;
+      cfg.pin_miso = -1;
+      cfg.pin_dc   = LAUNCHER_PIN_DC;
       cfg.dma_channel = SPI_DMA_CH_AUTO; // Enable DMA for optimal performance
       cfg.spi_3wire = false;
       _bus_instance.config(cfg);
@@ -27,8 +28,8 @@ public:
 
     { // Configure Panel
       auto cfg = _panel_instance.config();
-      cfg.pin_cs           = 8;     
-      cfg.pin_rst          = 10;    
+      cfg.pin_cs           = LAUNCHER_PIN_CS;
+      cfg.pin_rst          = LAUNCHER_PIN_RST;    
       cfg.panel_width      = 128;
       cfg.panel_height     = 160;
       cfg.offset_x         = 0;
@@ -42,7 +43,7 @@ public:
 
     { // Configure Backlight
       auto cfg = _light_instance.config();
-      cfg.pin_bl = 4;               
+      cfg.pin_bl = LAUNCHER_PIN_BL;               
       cfg.invert = false;           
       cfg.freq   = 5000;
       cfg.pwm_channel = 0;

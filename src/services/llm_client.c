@@ -16,12 +16,15 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 
 static const char* TAG = "LLM";
 
 /* ── Internal state ─────────────────────────────────────────────────────── */
 static char s_api_key[128]  = {0};
 static char s_model[64]     = AI_LLM_MODEL_DEFAULT;
+static char s_line_buf[512];
+static char s_token_buf[128];
 
 /* Per-request streaming context */
 typedef struct {
@@ -95,12 +98,28 @@ static void _trim_history(void) {
     char* buf = (char*)heap_caps_malloc(kept_len + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buf) { fclose(f); return; }
     fseek(f, kept_start, SEEK_SET);
-    fread(buf, 1, kept_len, f); fclose(f);
+    size_t n = fread(buf, 1, kept_len, f);
+    if (n != (size_t)kept_len) {
+        ESP_LOGW(TAG, "fread short: %zu vs %zu", n, (size_t)kept_len);
+    }
+    fclose(f);
 
     char tmp_path[64];
     snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", AI_HISTORY_PATH);
     FILE* w = fopen(tmp_path, "wb");
-    if (w) { fwrite(buf, 1, kept_len, w); fclose(w); rename(tmp_path, AI_HISTORY_PATH); }
+    if (w) {
+        bool ok = (fwrite(buf, 1, kept_len, w) == (size_t)kept_len);
+        fclose(w);
+        if (ok) {
+            if (rename(tmp_path, AI_HISTORY_PATH) != 0) {
+                ESP_LOGE(TAG, "history rename failed");
+                unlink(tmp_path);
+            }
+        } else {
+            ESP_LOGE(TAG, "history fwrite failed");
+            unlink(tmp_path);
+        }
+    }
     heap_caps_free(buf);
 }
 
@@ -149,7 +168,20 @@ void llm_client_commit_reply(const char* reply, size_t len) {
 }
 
 /* ── Build conversation JSON from history + new message ────────────────── */
+/* Safe snprintf wrapper: advances *pos by bytes actually written (never past limit). */
+static void _sn_append(char* buf, int* pos, int buf_cap, const char* fmt, ...) {
+    if (*pos >= buf_cap) return;
+    int remain = buf_cap - *pos;
+    va_list ap;
+    va_start(ap, fmt);
+    int w = vsnprintf(buf + *pos, (size_t)remain, fmt, ap);
+    va_end(ap);
+    if (w > 0) *pos += (w < remain ? w : remain - 1);
+}
+
 static char* _build_payload(const char* user_msg) {
+    const int BUF_CAP = AI_CONTEXT_MAX_CHARS + 2048;
+
     /* Header */
     char header[256];
     snprintf(header, sizeof(header),
@@ -171,16 +203,16 @@ static char* _build_payload(const char* user_msg) {
     FILE* fp = fopen(AI_SYSPROMPT_PATH, "r");
     if (fp) { fread(sysprompt, 1, sizeof(sysprompt) - 1, fp); fclose(fp); }
 
-    char* payload = (char*)heap_caps_malloc(AI_CONTEXT_MAX_CHARS + 2048, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    char* payload = (char*)heap_caps_malloc(BUF_CAP, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!payload) return NULL;
     int pos = 0;
-    
+
     char* esc_sys = _escape_json(sysprompt);
     if (esc_sys) {
-        pos += snprintf(payload + pos, 2048, "%s{\"role\":\"system\",\"content\":\"%s\"},", header, esc_sys);
+        _sn_append(payload, &pos, BUF_CAP, "%s{\"role\":\"system\",\"content\":\"%s\"},", header, esc_sys);
         heap_caps_free(esc_sys);
     } else {
-        pos += snprintf(payload + pos, 2048, "%s{\"role\":\"system\",\"content\":\"%s\"},", header, sysprompt);
+        _sn_append(payload, &pos, BUF_CAP, "%s{\"role\":\"system\",\"content\":\"%s\"},", header, sysprompt);
     }
 
     /* Append history */
@@ -189,13 +221,10 @@ static char* _build_payload(const char* user_msg) {
         char line[512];
         while (fgets(line, sizeof(line), hist)) {
             int l = strlen(line);
-            if (line[l-1] == '\n') line[l-1] = '\0';
-            l = strlen(line);
-            if (l < 5 || line[0] != '{' || line[l-1] != '}') {
-                continue; // Skip malformed or empty history lines
-            }
+            if (l > 0 && line[l-1] == '\n') line[--l] = '\0';
+            if (l < 5 || line[0] != '{' || line[l-1] != '}') continue;
             if (pos < AI_CONTEXT_MAX_CHARS) {
-                pos += snprintf(payload + pos, AI_CONTEXT_MAX_CHARS - pos, "%s,", line);
+                _sn_append(payload, &pos, BUF_CAP, "%s,", line);
             }
         }
         fclose(hist);
@@ -203,12 +232,11 @@ static char* _build_payload(const char* user_msg) {
 
     /* Current user message */
     char* esc_user = _escape_json(user_msg);
-    size_t remain = (pos < AI_CONTEXT_MAX_CHARS + 2048) ? AI_CONTEXT_MAX_CHARS + 2048 - pos : 0;
     if (esc_user) {
-        pos += snprintf(payload + pos, remain, "{\"role\":\"user\",\"content\":\"%s\"}]}", esc_user);
+        _sn_append(payload, &pos, BUF_CAP, "{\"role\":\"user\",\"content\":\"%s\"}]}", esc_user);
         heap_caps_free(esc_user);
     } else {
-        pos += snprintf(payload + pos, remain, "{\"role\":\"user\",\"content\":\"%s\"}]}", user_msg);
+        _sn_append(payload, &pos, BUF_CAP, "{\"role\":\"user\",\"content\":\"%s\"}]}", user_msg);
     }
     return payload;
 }
@@ -240,28 +268,28 @@ static esp_err_t _http_event(esp_http_client_event_t* evt) {
     int   len  = evt->data_len;
 
     /* Split data by newline — each SSE line is "data: {...}\n" */
-    char line[512] = {0};
+    memset(s_line_buf, 0, sizeof(s_line_buf));
     int  lp = 0;
     for (int i = 0; i < len; i++) {
         if (data[i] == '\n') {
-            line[lp] = '\0';
-            if (strncmp(line, "data: ", 6) == 0) {
-                char token[128] = {0};
-                if (_extract_content(line + 6, token, sizeof(token)) && token[0]) {
+            s_line_buf[lp] = '\0';
+            if (strncmp(s_line_buf, "data: ", 6) == 0) {
+                memset(s_token_buf, 0, sizeof(s_token_buf));
+                if (_extract_content(s_line_buf + 6, s_token_buf, sizeof(s_token_buf)) && s_token_buf[0]) {
                     /* Deliver token to UI */
-                    if (ctx->cb) ctx->cb(token, strlen(token), ctx->user);
+                    if (ctx->cb) ctx->cb(s_token_buf, strlen(s_token_buf), ctx->user);
                     /* Accumulate for history */
-                    size_t tl = strlen(token);
+                    size_t tl = strlen(s_token_buf);
                     if (ctx->reply_len + tl + 1 < ctx->reply_cap) {
-                        memcpy(ctx->reply_buf + ctx->reply_len, token, tl);
+                        memcpy(ctx->reply_buf + ctx->reply_len, s_token_buf, tl);
                         ctx->reply_len += tl;
                         ctx->reply_buf[ctx->reply_len] = '\0';
                     }
                 }
             }
             lp = 0;
-        } else if (lp < (int)sizeof(line) - 1) {
-            line[lp++] = data[i];
+        } else if (lp < (int)sizeof(s_line_buf) - 1) {
+            s_line_buf[lp++] = data[i];
         }
     }
     return ESP_OK;

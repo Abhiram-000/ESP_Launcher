@@ -4,6 +4,7 @@
 #include "../../include/LGFX_Config.h"
 #include "../../managers/input_mgr.h"
 #include "../../services/wifi_mgr.h"
+#include "../../config/sys_config.h"
 #include "UI_Keyboard.h"
 
 class UI_WifiScanner {
@@ -33,7 +34,7 @@ private:
     float _anim_time;
     float _spinner_angle;
     
-    wifi_scan_info_t _networks[15];
+    wifi_scan_info_t _networks[MAX_WIFI_NETWORKS];
     int _network_count;
     int _list_sel;
     int _list_scroll;
@@ -41,7 +42,7 @@ private:
     char _selected_ssid[33];
     char _password[64];
     bool _connect_success;
-    int _connect_timeout_ticks;
+    uint32_t _connect_start_ms;
 
     UI_Keyboard _keyboard;
     std::function<void(bool)> _on_complete;

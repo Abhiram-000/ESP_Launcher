@@ -49,4 +49,7 @@ private:
     // Exit-confirmation overlay
     bool       _exit_pending;
     TickType_t _exit_prompt_shown_at;
+
+    // Back-buffer ready flag for safe buffer swap in loop()
+    volatile bool _back_ready;
 };

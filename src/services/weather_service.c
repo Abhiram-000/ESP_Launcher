@@ -21,6 +21,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "nvs.h"
 #include <string.h>
 #include <stdio.h>
 #include <sys/stat.h>
@@ -33,6 +34,10 @@ static weather_status_t s_status;
 static SemaphoreHandle_t s_mutex = NULL;
 static TaskHandle_t s_worker_task = NULL;
 static volatile bool s_abort_requested = false;
+
+// Manual location override (persisted to NVS)
+static bool s_has_manual_location = false;
+static weather_location_t s_manual_location = {0};
 
 // HTTP response buffer (PSRAM)
 #define HTTP_RECV_BUF_SIZE 4096
@@ -124,6 +129,18 @@ static weather_err_t _fetch_ip_geolocation(weather_location_t* loc) {
     
     ESP_LOGI(TAG, "Fetching IP geolocation from ip-api.com");
     
+    if (s_http_buffer != NULL) {
+        ESP_LOGW(TAG, "HTTP buffer already allocated, freeing first");
+        heap_caps_free(s_http_buffer);
+        s_http_buffer = NULL;
+    }
+    
+    s_http_buffer = heap_caps_malloc(HTTP_RECV_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_http_buffer) {
+        ESP_LOGE(TAG, "Failed to allocate HTTP buffer");
+        return WEATHER_ERR_NETWORK;
+    }
+    
     s_http_buffer_len = 0;
     memset(s_http_buffer, 0, HTTP_RECV_BUF_SIZE);
     
@@ -131,6 +148,7 @@ static weather_err_t _fetch_ip_geolocation(weather_location_t* loc) {
         .url = WEATHER_IP_GEO_URL,
         .event_handler = _http_event_handler,
         .timeout_ms = WEATHER_HTTP_TIMEOUT_MS,
+        .crt_bundle_attach = esp_crt_bundle_attach,
         .buffer_size = 2048,
     };
     
@@ -141,6 +159,8 @@ static weather_err_t _fetch_ip_geolocation(weather_location_t* loc) {
     
     if (err != ESP_OK || status != 200) {
         ESP_LOGE(TAG, "IP geolocation failed: %s, status=%d", esp_err_to_name(err), status);
+        heap_caps_free(s_http_buffer);
+        s_http_buffer = NULL;
         return WEATHER_ERR_NETWORK;
     }
     
@@ -148,13 +168,17 @@ static weather_err_t _fetch_ip_geolocation(weather_location_t* loc) {
     cJSON* root = cJSON_Parse(s_http_buffer);
     if (!root) {
         ESP_LOGE(TAG, "JSON parse failed");
+        heap_caps_free(s_http_buffer);
+        s_http_buffer = NULL;
         return WEATHER_ERR_PARSE;
     }
     
     cJSON* status_field = cJSON_GetObjectItem(root, "status");
-    if (!status_field || strcmp(status_field->valuestring, "success") != 0) {
+    if (!cJSON_IsString(status_field) || strcmp(status_field->valuestring, "success") != 0) {
         cJSON_Delete(root);
         ESP_LOGE(TAG, "Geolocation API returned error");
+        heap_caps_free(s_http_buffer);
+        s_http_buffer = NULL;
         return WEATHER_ERR_PARSE;
     }
     
@@ -180,10 +204,98 @@ static weather_err_t _fetch_ip_geolocation(weather_location_t* loc) {
                  loc->timezone_iana, loc->timezone_posix);
     } else {
         cJSON_Delete(root);
+        heap_caps_free(s_http_buffer);
+        s_http_buffer = NULL;
         return WEATHER_ERR_PARSE;
     }
     
     cJSON_Delete(root);
+    heap_caps_free(s_http_buffer);
+    s_http_buffer = NULL;
+    return WEATHER_ERR_OK;
+}
+
+/**
+ * @brief Reverse geocode IP coordinates to actual city name via OpenStreetMap Nominatim.
+ *        Free, no API key, requires User-Agent header.
+ *        Refines the city name from IP geolocation (which maps to ISP location).
+ */
+static weather_err_t _reverse_geocode_city(weather_location_t* loc) {
+    if (!wifi_mgr_is_connected()) return WEATHER_ERR_NO_WIFI;
+    
+    char url[256];
+    snprintf(url, sizeof(url),
+        "%s?lat=%.4f&lon=%.4f&format=json&zoom=10&addressdetails=1",
+        WEATHER_REVERSE_GEO_URL, loc->latitude, loc->longitude);
+    
+    ESP_LOGI(TAG, "Reverse geocoding for (%.4f, %.4f)", loc->latitude, loc->longitude);
+    
+    if (s_http_buffer != NULL) {
+        heap_caps_free(s_http_buffer);
+        s_http_buffer = NULL;
+    }
+    
+    s_http_buffer = heap_caps_malloc(HTTP_RECV_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_http_buffer) {
+        ESP_LOGE(TAG, "Failed to allocate HTTP buffer for reverse geocode");
+        return WEATHER_ERR_NETWORK;
+    }
+    
+    s_http_buffer_len = 0;
+    memset(s_http_buffer, 0, HTTP_RECV_BUF_SIZE);
+    
+    esp_http_client_config_t config = {
+        .url = url,
+        .event_handler = _http_event_handler,
+        .timeout_ms = WEATHER_HTTP_TIMEOUT_MS,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .buffer_size = 2048,
+    };
+    
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    // Nominatim requires a descriptive User-Agent
+    esp_http_client_set_header(client, "User-Agent", "ESP32-Launcher-Weather/2.0");
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+    
+    if (err != ESP_OK || status != 200) {
+        ESP_LOGW(TAG, "Reverse geocode failed: %s, status=%d — keeping IP city", esp_err_to_name(err), status);
+        heap_caps_free(s_http_buffer);
+        s_http_buffer = NULL;
+        return WEATHER_ERR_NETWORK;
+    }
+    
+    cJSON* root = cJSON_Parse(s_http_buffer);
+    if (!root) {
+        ESP_LOGW(TAG, "Reverse geocode JSON parse failed");
+        heap_caps_free(s_http_buffer);
+        s_http_buffer = NULL;
+        return WEATHER_ERR_PARSE;
+    }
+    
+    // Try address.city first, fall back to address.town, then address.village
+    cJSON* address = cJSON_GetObjectItem(root, "address");
+    const char* new_city = NULL;
+    if (address) {
+        cJSON* city = cJSON_GetObjectItem(address, "city");
+        cJSON* town = cJSON_GetObjectItem(address, "town");
+        cJSON* village = cJSON_GetObjectItem(address, "village");
+        if (city && cJSON_IsString(city)) new_city = city->valuestring;
+        else if (town && cJSON_IsString(town)) new_city = town->valuestring;
+        else if (village && cJSON_IsString(village)) new_city = village->valuestring;
+    }
+    
+    if (new_city && new_city[0] != '\0') {
+        ESP_LOGI(TAG, "Reverse geocode: %s → %s", loc->city_name, new_city);
+        strncpy(loc->city_name, new_city, sizeof(loc->city_name) - 1);
+    } else {
+        ESP_LOGW(TAG, "Reverse geocode: no city in response, keeping '%s'", loc->city_name);
+    }
+    
+    cJSON_Delete(root);
+    heap_caps_free(s_http_buffer);
+    s_http_buffer = NULL;
     return WEATHER_ERR_OK;
 }
 
@@ -193,11 +305,23 @@ static weather_err_t _fetch_weather(const weather_location_t* loc, weather_curre
     char url[512];
     snprintf(url, sizeof(url),
         "%s?latitude=%.4f&longitude=%.4f"
-        "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,is_day"
+        "&current=apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,is_day"
         "&timezone=auto",
         WEATHER_FORECAST_URL, loc->latitude, loc->longitude);
     
     ESP_LOGI(TAG, "Fetching weather from Open-Meteo");
+    
+    if (s_http_buffer != NULL) {
+        ESP_LOGW(TAG, "HTTP buffer already allocated, freeing first");
+        heap_caps_free(s_http_buffer);
+        s_http_buffer = NULL;
+    }
+    
+    s_http_buffer = heap_caps_malloc(HTTP_RECV_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_http_buffer) {
+        ESP_LOGE(TAG, "Failed to allocate HTTP buffer");
+        return WEATHER_ERR_NETWORK;
+    }
     
     s_http_buffer_len = 0;
     memset(s_http_buffer, 0, HTTP_RECV_BUF_SIZE);
@@ -217,6 +341,8 @@ static weather_err_t _fetch_weather(const weather_location_t* loc, weather_curre
     
     if (err != ESP_OK || status != 200) {
         ESP_LOGE(TAG, "Weather fetch failed: %s, status=%d", esp_err_to_name(err), status);
+        heap_caps_free(s_http_buffer);
+        s_http_buffer = NULL;
         return WEATHER_ERR_NETWORK;
     }
     
@@ -224,16 +350,20 @@ static weather_err_t _fetch_weather(const weather_location_t* loc, weather_curre
     cJSON* root = cJSON_Parse(s_http_buffer);
     if (!root) {
         ESP_LOGE(TAG, "Weather JSON parse failed");
+        heap_caps_free(s_http_buffer);
+        s_http_buffer = NULL;
         return WEATHER_ERR_PARSE;
     }
     
     cJSON* current = cJSON_GetObjectItem(root, "current");
     if (!current) {
         cJSON_Delete(root);
+        heap_caps_free(s_http_buffer);
+        s_http_buffer = NULL;
         return WEATHER_ERR_PARSE;
     }
     
-    cJSON* temp = cJSON_GetObjectItem(current, "temperature_2m");
+    cJSON* temp = cJSON_GetObjectItem(current, "apparent_temperature");
     cJSON* hum = cJSON_GetObjectItem(current, "relative_humidity_2m");
     cJSON* code = cJSON_GetObjectItem(current, "weather_code");
     cJSON* wind = cJSON_GetObjectItem(current, "wind_speed_10m");
@@ -250,11 +380,48 @@ static weather_err_t _fetch_weather(const weather_location_t* loc, weather_curre
                  wx->temperature, wx->humidity, wx->wind_speed, wx->weather_code);
     } else {
         cJSON_Delete(root);
+        heap_caps_free(s_http_buffer);
+        s_http_buffer = NULL;
         return WEATHER_ERR_PARSE;
     }
     
     cJSON_Delete(root);
+    heap_caps_free(s_http_buffer);
+    s_http_buffer = NULL;
     return WEATHER_ERR_OK;
+}
+
+static void _save_manual_location_to_nvs(void) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("wx_loc", NVS_READWRITE, &h);
+    if (err != ESP_OK) { ESP_LOGW(TAG, "NVS open failed: %s", esp_err_to_name(err)); return; }
+    uint8_t flag = s_has_manual_location ? 1 : 0;
+    nvs_set_u8(h, "manual", flag);
+    if (flag) {
+        nvs_set_blob(h, "loc", &s_manual_location, sizeof(s_manual_location));
+    } else {
+        nvs_erase_key(h, "loc");
+    }
+    nvs_commit(h);
+    nvs_close(h);
+    ESP_LOGI(TAG, "Manual location %s to NVS", flag ? "saved" : "cleared");
+}
+
+static void _load_manual_location_from_nvs(void) {
+    nvs_handle_t h;
+    esp_err_t err = nvs_open("wx_loc", NVS_READONLY, &h);
+    if (err != ESP_OK) return;
+    uint8_t flag = 0;
+    nvs_get_u8(h, "manual", &flag);
+    if (flag) {
+        size_t sz = sizeof(s_manual_location);
+        err = nvs_get_blob(h, "loc", &s_manual_location, &sz);
+        if (err == ESP_OK && sz == sizeof(s_manual_location)) {
+            s_has_manual_location = true;
+            ESP_LOGI(TAG, "Loaded manual location: %s", s_manual_location.city_name);
+        }
+    }
+    nvs_close(h);
 }
 
 static void _save_to_cache(const weather_location_t* loc, const weather_current_t* wx) {
@@ -287,9 +454,12 @@ static void _save_to_cache(const weather_location_t* loc, const weather_current_
     }
     cJSON_Delete(root);
     fclose(f);
-    rename(tmp_path, WEATHER_CONFIG_PATH);
-    
-    ESP_LOGI(TAG, "Weather cached to %s", WEATHER_CONFIG_PATH);
+    if (rename(tmp_path, WEATHER_CONFIG_PATH) != 0) {
+        ESP_LOGE(TAG, "Failed to rename cache file: %s -> %s", tmp_path, WEATHER_CONFIG_PATH);
+        unlink(tmp_path);
+    } else {
+        ESP_LOGI(TAG, "Weather cached to %s", WEATHER_CONFIG_PATH);
+    }
 }
 
 static bool _load_from_cache(weather_location_t* loc, weather_current_t* wx, int64_t* timestamp) {
@@ -316,7 +486,7 @@ static bool _load_from_cache(weather_location_t* loc, weather_current_t* wx, int
     fclose(f);
     
     cJSON* root = cJSON_Parse(buffer);
-    free(buffer);
+    heap_caps_free(buffer);
     
     if (!root) return false;
     
@@ -369,13 +539,28 @@ static void _worker_task(void* arg) {
     weather_location_t loc = {0};
     weather_current_t wx = {0};
     
-    // Step 1: Get location
-    weather_err_t err = _fetch_ip_geolocation(&loc);
-    if (err != WEATHER_ERR_OK && !s_abort_requested) {
+    // Step 1: Get location — use manual override if set, otherwise IP geolocation
+    weather_err_t err;
+    if (s_has_manual_location) {
         LOCK();
-        strncpy(s_status.status_msg, "Location fetch failed", sizeof(s_status.status_msg) - 1);
+        loc = s_manual_location;
         UNLOCK();
-        ESP_LOGW(TAG, "Using cached location");
+        ESP_LOGI(TAG, "Using manual location: %s (%.4f, %.4f)", loc.city_name, loc.latitude, loc.longitude);
+        err = WEATHER_ERR_OK;
+    } else {
+        err = _fetch_ip_geolocation(&loc);
+        if (err != WEATHER_ERR_OK && !s_abort_requested) {
+            LOCK();
+            strncpy(s_status.status_msg, "Location lookup failed", sizeof(s_status.status_msg) - 1);
+            UNLOCK();
+            ESP_LOGW(TAG, "Geolocation failed, skipping weather fetch");
+            goto cleanup;
+        }
+        
+        if (s_abort_requested) goto cleanup;
+        
+        // Step 1b: Refine city name via reverse geocoding (best-effort)
+        _reverse_geocode_city(&loc);
     }
     
     if (s_abort_requested) goto cleanup;
@@ -450,6 +635,9 @@ weather_err_t weather_service_init(void) {
     memset(&s_status, 0, sizeof(s_status));
     strncpy(s_status.status_msg, "Not updated", sizeof(s_status.status_msg) - 1);
     
+    // Load manual location override from NVS
+    _load_manual_location_from_nvs();
+    
     // Load from cache
     int64_t cache_timestamp = 0;
     if (_load_from_cache(&s_status.location, &s_status.current, &cache_timestamp)) {
@@ -504,11 +692,118 @@ weather_err_t weather_service_set_location(const char* city_name, float lat, flo
     
     const char* posix = _iana_to_posix(tz_iana);
     strncpy(s_status.location.timezone_posix, posix, sizeof(s_status.location.timezone_posix) - 1);
+    
+    // Store as manual override
+    s_has_manual_location = true;
+    strncpy(s_manual_location.city_name, city_name, sizeof(s_manual_location.city_name) - 1);
+    s_manual_location.latitude = lat;
+    s_manual_location.longitude = lon;
+    strncpy(s_manual_location.timezone_iana, tz_iana, sizeof(s_manual_location.timezone_iana) - 1);
+    strncpy(s_manual_location.timezone_posix, posix, sizeof(s_manual_location.timezone_posix) - 1);
     UNLOCK();
     
+    _save_manual_location_to_nvs();
     ntp_service_set_timezone(posix);
-    ESP_LOGI(TAG, "Location set manually: %s", city_name);
+    ESP_LOGI(TAG, "Location set manually: %s (%.4f, %.4f)", city_name, lat, lon);
     
+    return WEATHER_ERR_OK;
+}
+
+weather_err_t weather_service_clear_manual_location(void) {
+    LOCK();
+    s_has_manual_location = false;
+    memset(&s_manual_location, 0, sizeof(s_manual_location));
+    UNLOCK();
+    _save_manual_location_to_nvs();
+    ESP_LOGI(TAG, "Manual location cleared — will use IP geolocation");
+    return WEATHER_ERR_OK;
+}
+
+bool weather_service_has_manual_location(void) {
+    return s_has_manual_location;
+}
+
+weather_err_t weather_service_set_city(const char* city_name) {
+    if (!city_name || city_name[0] == '\0') return WEATHER_ERR_PARSE;
+    if (!wifi_mgr_is_connected()) return WEATHER_ERR_NO_WIFI;
+    
+    // Geocode city name via Open-Meteo Geocoding API (free, no key)
+    char url[256];
+    snprintf(url, sizeof(url),
+        "%s?name=%s&count=1&language=en&format=json",
+        WEATHER_GEOCODING_URL, city_name);
+    
+    ESP_LOGI(TAG, "Geocoding city: %s", city_name);
+    
+    if (s_http_buffer != NULL) {
+        heap_caps_free(s_http_buffer);
+        s_http_buffer = NULL;
+    }
+    
+    s_http_buffer = heap_caps_malloc(HTTP_RECV_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_http_buffer) return WEATHER_ERR_NETWORK;
+    
+    s_http_buffer_len = 0;
+    memset(s_http_buffer, 0, HTTP_RECV_BUF_SIZE);
+    
+    esp_http_client_config_t config = {
+        .url = url,
+        .event_handler = _http_event_handler,
+        .timeout_ms = WEATHER_HTTP_TIMEOUT_MS,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+        .buffer_size = 2048,
+    };
+    
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+    esp_err_t err = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+    
+    if (err != ESP_OK || status != 200) {
+        ESP_LOGE(TAG, "Geocoding failed: %s, status=%d", esp_err_to_name(err), status);
+        heap_caps_free(s_http_buffer);
+        s_http_buffer = NULL;
+        return WEATHER_ERR_NETWORK;
+    }
+    
+    cJSON* root = cJSON_Parse(s_http_buffer);
+    if (!root) {
+        heap_caps_free(s_http_buffer);
+        s_http_buffer = NULL;
+        return WEATHER_ERR_PARSE;
+    }
+    
+    cJSON* results = cJSON_GetObjectItem(root, "results");
+    if (!results || !cJSON_IsArray(results) || cJSON_GetArraySize(results) == 0) {
+        ESP_LOGW(TAG, "No geocoding results for '%s'", city_name);
+        cJSON_Delete(root);
+        heap_caps_free(s_http_buffer);
+        s_http_buffer = NULL;
+        return WEATHER_ERR_PARSE;
+    }
+    
+    cJSON* first = cJSON_GetArrayItem(results, 0);
+    cJSON* lat = cJSON_GetObjectItem(first, "latitude");
+    cJSON* lon = cJSON_GetObjectItem(first, "longitude");
+    cJSON* name = cJSON_GetObjectItem(first, "name");
+    cJSON* tz = cJSON_GetObjectItem(first, "timezone");
+    
+    if (lat && lon && name) {
+        float latitude = (float)lat->valuedouble;
+        float longitude = (float)lon->valuedouble;
+        const char* display_name = cJSON_IsString(name) ? name->valuestring : city_name;
+        const char* timezone = (tz && cJSON_IsString(tz)) ? tz->valuestring : "UTC";
+        
+        weather_service_set_location(display_name, latitude, longitude, timezone);
+        ESP_LOGI(TAG, "Geocoded '%s' → %s (%.4f, %.4f), TZ: %s",
+                 city_name, display_name, latitude, longitude, timezone);
+    } else {
+        ESP_LOGW(TAG, "Geocoding response missing fields for '%s'", city_name);
+    }
+    
+    cJSON_Delete(root);
+    heap_caps_free(s_http_buffer);
+    s_http_buffer = NULL;
     return WEATHER_ERR_OK;
 }
 

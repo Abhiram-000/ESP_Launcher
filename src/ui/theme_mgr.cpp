@@ -17,18 +17,15 @@ typedef struct {
     const char* name;
 } theme_palette_t;
 
-// LovyanGFX color565 values
+// LovyanGFX RGB565 palette table — columns: bg / panel / text / text_dim / accent / fail / name
+// Only this table may contain raw RGB565 literals.  All app code MUST use theme_get_*() accessors.
 static const theme_palette_t s_themes[THEME_COUNT] = {
-    // 0: Dark Cyberpunk (Deep obsidian, cyan, neon pink accents)
-    {0x0821, 0x03BF, 0xFFFF, 0x6398, 0x67E6, 0xF947, "Cyberpunk"},
-    // 1: Light Minimal (Pure crisp white wrapper with deep ink text)
-    {0xFFFF, 0x03FF, 0x0000, 0x8410, 0x24C6, 0xD000, "Light Minimal"},
-    // 2: Hacker Matrix (Classic pitch black console with terminal green)
-    {0x0000, 0x07E0, 0x07E0, 0x03E0, 0x07E0, 0xF800, "Matrix Hacker"},
-    // 3: Retro Outrun (Sunset neon grids, purple, deep orange)
-    {0x1004, 0xFC00, 0xFFFF, 0xFC10, 0x07FF, 0xF800, "Outrun Retro"},
-    // 4: Deep Space (Endless dark blue, starlight white/gold)
-    {0x0002, 0xFDE0, 0xFFFF, 0x7BEF, 0x07E0, 0xF800, "Deep Space"}
+    //  bg      panel   text    text_dim accent  fail    name
+    {0x0821, 0x03BF, 0xFFFF, 0x6398, 0x67E6, 0xF947, "Cyberpunk"},    // 0: Deep obsidian, cyan, neon pink
+    {0xFFFF, 0x03FF, 0x0000, 0x8410, 0x24C6, 0xD000, "Light Minimal"}, // 1: Crisp white, deep ink
+    {0x0000, 0x07E0, 0x07E0, 0x03E0, 0x07E0, 0xF800, "Matrix Hacker"}, // 2: Pitch black, terminal green
+    {0x1004, 0xFC00, 0xFFFF, 0xFC10, 0x07FF, 0xF800, "Outrun Retro"},  // 3: Sunset neon, purple, orange
+    {0x0002, 0xFDE0, 0xFFFF, 0x7BEF, 0x07E0, 0xF800, "Deep Space"},   // 4: Dark blue, starlight gold
 };
 
 typedef struct { float r, g, b; } rgb_f_t;

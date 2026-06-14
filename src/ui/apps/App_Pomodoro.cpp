@@ -7,11 +7,12 @@
 #include "../theme_mgr.h"
 #include "../../services/idle_mgr.h"
 #include "../../utils/color_utils.h"
+#include "../../platform/board.h"
 #include "esp_log.h"
 #include <math.h>
 #include <string.h>
 
-extern void switch_to_grid();
+#include "../ui_task.h"
 
 static const char* TAG = "APP_POMO";
 
@@ -26,7 +27,8 @@ App_Pomodoro::App_Pomodoro()
       _circle_pulse(0), _particle_phase(0), _last_seconds(0),
       _just_completed(false), _completion_anim(0),
       _stats_scroll(0), _settings_cursor(0), _editing_value(false),
-      _confirm_choice(0), _cx(80), _cy(64), _w(160), _h(128)
+      _confirm_choice(0), _cx(80), _cy(64), _w(160), _h(128),
+      _sp_old(nullptr), _sp_new(nullptr)
 {
     memset(&_status, 0, sizeof(_status));
     memset(&_edit_config, 0, sizeof(_edit_config));
@@ -34,7 +36,10 @@ App_Pomodoro::App_Pomodoro()
     memset(_stat_bar_anims, 0, sizeof(_stat_bar_anims));
 }
 
-App_Pomodoro::~App_Pomodoro() {}
+App_Pomodoro::~App_Pomodoro() {
+    if (_sp_old) { delete _sp_old; _sp_old = nullptr; }
+    if (_sp_new) { delete _sp_new; _sp_new = nullptr; }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Lifecycle
@@ -42,20 +47,43 @@ App_Pomodoro::~App_Pomodoro() {}
 
 void App_Pomodoro::init() {
     pomodoro_service_init();
-    idle_mgr_disable();  // Prevent sleep during productivity sessions
-    
+    idle_mgr_disable();
+
     _screen = SCREEN_MODE_SELECT;
     _anim_time = 0;
-    _mode_cursor = 1;  // Start on Standard
+    _mode_cursor = 1;
     _transitioning = false;
-    
+
     pomodoro_get_status(&_status);
-    
+
+    // Pre-allocate transition sprites — freed in exit() / destructor.
+    // Using LAUNCHER_DISPLAY_W/H so allocation happens at init, never in render().
+    if (!_sp_old) {
+        _sp_old = new LGFX_Sprite();
+        _sp_old->setPsram(true);
+        _sp_old->setColorDepth(16);
+        if (!_sp_old->createSprite(LAUNCHER_DISPLAY_W, LAUNCHER_DISPLAY_H)) {
+            ESP_LOGE(TAG, "transition sprite (old) alloc failed");
+            delete _sp_old; _sp_old = nullptr;
+        }
+    }
+    if (!_sp_new) {
+        _sp_new = new LGFX_Sprite();
+        _sp_new->setPsram(true);
+        _sp_new->setColorDepth(16);
+        if (!_sp_new->createSprite(LAUNCHER_DISPLAY_W, LAUNCHER_DISPLAY_H)) {
+            ESP_LOGE(TAG, "transition sprite (new) alloc failed");
+            delete _sp_new; _sp_new = nullptr;
+        }
+    }
+
     ESP_LOGI(TAG, "Pomodoro app initialized");
 }
 
 void App_Pomodoro::exit() {
     idle_mgr_enable();
+    if (_sp_old) { _sp_old->deleteSprite(); delete _sp_old; _sp_old = nullptr; }
+    if (_sp_new) { _sp_new->deleteSprite(); delete _sp_new; _sp_new = nullptr; }
     ESP_LOGI(TAG, "Pomodoro app exited");
 }
 
@@ -361,8 +389,8 @@ void App_Pomodoro::_draw_clean_cycle_dots(LGFX_Sprite* canvas) {
     pomodoro_get_mode_config(_status.current_mode, &cfg);
     
     // Modern progress bar style
-    int bar_w = 80;
-    int bar_h = 6;
+    int bar_w = _w / 2;
+    int bar_h = _h / 20;
     int bar_x = _cx - bar_w / 2;
     int bar_y = _h - 20;
     
@@ -424,7 +452,7 @@ void App_Pomodoro::_draw_mode_card(LGFX_Sprite* canvas, pomo_mode_t mode, int x,
     pomo_mode_config_t cfg;
     pomodoro_get_mode_config(mode, &cfg);
     
-    int w = 120, h = 42;
+    int w = _w * 3 / 4, h = _h * 9 / 30;  // ~120x38@160, scales with screen
     float pulse = _mode_card_pulse[mode];
     
     // Outer glow for selected card
@@ -745,7 +773,7 @@ void App_Pomodoro::_render_skip_confirm(LGFX_Sprite* canvas) {
     }
     
     // Modal panel
-    int panel_w = 120, panel_h = 54;
+    int panel_w = _w * 3 / 4, panel_h = _h * 11 / 26;  // ~120x54@160, scales with screen
     int panel_x = (_w - panel_w) / 2;
     int panel_y = (_h - panel_h) / 2;
     
@@ -797,77 +825,49 @@ void App_Pomodoro::_render_skip_confirm(LGFX_Sprite* canvas) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void App_Pomodoro::render(LGFX_Sprite* canvas) {
-    // Update dimensions from actual canvas for resolution independence
+    canvas->fillSprite(theme_get_bg());
+
     _w = canvas->width();
     _h = canvas->height();
     _cx = _w / 2;
     _cy = _h / 2;
 
-    if (_transitioning) {
-        // Slide transition effect
-        float t = _transition_progress;
-        float eased = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);  // Cubic ease-out
-        
+    if (_transitioning && _sp_old && _sp_new) {
+        // Slide transition — sprites pre-allocated in init(), never created here
+        float eased = 1.0f - (1.0f - _transition_progress) * (1.0f - _transition_progress)
+                           * (1.0f - _transition_progress);
         int offset = (int)(eased * _w);
         bool going_forward = (_screen > _prev_screen);
-        
-        // Create temporary sprites for transition
-        LGFX_Sprite old_screen(canvas);
-        LGFX_Sprite new_screen(canvas);
-        old_screen.setPsram(true);
-        new_screen.setPsram(true);
-        old_screen.setColorDepth(16);
-        new_screen.setColorDepth(16);
-        
-        if (old_screen.createSprite(_w, _h) && new_screen.createSprite(_w, _h)) {
-            // Render both screens
-            switch (_prev_screen) {
-                case SCREEN_MODE_SELECT:  _render_mode_select(&old_screen); break;
-                case SCREEN_TIMER:        _render_timer(&old_screen); break;
-                case SCREEN_STATS:        _render_stats(&old_screen); break;
-                case SCREEN_SETTINGS:     _render_settings(&old_screen); break;
-                case SCREEN_SKIP_CONFIRM: _render_skip_confirm(&old_screen); break;
-            }
-            
-            switch (_screen) {
-                case SCREEN_MODE_SELECT:  _render_mode_select(&new_screen); break;
-                case SCREEN_TIMER:        _render_timer(&new_screen); break;
-                case SCREEN_STATS:        _render_stats(&new_screen); break;
-                case SCREEN_SETTINGS:     _render_settings(&new_screen); break;
-                case SCREEN_SKIP_CONFIRM: _render_skip_confirm(&new_screen); break;
-            }
-            
-            // Composite transition
-            canvas->fillSprite(theme_get_bg());
-            
-            if (going_forward) {
-                old_screen.pushSprite(canvas, -offset, 0);
-                new_screen.pushSprite(canvas, _w - offset, 0);
-            } else {
-                old_screen.pushSprite(canvas, offset, 0);
-                new_screen.pushSprite(canvas, -_w + offset, 0);
-            }
-            
-            old_screen.deleteSprite();
-            new_screen.deleteSprite();
+
+        switch (_prev_screen) {
+            case SCREEN_MODE_SELECT:  _render_mode_select(_sp_old); break;
+            case SCREEN_TIMER:        _render_timer(_sp_old);       break;
+            case SCREEN_STATS:        _render_stats(_sp_old);       break;
+            case SCREEN_SETTINGS:     _render_settings(_sp_old);    break;
+            case SCREEN_SKIP_CONFIRM: _render_skip_confirm(_sp_old);break;
+        }
+        switch (_screen) {
+            case SCREEN_MODE_SELECT:  _render_mode_select(_sp_new); break;
+            case SCREEN_TIMER:        _render_timer(_sp_new);       break;
+            case SCREEN_STATS:        _render_stats(_sp_new);       break;
+            case SCREEN_SETTINGS:     _render_settings(_sp_new);    break;
+            case SCREEN_SKIP_CONFIRM: _render_skip_confirm(_sp_new);break;
+        }
+
+        if (going_forward) {
+            _sp_old->pushSprite(canvas, -offset, 0);
+            _sp_new->pushSprite(canvas, _w - offset, 0);
         } else {
-            // Fallback: direct render if sprite allocation fails
-            switch (_screen) {
-                case SCREEN_MODE_SELECT:  _render_mode_select(canvas); break;
-                case SCREEN_TIMER:        _render_timer(canvas); break;
-                case SCREEN_STATS:        _render_stats(canvas); break;
-                case SCREEN_SETTINGS:     _render_settings(canvas); break;
-                case SCREEN_SKIP_CONFIRM: _render_skip_confirm(canvas); break;
-            }
+            _sp_old->pushSprite(canvas, offset, 0);
+            _sp_new->pushSprite(canvas, -_w + offset, 0);
         }
     } else {
-        // Normal render
         switch (_screen) {
             case SCREEN_MODE_SELECT:  _render_mode_select(canvas); break;
-            case SCREEN_TIMER:        _render_timer(canvas); break;
-            case SCREEN_STATS:        _render_stats(canvas); break;
-            case SCREEN_SETTINGS:     _render_settings(canvas); break;
-            case SCREEN_SKIP_CONFIRM: _render_skip_confirm(canvas); break;
+            case SCREEN_TIMER:        _render_timer(canvas);       break;
+            case SCREEN_STATS:        _render_stats(canvas);       break;
+            case SCREEN_SETTINGS:     _render_settings(canvas);    break;
+            case SCREEN_SKIP_CONFIRM: _render_skip_confirm(canvas);break;
         }
     }
 }

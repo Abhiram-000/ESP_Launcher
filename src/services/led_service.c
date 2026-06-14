@@ -1,7 +1,11 @@
 #include "led_service.h"
 #include "../drivers/led_driver.h"
+#include "esp_log.h"
+
+static const char* TAG = "LED_SVC";
 
 void led_service_init(void) {
+    ESP_LOGI(TAG, "Initializing LED service");
     led_driver_init();
 }
 

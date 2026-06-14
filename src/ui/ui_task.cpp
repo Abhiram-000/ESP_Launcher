@@ -257,15 +257,15 @@ static void ui_task_runner(void *arg) {
             int by = (h - bh) / 2;
 
             float pulse = sinf((float)(esp_timer_get_time() / 500000));
-            uint16_t warning_color = (rem <= 3) ? canvas.color565(255, 60, 40) :
-                                     (rem <= 6) ? canvas.color565(255, 180, 0) :
+            uint16_t warning_color = (rem <= 3) ? theme_get_fail() :
+                                     (rem <= 6) ? theme_get_accent() :
                                      theme_get_accent();
             
             canvas.fillRoundRect(bx - 2, by - 2, bw + 4, bh + 4, 10,
                 color_blend(warning_color, theme_get_bg(), 0.08f + pulse * 0.04f));
             
             canvas.fillRoundRect(bx, by, bw, bh, 8,
-                color_blend(theme_get_bg(), canvas.color565(20, 30, 60), 0.85f));
+                color_blend(theme_get_bg(), theme_get_bg(), 0.85f));
             
             canvas.drawRoundRect(bx, by, bw, bh, 8, 
                 color_blend(warning_color, theme_get_text(), 0.75f + pulse * 0.25f));
@@ -287,12 +287,12 @@ static void ui_task_runner(void *arg) {
                 for (int i = 0; i < fill_h; i += 2) {
                     float gradient = (float)i / (float)fill_h;
                     uint16_t seg_color = color_blend(warning_color, 
-                        canvas.color565(255, 255, 100), gradient * 0.4f);
+                        theme_get_accent(), gradient * 0.4f);
                     canvas.drawFastHLine(bar_x + 2, bar_y + bar_max_h - i - 1, 
                         bar_w - 4, seg_color);
                 }
                 canvas.fillRoundRect(bar_x + 2, bar_y + bar_max_h - fill_h, 
-                    bar_w - 4, 2, 1, canvas.color565(255, 255, 255));
+                    bar_w - 4, 2, 1, theme_get_text());
             }
 
             int text_x = bar_x + bar_w + 8;
@@ -305,8 +305,8 @@ static void ui_task_runner(void *arg) {
             
             if (rem <= 3) {
                 int shake = (int)(pulse * 2);
-                canvas.setTextColor(color_blend(canvas.color565(255, 80, 60), 
-                    canvas.color565(255, 200, 0), pulse * 0.5f + 0.5f));
+                canvas.setTextColor(color_blend(theme_get_fail(), 
+                    theme_get_accent(), pulse * 0.5f + 0.5f));
                 canvas.drawString(buf, text_x + shake, bar_y + 6);
             } else {
                 canvas.setTextColor(theme_get_text());

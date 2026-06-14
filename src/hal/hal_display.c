@@ -32,15 +32,15 @@ esp_err_t hal_display_set_brightness(uint8_t brightness) {
 }
 
 esp_err_t hal_display_push_rect(const hal_display_rect_t* rect, const uint16_t* data) {
-    // Stub - actual implementation would use LovyanGFX or direct SPI
     (void)rect;
     (void)data;
-    return ESP_OK;
+    ESP_LOGW(TAG, "push_rect not implemented");
+    return ESP_ERR_NOT_SUPPORTED;
 }
 
 esp_err_t hal_display_fill_rect(const hal_display_rect_t* rect, uint16_t color) {
-    // Stub - actual implementation would use LovyanGFX or direct SPI
     (void)rect;
     (void)color;
-    return ESP_OK;
+    ESP_LOGW(TAG, "fill_rect not implemented");
+    return ESP_ERR_NOT_SUPPORTED;
 }

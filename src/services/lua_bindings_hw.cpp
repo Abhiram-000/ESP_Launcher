@@ -281,8 +281,12 @@ static int l_fs_write(lua_State* L) {
     snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
     FILE* f = fopen(tmp_path, "wb");
     if (!f) { lua_pushboolean(L, 0); return 1; }
-    fwrite(data, 1, len, f); fclose(f);
-    rename(tmp_path, path);
+    bool ok = (fwrite(data, 1, len, f) == len);
+    fclose(f);
+    if (!ok || rename(tmp_path, path) != 0) {
+        unlink(tmp_path);
+        lua_pushboolean(L, 0); return 1;
+    }
     lua_pushboolean(L, 1); return 1;
 }
 static int l_fs_list(lua_State* L) {

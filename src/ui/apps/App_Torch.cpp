@@ -11,7 +11,7 @@
 
 static const char* TAG = "APP_TORCH";
 
-extern void switch_to_grid();
+#include "../ui_task.h"
 
 const char* App_Torch::RANDOM_NAMES[32] = {
     "ALP", "NEB", "ZEN", "VEX", "KRY", "FLX", "HEX", "ORI",
@@ -668,17 +668,17 @@ void App_Torch::_render_main(LGFX_Sprite* canvas) {
     const int32_t MARGIN = W / 20;
 
     /* ── Enhanced Layout ─────────────────────────────────────────── */
-    const int32_t BAR_W   = 12;
+    const int32_t BAR_W   = W / 13;    // ~12@160, scales with screen
     const int32_t BAR_X   = MARGIN + 4;
-    const int32_t BAR_TOP = 22;
-    const int32_t BAR_BOT = H - 20;
+    const int32_t BAR_TOP = H * 17 / 100;  // ~22@128, scales with screen
+    const int32_t BAR_BOT = H - H / 6;     // ~107@128, scales with screen
     const int32_t BAR_H   = BAR_BOT - BAR_TOP;
 
     const int32_t ORB_AREA_L = BAR_X + BAR_W + 12;
     const int32_t ORB_AREA_R = W - MARGIN;
     int32_t orb_cx = ORB_AREA_L + (ORB_AREA_R - ORB_AREA_L) / 2;
     int32_t orb_cy = BAR_TOP + BAR_H / 2;
-    int32_t orb_r  = 24;
+    int32_t orb_r  = (W < H ? W : H) / 7;  // ~23@160, scales with screen
 
     /* ── Percentage above bar with glow ──────────────────────────── */
     int32_t pct = (int32_t)((float)_brightness * 100.0f / 255.0f);
@@ -915,7 +915,7 @@ void App_Torch::_render_brightness(LGFX_Sprite* canvas) {
     int32_t bar_w = W * 70 / 100;
     int32_t bar_h = 8;
     int32_t bar_x = CX - bar_w / 2;
-    int32_t bar_y = 44;
+    int32_t bar_y = H * 34 / 100;  // ~44@128, scales with screen
 
     canvas->fillRoundRect(bar_x, bar_y, bar_w, bar_h, 4, theme_get_text_dim());
     int32_t fill_w = (int32_t)((float)bar_w * (float)_brightness / 255.0f);
@@ -928,8 +928,8 @@ void App_Torch::_render_brightness(LGFX_Sprite* canvas) {
     const char* preset_labels[] = {"25%", "50%", "75%", "100%"};
     const int32_t preset_vals[] = {64, 128, 192, 255};
     const int32_t BOX_W = W / 5;
-    const int32_t BOX_H = 14;
-    const int32_t BOX_Y = 62;
+    const int32_t BOX_H = H * 11 / 100;  // ~14@128, scales with screen
+    const int32_t BOX_Y = H * 48 / 100;  // ~62@128, scales with screen
     const int32_t BOX_SPACING = (W - 2 * MARGIN - 4 * BOX_W) / 3;
 
     for (int32_t i = 0; i < 4; i++) {

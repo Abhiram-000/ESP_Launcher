@@ -12,7 +12,7 @@
 #include "esp_log.h"
 #include <math.h>
 
-extern void switch_to_grid();
+#include "../ui_task.h"
 
 static const char* TAG = "APP_SETTINGS";
 
@@ -404,7 +404,7 @@ void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_o
         canvas->drawString("DISPLAY LUMA", cx, list_y);
         list_y += 25;
         
-        int bar_w = 110;
+        int bar_w = W * 69 / 100;  // ~110@160, scales with screen
         int bar_h = 10;
         int bar_x = cx - bar_w / 2;
         int bar_y = list_y;
@@ -458,8 +458,8 @@ void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_o
         float pulse = 0.7f + 0.3f * sinf(anim_time * 5.0f);
         float glow = 0.5f + 0.5f * sinf(anim_time * 3.0f);
         
-        int card_w = 100;
-        int card_h = 40;
+        int card_w = W * 63 / 100;  // ~100@160, scales with screen
+        int card_h = H * 31 / 100;  // ~40@128, scales with screen
         int card_x = cx - card_w/2;
         int card_y = list_y + 5;
         
@@ -549,8 +549,8 @@ void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_o
         float pulse = 0.7f + 0.3f * sinf(anim_time * 5.0f);
         float glow = 0.5f + 0.5f * sinf(anim_time * 3.0f);
         
-        int card_w = 100;
-        int card_h = 40;
+        int card_w = W * 63 / 100;  // ~100@160, scales with screen
+        int card_h = H * 31 / 100;  // ~40@128, scales with screen
         int card_x = cx - card_w/2;
         int card_y = list_y + 5;
         
@@ -595,7 +595,7 @@ void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_o
         
         // Warning icon
         float warning_pulse = 0.6f + 0.4f * sinf(anim_time * 6.0f);
-        canvas->setTextColor(color_blend(canvas->color565(255, 100, 80), accent, warning_pulse));
+        canvas->setTextColor(color_blend(theme_get_fail(), accent, warning_pulse));
         canvas->setFont(&fonts::Font2);
         canvas->drawString("!", cx, list_y);
         list_y += 14;
@@ -628,9 +628,9 @@ void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_o
         canvas->drawString("CANCEL", cancel_x + btn_w/2, btn_y + btn_h/2);
         
         // Confirm button with pulse
-        canvas->fillRoundRect(confirm_x - 1, btn_y - 1, btn_w + 2, btn_h + 2, 5, color_blend(canvas->color565(255, 80, 60), bg, 0.25f * pulse));
-        canvas->fillRoundRect(confirm_x, btn_y, btn_w, btn_h, 4, color_blend(canvas->color565(255, 80, 60), bg, 0.2f));
-        canvas->drawRoundRect(confirm_x, btn_y, btn_w, btn_h, 4, color_blend(canvas->color565(255, 120, 100), theme_get_text(), pulse));
+        canvas->fillRoundRect(confirm_x - 1, btn_y - 1, btn_w + 2, btn_h + 2, 5, color_blend(theme_get_fail(), bg, 0.25f * pulse));
+        canvas->fillRoundRect(confirm_x, btn_y, btn_w, btn_h, 4, color_blend(theme_get_fail(), bg, 0.2f));
+        canvas->drawRoundRect(confirm_x, btn_y, btn_w, btn_h, 4, color_blend(theme_get_fail(), theme_get_text(), pulse));
         canvas->setTextColor(theme_get_text());
         canvas->drawString("OFF", confirm_x + btn_w/2, btn_y + btn_h/2);
         
@@ -644,6 +644,7 @@ void App_Settings::_draw_state_content(LGFX_Sprite* canvas, State state, int x_o
 
 void App_Settings::render(LGFX_Sprite* canvas) {
     uint16_t bg = theme_get_bg();
+    canvas->fillSprite(bg);
     theme_draw_wallpaper(canvas, anim_time);
 
     const int32_t W = canvas->width();

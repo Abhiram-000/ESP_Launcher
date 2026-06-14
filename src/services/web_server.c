@@ -40,10 +40,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <sys/param.h>
+#include <unistd.h>
 #include <string.h>
 #include <stdio.h>
 
 static const char *TAG = "WEB_SRV";
+static const char* s_captive_ip = "192.168.4.1";
 
 /* Receive buffer — allocated once on the stack of upload_post_handler.
  * 8 KB gives a good balance: fewer flash-write calls, fits in stack. */
@@ -142,7 +144,7 @@ static esp_err_t info_get_handler(httpd_req_t *req) {
              "\"free_heap_kb\":%lu,"
              "\"mac\":\"%02X:%02X:%02X:%02X:%02X:%02X\","
              "\"ap_ssid\":\"%s\","
-             "\"ip\":\"192.168.4.1\""
+             "\"ip\":\"%s\""
              "}",
              (ci.model == CHIP_ESP32S3) ? 3 : 2,
              ci.cores,
@@ -150,7 +152,8 @@ static esp_err_t info_get_handler(httpd_req_t *req) {
              esp_get_idf_version(),
              (unsigned long)(esp_get_free_heap_size() / 1024),
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5],
-             APP_WIFI_SSID);
+             APP_WIFI_SSID,
+             s_captive_ip);
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -278,7 +281,7 @@ static esp_err_t remote_get_handler(httpd_req_t *req) {
 static esp_err_t remote_input_get_handler(httpd_req_t *req) {
     size_t buf_len = httpd_req_get_url_query_len(req) + 1;
     if (buf_len > 1) {
-        char *buf = malloc(buf_len);
+        char *buf = heap_caps_malloc(buf_len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (buf && httpd_req_get_url_query_str(req, buf, buf_len) == ESP_OK) {
             char btn_val[16];
             if (httpd_query_key_value(buf, "btn", btn_val, sizeof(btn_val)) == ESP_OK) {
@@ -288,13 +291,13 @@ static esp_err_t remote_input_get_handler(httpd_req_t *req) {
                 else if (strcmp(btn_val, "left") == 0) ev = BTN_LEFT;
                 else if (strcmp(btn_val, "right") == 0) ev = BTN_RIGHT;
                 else if (strcmp(btn_val, "select") == 0) ev = BTN_SELECT;
-                
+
                 if (ev != BTN_NONE) {
                     input_mgr_inject_event(ev);
                 }
             }
         }
-        if (buf) free(buf);
+        if (buf) heap_caps_free(buf);
     }
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -322,7 +325,7 @@ static bool _web_llm_chunk(const char* token, size_t len, void* user) {
     httpd_req_t* req = (httpd_req_t*)user;
     if (!token || len == 0) return true;
 
-    char* esc = (char*)malloc(len * 2 + 1);
+    char* esc = (char*)heap_caps_malloc(len * 2 + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!esc) return false;
     size_t j = 0;
     for (size_t i = 0; i < len; i++) {
@@ -346,14 +349,14 @@ static bool _web_llm_chunk(const char* token, size_t len, void* user) {
 
     char* chunk = heap_caps_malloc(1024, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!chunk) {
-        free(esc);
+        heap_caps_free(esc);
         return false;
     }
     int n = snprintf(chunk, 1024, "data: {\"token\":\"%s\"}\n\n", esc);
-    free(esc);
+    heap_caps_free(esc);
 
     esp_err_t err = httpd_resp_send_chunk(req, chunk, n);
-    free(chunk);
+    heap_caps_free(chunk);
     return err == ESP_OK;
 }
 
@@ -436,7 +439,7 @@ static esp_err_t chat_ide_files_get_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     httpd_resp_sendstr(req, json);
-    free(json);
+    heap_caps_free(json);
     return ESP_OK;
 }
 
@@ -470,13 +473,16 @@ static esp_err_t chat_ide_load_get_handler(httpd_req_t *req) {
         return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
     }
     size_t n = fread(buf, 1, 4095, f);
+    if (n == 0 && ferror(f)) {
+        ESP_LOGW(TAG, "fread failed for %s", path);
+    }
     buf[n] = '\0';
     fclose(f);
 
     httpd_resp_set_type(req, "text/plain");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     httpd_resp_send(req, buf, n);
-    free(buf);
+    heap_caps_free(buf);
     return ESP_OK;
 }
 
@@ -494,7 +500,7 @@ static esp_err_t chat_ide_save_post_handler(httpd_req_t *req) {
         int ret = httpd_req_recv(req, buf + received, total_len - received);
         if (ret <= 0) {
             if (ret == HTTPD_SOCK_ERR_TIMEOUT) continue;
-            free(buf);
+            heap_caps_free(buf);
             return ESP_FAIL;
         }
         received += ret;
@@ -507,9 +513,9 @@ static esp_err_t chat_ide_save_post_handler(httpd_req_t *req) {
     char* code_enc = heap_caps_malloc(total_len + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     char* code = heap_caps_malloc(total_len + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!code_enc || !code) {
-        free(code_enc);
-        free(code);
-        free(buf);
+        heap_caps_free(code_enc);
+        heap_caps_free(code);
+        heap_caps_free(buf);
         return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
     }
     code[0] = '\0';
@@ -529,15 +535,15 @@ static esp_err_t chat_ide_save_post_handler(httpd_req_t *req) {
         }
         code[j] = '\0';
     }
-    free(code_enc);
-    free(buf);
+    heap_caps_free(code_enc);
+    heap_caps_free(buf);
 
     if (!file[0]) {
-        free(code);
+        heap_caps_free(code);
         return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Missing file parameter");
     }
     if (strstr(file, "..")) {
-        free(code);
+        heap_caps_free(code);
         return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Invalid file path");
     }
 
@@ -546,15 +552,29 @@ static esp_err_t chat_ide_save_post_handler(httpd_req_t *req) {
     snprintf(path, sizeof(path), "%s/%s", AI_SCRIPTS_DIR, file);
     snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
     FILE* f = fopen(tmp_path, "w");
+    bool save_ok = false;
     if (f) {
-        fwrite(code, 1, strlen(code), f);
+        size_t code_len = strlen(code);
+        save_ok = (fwrite(code, 1, code_len, f) == code_len);
         fclose(f);
-        rename(tmp_path, path);
+        if (save_ok) {
+            if (rename(tmp_path, path) != 0) {
+                ESP_LOGE(TAG, "rename %s -> %s failed", tmp_path, path);
+                unlink(tmp_path);
+                save_ok = false;
+            }
+        } else {
+            ESP_LOGE(TAG, "fwrite failed for %s", tmp_path);
+            unlink(tmp_path);
+        }
     }
-    free(code);
+    heap_caps_free(code);
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    if (!save_ok) {
+        return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "File write failed");
+    }
     httpd_resp_sendstr(req, "{\"ok\":true}");
     return ESP_OK;
 }
@@ -608,19 +628,19 @@ static esp_err_t chat_ide_run_get_handler(httpd_req_t *req) {
 
     char* json = heap_caps_malloc(logs_len * 2 + 512, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!json) {
-        free(esc_logs);
+        heap_caps_free(esc_logs);
         return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
     }
     snprintf(json, logs_len * 2 + 512,
         "{\"ok\":%s,\"status\":%d,\"elapsed_ms\":%d,\"error\":\"%s\",\"logs\":\"%s\"}",
         (status == 0) ? "true" : "false", status, (int)elapsed, err, esc_logs);
 
-    free(esc_logs);
+    heap_caps_free(esc_logs);
 
     httpd_resp_set_type(req, "application/json");
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
     httpd_resp_sendstr(req, json);
-    free(json);
+    heap_caps_free(json);
     return ESP_OK;
 }
 
@@ -630,10 +650,16 @@ static esp_err_t chat_ide_run_get_handler(httpd_req_t *req) {
 static esp_err_t captive_portal_redirect_handler(httpd_req_t *req, httpd_err_code_t error) {
     ESP_LOGI(TAG, "Captive portal redirect: %s (error %d)", req->uri, error);
     httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/chat");
+    char location[64];
+    snprintf(location, sizeof(location), "http://%s/chat", s_captive_ip);
+    httpd_resp_set_hdr(req, "Location", location);
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     
-    static const char *redirect_html = 
+    char *redirect_html = heap_caps_malloc(2048, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!redirect_html) {
+        return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    }
+    snprintf(redirect_html, 2048,
         "<!DOCTYPE html><html><head><meta charset=\"UTF-8\">"
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1.0\">"
         "<title>ESP32 Launcher Portal</title><style>"
@@ -645,13 +671,15 @@ static esp_err_t captive_portal_redirect_handler(httpd_req_t *req, httpd_err_cod
         "p{color:#8a99ad;font-size:13px;margin:0 0 24px;}"
         ".spinner{border:3px solid rgba(255,255,255,0.05);border-top:3px solid #00f2fe;border-radius:50%;"
         "width:32px;height:32px;animation:spin 1s linear infinite;margin:0 auto;box-shadow:0 0 15px rgba(0,242,254,0.2);}"
-        "@keyframes spin{0%{transform:rotate(0deg);}100%{transform:rotate(360deg);}}"
-        "</style><meta http-equiv=\"refresh\" content=\"0; url=http://192.168.4.1/chat\"></head>"
+        "@keyframes spin{0%%{transform:rotate(0deg);}100%%{transform:rotate(360deg);}}"
+        "</style><meta http-equiv=\"refresh\" content=\"0; url=http://%s/chat\"></head>"
         "<body><div class=\"container\"><h2>ESP32 PORTAL</h2><p>Initializing Wireless Interface...</p>"
-        "<div class=\"spinner\"></div></div><script>window.location.href=\"http://192.168.4.1/chat\";</script>"
-        "</body></html>";
+        "<div class=\"spinner\"></div></div><script>window.location.href=\"http://%s/chat\";</script>"
+        "</body></html>",
+        s_captive_ip, s_captive_ip);
 
     httpd_resp_send(req, redirect_html, HTTPD_RESP_USE_STRLEN);
+    heap_caps_free(redirect_html);
     return ESP_OK;
 }
 

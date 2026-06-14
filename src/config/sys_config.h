@@ -111,6 +111,11 @@ extern "C" {
 #define NTP_NVS_KEY_EPOCH           "epoch"
 #define NTP_NVS_KEY_TIMER_US        "timer_us"
 
+/* Sanity bounds for NVS-restored time validation */
+#define NTP_EPOCH_MIN   946684800ULL   /* 2000-01-01 00:00:00 UTC — below this is invalid */
+#define NTP_EPOCH_MAX  1893456000ULL   /* 2030-01-01 00:00:00 UTC — above this is invalid */
+#define NTP_BUILD_MIN  1717200000ULL   /* Approx 2024-06-01 — before firmware build date */
+
 /* --------------------------------------------------------------------------
  * Weather Service
  * -------------------------------------------------------------------------- */
@@ -121,6 +126,7 @@ extern "C" {
 #define WEATHER_IP_GEO_URL          "http://ip-api.com/json/?fields=status,city,lat,lon,timezone,offset,country"
 #define WEATHER_FORECAST_URL        "https://api.open-meteo.com/v1/forecast"
 #define WEATHER_GEOCODING_URL       "https://geocoding-api.open-meteo.com/v1/search"
+#define WEATHER_REVERSE_GEO_URL     "https://nominatim.openstreetmap.org/reverse"
 #define WEATHER_TASK_STACK          8192
 #define WEATHER_TASK_PRIORITY       5
 #define WEATHER_TASK_CORE           0
@@ -167,6 +173,33 @@ extern "C" {
 #define AI_WORKER_TASK_STACK    (16 * 1024)
 #define AI_WORKER_TASK_PRIORITY 4
 #define AI_WORKER_TASK_CORE     0
+
+/* --------------------------------------------------------------------------
+ * Display Utilities
+ * -------------------------------------------------------------------------- */
+/* Named color constant for use as a dark overlay blend target — never use raw 0x0000. */
+#define RGB565_BLACK  (0x0000u)
+
+/* --------------------------------------------------------------------------
+ * Hack Store — Custom Firmware Flasher
+ * -------------------------------------------------------------------------- */
+/* Delay (ms) between setting the OTA-1 RTC flag and calling esp_restart().
+ * Ensures the RTOS can cleanly finish any in-flight socket operations. */
+#define HS_PRE_REBOOT_DELAY_MS      100
+
+/* Wi-Fi connect timeout (loop ticks in UI_WifiScanner at ~50 ms/tick). */
+#define WIFI_SCANNER_CONNECT_TIMEOUT_MS  10000
+
+/* Hack Store cloud catalog URL */
+#define HS_CATALOG_URL \
+    "https://raw.githubusercontent.com/Abhiram9641/ESP_Store/main/firmware_catalog.json"
+
+/* HTTP timeout and chunk size for Hack Store downloads */
+#define HS_HTTP_TIMEOUT_MS          10000
+#define HS_DL_CHUNK_SIZE            8192
+
+/* Catalog fetch buffer size (16 KB in PSRAM) */
+#define HS_CATALOG_BUFFER_SIZE      (16 * 1024)
 
 /* --------------------------------------------------------------------------
  * OTA / WiFi State Machine

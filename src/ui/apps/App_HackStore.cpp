@@ -8,18 +8,16 @@
 
 static const char* TAG = "APP_HACK";
 
-extern void switch_to_app(IApp* app);
-extern void switch_to_grid();
+#include "../ui_task.h"
 
 static inline uint16_t C_ACCENT()  { return theme_get_accent(); }
 static inline uint16_t C_TEXT()    { return theme_get_text(); }
 static inline uint16_t C_DIM()     { return theme_get_text_dim(); }
 static inline uint16_t C_BG()      { return theme_get_bg(); }
 static inline uint16_t C_PANEL()   { return theme_get_bg(); }
-
-static uint16_t COLOR_GREEN;
-static uint16_t COLOR_ORANGE;
-static uint16_t COLOR_RED;
+static inline uint16_t C_SUCCESS() { return theme_get_success(); }
+static inline uint16_t C_WARN()    { return theme_get_accent(); }
+static inline uint16_t C_FAIL()    { return theme_get_fail(); }
 
 App_HackStore::App_HackStore()
     : _screen(Screen::LocalList), _prev_screen(Screen::LocalList),
@@ -38,10 +36,6 @@ App_HackStore::App_HackStore()
 App_HackStore::~App_HackStore() {}
 
 void App_HackStore::init() {
-    COLOR_GREEN  = theme_get_success();
-    COLOR_ORANGE = theme_get_accent();
-    COLOR_RED    = theme_get_fail();
-
     _anim_time     = 0.0f;
     _spinner_angle = 0.0f;
     _list_sel      = 0;
@@ -64,6 +58,9 @@ void App_HackStore::loop() {
 
     hack_store_status_t st = {};
     hack_store_get_status(&st);
+
+    // Cache for render (no service calls in render path)
+    _download_status = st;
 
     if (_screen == Screen::Downloading) {
         // Since is_busy is set to true synchronously before we transition to Downloading,
@@ -228,7 +225,7 @@ void App_HackStore::_draw_game_row(LGFX_Sprite* c, int y, const hack_entry_t& e,
     c->drawString(e.name, W / 20, y + H / 12);
     
     if (strcmp(_installed_id, e.id) == 0) {
-        c->setTextColor(COLOR_GREEN);
+        c->setTextColor(C_SUCCESS());
         c->drawString("[v]", W - W / 7, y + H / 12);
     }
 }
@@ -255,36 +252,42 @@ void App_HackStore::_render_local_list(LGFX_Sprite* c) {
 
     bool has_installed = hack_store_get_installed_id(_installed_id, sizeof(_installed_id));
 
+    const int32_t CX = c->width() / 2;
+    const int32_t H  = c->height();
+
     if (!has_installed) {
         c->setTextDatum(textdatum_t::middle_center);
         c->setFont(&fonts::Font0);
         c->setTextColor(C_DIM());
-        c->drawString("No hacks installed.", 80, 55);
-        c->drawString("RIGHT -> Store", 80, 70);
+        c->drawString("No hacks installed.", CX, H * 43 / 100);
+        c->drawString("RIGHT -> Store",      CX, H * 55 / 100);
         _draw_footer(c, "R=Store  L=Back");
     } else {
         c->setTextDatum(textdatum_t::middle_center);
         c->setFont(&fonts::Font0);
         c->setTextColor(C_TEXT());
-        c->drawString("Currently Installed:", 80, 30);
-        
-        c->setTextColor(COLOR_GREEN);
-        c->drawString(_installed_id, 80, 50);
+        c->drawString("Currently Installed:", CX, H * 23 / 100);
+
+        c->setTextColor(C_SUCCESS());
+        c->drawString(_installed_id, CX, H * 39 / 100);
 
         c->setTextColor(C_DIM());
-        c->drawString("Press SEL to Boot", 80, 80);
-        
+        c->drawString("Press SEL to Boot", CX, H * 63 / 100);
+
         _draw_footer(c, "SEL=Boot  R=Store  L=Back");
     }
 }
 
 void App_HackStore::_render_store_list(LGFX_Sprite* c) {
-    _draw_header(c, "HACK STORE", COLOR_ORANGE);
+    _draw_header(c, "HACK STORE", C_WARN());
+    const int32_t HEADER_H = c->height() / 9;
+    const int32_t ROW_H    = c->height() / 5;
+    const int32_t ROW_Y0   = HEADER_H + 4;
 
     for (int row = 0; row < 4; row++) {
         int i = _list_scroll + row;
         if (i >= _catalog_count) break;
-        _draw_game_row(c, 18 + row * 25, _catalog[i], (i == _list_sel));
+        _draw_game_row(c, ROW_Y0 + row * ROW_H, _catalog[i], (i == _list_sel));
     }
 
     _draw_footer(c, "SEL=Detail  L=MyHacks");
@@ -299,12 +302,23 @@ void App_HackStore::_render_detail(LGFX_Sprite* c) {
     c->setTextDatum(textdatum_t::top_left);
     c->setFont(&fonts::Font0);
 
+    const int32_t W  = c->width();
+    const int32_t H  = c->height();
+    const int32_t CX = W / 2;
+    const int32_t HEADER_H = H / 9;
+    const int32_t META_Y   = HEADER_H + 4;
+    const int32_t DESC_Y   = META_Y + H / 14;
+    const int32_t BTN_Y    = H * 70 / 100;
+    const int32_t BTN_H    = H / 7;
+    const int32_t BTN_W    = W / 2;
+    const int32_t MARGIN   = W / 40;
+
     c->setTextColor(C_DIM());
-    c->drawString(g.version, 4, 18);
+    c->drawString(g.version, MARGIN, META_Y);
 
     char sz[32];
     snprintf(sz, sizeof(sz), "%dKB", (int)(g.size_bytes / 1024));
-    c->drawString(sz, 80, 18);
+    c->drawString(sz, CX, META_Y);
 
     c->setTextColor(C_TEXT());
     char desc[129];
@@ -313,80 +327,99 @@ void App_HackStore::_render_detail(LGFX_Sprite* c) {
         int start = line * 26;
         if (start >= (int)strlen(g.description)) break;
         char chunk[27]; strncpy(chunk, g.description + start, 26); chunk[26] = '\0';
-        c->drawString(chunk, 4, 30 + line * 10);
+        c->drawString(chunk, MARGIN, DESC_Y + line * (H / 13));
     }
 
     bool is_installed = (strcmp(_installed_id, g.id) == 0);
 
-    c->fillRoundRect(44, 90, 72, 18, 4, C_ACCENT());
+    c->fillRoundRect((W - BTN_W) / 2, BTN_Y, BTN_W, BTN_H, 4, C_ACCENT());
     c->setTextDatum(textdatum_t::middle_center);
     c->setTextColor(C_BG());
-    c->drawString(is_installed ? "BOOT" : "FLASH", 80, 99);
+    c->drawString(is_installed ? "BOOT" : "FLASH", CX, BTN_Y + BTN_H / 2);
     c->setTextColor(C_DIM());
     c->setFont(&fonts::Font0);
-    c->drawString(is_installed ? "SEL=Boot  L=Back" : "SEL=Flash  L=Back", 80, 114);
+    c->drawString(is_installed ? "SEL=Boot  L=Back" : "SEL=Flash  L=Back",
+                  CX, BTN_Y + BTN_H + H / 22);
 
     _draw_footer(c, "L=Back");
 }
 
 void App_HackStore::_render_downloading(LGFX_Sprite* c) {
-    hack_store_status_t st = {};
-    hack_store_get_status(&st);
+    // Read cached status — no service calls in render path (cached in loop())
+    const hack_store_status_t& st = _download_status;
 
-    _draw_header(c, "FLASHING", COLOR_RED);
+    _draw_header(c, "FLASHING", C_FAIL());
+
+    const int32_t W  = c->width();
+    const int32_t H  = c->height();
+    const int32_t CX = W / 2;
+    const int32_t HEADER_H = H / 9;
+    const int32_t MARGIN   = W / 20;
+    const int32_t NAME_Y   = HEADER_H + H / 6;
+    const int32_t BAR_Y    = H * 36 / 100;
+    const int32_t BAR_H    = H / 6;
+    const int32_t PCT_Y    = BAR_Y + BAR_H + H / 14;
+    const int32_t KB_Y     = PCT_Y + H / 10;
+    const int32_t WARN_Y   = KB_Y  + H / 10;
 
     c->setTextDatum(textdatum_t::middle_center);
     c->setFont(&fonts::Font0);
     c->setTextColor(C_TEXT());
     if (_pending_install_idx >= 0)
-        c->drawString(_catalog[_pending_install_idx].name, 80, 34);
+        c->drawString(_catalog[_pending_install_idx].name, CX, NAME_Y);
 
-    _draw_progress_bar(c, 8, 46, 144, 20, st.progress_pct, COLOR_RED);
+    _draw_progress_bar(c, MARGIN, BAR_Y, W - MARGIN * 2, BAR_H, st.progress_pct, C_FAIL());
 
     char pct_str[8];
     snprintf(pct_str, sizeof(pct_str), "%d%%", st.progress_pct);
     c->setTextColor(C_TEXT());
-    c->drawString(pct_str, 80, 76);
+    c->drawString(pct_str, CX, PCT_Y);
 
     char kb[32];
     snprintf(kb, sizeof(kb), "%dKB / %dKB",
              (int)(st.bytes_done / 1024), (int)(st.bytes_total / 1024));
     c->setTextColor(C_DIM());
-    c->drawString(kb, 80, 90);
+    c->drawString(kb, CX, KB_Y);
 
-    c->setTextColor(COLOR_ORANGE);
-    c->drawString("DO NOT POWER OFF", 80, 105);
+    c->setTextColor(C_WARN());
+    c->drawString("DO NOT POWER OFF", CX, WARN_Y);
 
     _draw_footer(c, "SEL=Abort");
 }
 
 void App_HackStore::_render_cloud_loading(LGFX_Sprite* c) {
     _draw_header(c, "CONNECTING", C_ACCENT());
-    _draw_spinner(c, 80, 64, 18);
+    const int32_t CX = c->width() / 2;
+    const int32_t H  = c->height();
+    _draw_spinner(c, CX, H / 2, H / 7);
     c->setTextDatum(textdatum_t::middle_center);
     c->setFont(&fonts::Font0);
     c->setTextColor(C_DIM());
-    c->drawString("Fetching catalog...", 80, 95);
+    c->drawString("Fetching catalog...", CX, H * 74 / 100);
 }
 
 void App_HackStore::_render_error(LGFX_Sprite* c) {
-    _draw_header(c, "ERROR", COLOR_RED);
+    _draw_header(c, "ERROR", C_FAIL());
+    const int32_t CX = c->width() / 2;
+    const int32_t H  = c->height();
     c->setTextDatum(textdatum_t::middle_center);
     c->setFont(&fonts::Font0);
-    c->setTextColor(COLOR_RED);
-    c->drawString(_err_string(_last_err), 80, 50);
+    c->setTextColor(C_FAIL());
+    c->drawString(_err_string(_last_err), CX, H * 39 / 100);
     c->setTextColor(C_DIM());
-    c->drawString("SEL=Retry  L=Back", 80, 80);
+    c->drawString("SEL=Retry  L=Back",    CX, H * 63 / 100);
 }
 
 void App_HackStore::_render_no_wifi(LGFX_Sprite* c) {
-    _draw_header(c, "NO WI-FI", COLOR_ORANGE);
+    _draw_header(c, "NO WI-FI", C_WARN());
+    const int32_t CX = c->width() / 2;
+    const int32_t H  = c->height();
     c->setTextDatum(textdatum_t::middle_center);
     c->setFont(&fonts::Font0);
     c->setTextColor(C_TEXT());
-    c->drawString("Connect to Wi-Fi first.", 80, 50);
+    c->drawString("Connect to Wi-Fi first.", CX, H * 39 / 100);
     c->setTextColor(C_DIM());
-    c->drawString("SEL/R=Scan  L=Back", 80, 75);
+    c->drawString("SEL/R=Scan  L=Back",     CX, H * 59 / 100);
 }
 
 void App_HackStore::_refresh_catalog_local() {

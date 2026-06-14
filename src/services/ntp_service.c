@@ -23,10 +23,8 @@ static const char* TAG = "NTP_SVC";
 static bool s_ntp_synced = false;
 static bool s_initialized = false;
 
-// Sanity bounds for restored time validation
-#define TIME_EPOCH_MIN   946684800ULL   // 2000-01-01 00:00:00 UTC
-#define TIME_EPOCH_MAX  1893456000ULL   // 2030-01-01 00:00:00 UTC
-#define TIME_BUILD_MIN  1717200000ULL   // Approx 2024-06-01 (adjust to firmware build date)
+// Sanity bounds for restored time validation — defined in sys_config.h
+// NTP_EPOCH_MIN, NTP_EPOCH_MAX, NTP_BUILD_MIN
 
 // SNTP sync notification callback
 static void _sntp_sync_time_cb(struct timeval *tv) {
@@ -97,12 +95,17 @@ void ntp_service_save_to_nvs(void) {
     
     time_t now = time(NULL);
     int64_t timer_us = esp_timer_get_time();
-    
-    nvs_set_i64(handle, NTP_NVS_KEY_EPOCH, (int64_t)now);
-    nvs_set_i64(handle, NTP_NVS_KEY_TIMER_US, timer_us);
-    nvs_commit(handle);
+
+    esp_err_t e1 = nvs_set_i64(handle, NTP_NVS_KEY_EPOCH,    (int64_t)now);
+    esp_err_t e2 = nvs_set_i64(handle, NTP_NVS_KEY_TIMER_US, timer_us);
+    esp_err_t e3 = (e1 == ESP_OK && e2 == ESP_OK) ? nvs_commit(handle) : ESP_FAIL;
     nvs_close(handle);
-    
+
+    if (e1 != ESP_OK || e2 != ESP_OK || e3 != ESP_OK) {
+        ESP_LOGW(TAG, "NVS write failed: set_epoch=%s set_timer=%s commit=%s",
+                 esp_err_to_name(e1), esp_err_to_name(e2), esp_err_to_name(e3));
+        return;
+    }
     ESP_LOGD(TAG, "Time saved to NVS: epoch=%lld, timer_us=%lld", (long long)now, (long long)timer_us);
 }
 
@@ -144,12 +147,12 @@ bool ntp_service_restore_from_nvs(void) {
     time_t restored_time = (time_t)(saved_epoch + (delta_us / 1000000LL));
     
     // Validate restored time
-    if (restored_time < TIME_EPOCH_MIN || restored_time > TIME_EPOCH_MAX) {
+    if (restored_time < NTP_EPOCH_MIN || restored_time > NTP_EPOCH_MAX) {
         ESP_LOGW(TAG, "Restored time out of bounds: %lld, discarding", (long long)restored_time);
         return false;
     }
     
-    if (restored_time < TIME_BUILD_MIN) {
+    if (restored_time < NTP_BUILD_MIN) {
         ESP_LOGW(TAG, "Restored time before build date: %lld, discarding", (long long)restored_time);
         return false;
     }
@@ -160,6 +163,7 @@ bool ntp_service_restore_from_nvs(void) {
         .tv_usec = 0
     };
     settimeofday(&tv, NULL);
+    s_ntp_synced = true;
     
     ESP_LOGI(TAG, "Time restored: %lld (delta: %lld s)", (long long)restored_time, delta_us / 1000000LL);
     return true;
@@ -180,9 +184,13 @@ ntp_err_t ntp_service_set_timezone(const char* posix_tz) {
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NTP_NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err == ESP_OK) {
-        nvs_set_str(handle, "tz_posix", posix_tz);
-        nvs_commit(handle);
+        esp_err_t e1 = nvs_set_str(handle, "tz_posix", posix_tz);
+        esp_err_t e2 = (e1 == ESP_OK) ? nvs_commit(handle) : ESP_FAIL;
         nvs_close(handle);
+        if (e1 != ESP_OK || e2 != ESP_OK) {
+            ESP_LOGW(TAG, "NVS timezone write failed: set=%s commit=%s",
+                     esp_err_to_name(e1), esp_err_to_name(e2));
+        }
     }
     
     return NTP_ERR_OK;

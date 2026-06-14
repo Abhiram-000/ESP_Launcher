@@ -29,7 +29,12 @@
 static const char *TAG_OSD = "NES_OSD";
 
 /* ── Globals shared with App_NES (extern declared in App_NES.cpp) ────────── */
+static SemaphoreHandle_t s_rom_path_mutex = NULL;  /* Protects active_nes_rom_path */
+/* Callers (App_NES on Core 1) must hold s_rom_path_mutex before writing */
 char              active_nes_rom_path[256];  /* Set by App_NES before task start */
+
+/* Public accessor for cross-core mutex protection of active_nes_rom_path */
+SemaphoreHandle_t osd_get_rom_path_mutex(void) { return s_rom_path_mutex; }
 volatile uint16_t     *nes_frame_buffer   = NULL; /* Back-buffer written by OSD       */
 SemaphoreHandle_t nes_frame_sem      = NULL; /* Signals UI task: new frame ready  */
 volatile uint32_t nes_input_state    = 0;    /* NES button bits from App_NES      */
@@ -64,15 +69,35 @@ static void _timer_isr(void *arg)
 /* ── Init / Shutdown ──────────────────────────────────────────────────────── */
 int osd_init(void)
 {
+    /* Create mutex for cross-core protection of active_nes_rom_path */
+    if (!s_rom_path_mutex) {
+        s_rom_path_mutex = xSemaphoreCreateMutex();
+        if (!s_rom_path_mutex) {
+            ESP_LOGE(TAG_OSD, "Failed to create ROM path mutex");
+            return -1;
+        }
+    }
+
     ESP_LOGI(TAG_OSD, "=== osd_init START ===");
     ESP_LOGI(TAG_OSD, "  Free heap internal : %u bytes", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
     ESP_LOGI(TAG_OSD, "  Free heap SPIRAM   : %u bytes", (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-    ESP_LOGI(TAG_OSD, "  ROM path           : %s", active_nes_rom_path);
+
+    /* Take mutex before reading active_nes_rom_path */
+    char local_rom_path[256];
+    if (xSemaphoreTake(s_rom_path_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+        strlcpy(local_rom_path, active_nes_rom_path, sizeof(local_rom_path));
+        xSemaphoreGive(s_rom_path_mutex);
+    } else {
+        ESP_LOGE(TAG_OSD, "Failed to acquire ROM path mutex");
+        return -1;
+    }
+
+    ESP_LOGI(TAG_OSD, "  ROM path           : %s", local_rom_path);
 
     /* Verify ROM file is accessible before starting emulator */
-    FILE *test = fopen(active_nes_rom_path, "rb");
+    FILE *test = fopen(local_rom_path, "rb");
     if (!test) {
-        ESP_LOGE(TAG_OSD, "  ROM file NOT accessible: %s", active_nes_rom_path);
+        ESP_LOGE(TAG_OSD, "  ROM file NOT accessible: %s", local_rom_path);
         return -1;
     }
     fseek(test, 0, SEEK_END);
@@ -287,7 +312,7 @@ bitmap_t *vid_getbuffer(void)
  * Result is written into nes_frame_buffer (back-buffer).
  * A semaphore give signals App_NES::render() to swap buffers.
  */
-void IRAM_ATTR vid_flush(void)
+void vid_flush(void)
 {
     /* Check exit flag every frame */
     if (nes_should_exit) {

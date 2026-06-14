@@ -21,7 +21,7 @@ private:
     float smooth_progress;
     float last_progress;
     float activity;          /* Wave amplitude driver [0..1] */
-    float anim_time;
+    float _anim_time;
     float shockwave_r;
 
     /* Throughput & time */

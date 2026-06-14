@@ -303,5 +303,12 @@ ota_state_t ota_service_get_state(void) {
 }
 
 const char* ota_service_get_status_msg(void) {
-    return s_ctx.status_msg;
+    /* Copy into a static buffer under mutex to avoid a race with _set_state().
+     * Callers must consume the result before the next call overwrites it. */
+    static char s_msg_copy[64];
+    _ota_lock();
+    strncpy(s_msg_copy, s_ctx.status_msg, sizeof(s_msg_copy) - 1);
+    s_msg_copy[sizeof(s_msg_copy) - 1] = '\0';
+    _ota_unlock();
+    return s_msg_copy;
 }

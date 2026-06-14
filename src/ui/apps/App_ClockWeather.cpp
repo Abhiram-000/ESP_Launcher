@@ -19,7 +19,7 @@
 #include <math.h>
 #include <string.h>
 
-extern void switch_to_grid();
+#include "../ui_task.h"
 
 static const char* TAG = "APP_CLOCK";
 
@@ -145,6 +145,11 @@ void App_ClockWeather::handleInput(input_event_t event) {
                     [this](const char* city) {
                         ESP_LOGI(TAG, "User entered city: %s", city);
                         this->_keyboard_active = false;
+                        // Geocode and set as manual location (persists to NVS)
+                        if (wifi_mgr_is_connected()) {
+                            weather_service_set_city(city);
+                            weather_service_refresh();
+                        }
                     },
                     [this]() {
                         this->_keyboard_active = false;
@@ -166,20 +171,20 @@ void App_ClockWeather::handleInput(input_event_t event) {
 uint16_t App_ClockWeather::_blend_color(uint16_t c1, uint16_t c2, float ratio) {
     if (ratio <= 0.0f) return c1;
     if (ratio >= 1.0f) return c2;
-    
-    uint8_t r1 = (c1 >> 11) & 0x1F;
-    uint8_t g1 = (c1 >> 5) & 0x3F;
-    uint8_t b1 = c1 & 0x1F;
-    
-    uint8_t r2 = (c2 >> 11) & 0x1F;
-    uint8_t g2 = (c2 >> 5) & 0x3F;
-    uint8_t b2 = c2 & 0x1F;
-    
-    uint8_t r = r1 + (uint8_t)((r2 - r1) * ratio);
-    uint8_t g = g1 + (uint8_t)((g2 - g1) * ratio);
-    uint8_t b = b1 + (uint8_t)((b2 - b1) * ratio);
-    
-    return (r << 11) | (g << 5) | b;
+
+    int r1 = (c1 >> 11) & 0x1F;
+    int g1 = (c1 >>  5) & 0x3F;
+    int b1 =  c1        & 0x1F;
+
+    int r2 = (c2 >> 11) & 0x1F;
+    int g2 = (c2 >>  5) & 0x3F;
+    int b2 =  c2        & 0x1F;
+
+    int r = r1 + (int)((r2 - r1) * ratio);
+    int g = g1 + (int)((g2 - g1) * ratio);
+    int b = b1 + (int)((b2 - b1) * ratio);
+
+    return (uint16_t)((r << 11) | (g << 5) | b);
 }
 
 void App_ClockWeather::_draw_digit_pair(LGFX_Sprite* canvas, int value, int32_t x, int32_t y, bool show_colon) {
@@ -190,9 +195,10 @@ void App_ClockWeather::_draw_digit_pair(LGFX_Sprite* canvas, int value, int32_t 
     canvas->setTextDatum(textdatum_t::top_left);
     canvas->drawString(buf, x, y);
     
-    // Static colon (no blinking)
+    // Static colon — position proportional to digit width
     if (show_colon) {
-        canvas->drawString(":", x + 32, y);
+        int digit_w = canvas->textWidth("0");
+        canvas->drawString(":", x + digit_w * 2 + 2, y);
     }
 }
 
@@ -202,30 +208,37 @@ void App_ClockWeather::_draw_time_large(LGFX_Sprite* canvas, int cx, int cy) {
     int min = _time_info.tm_min;
     int sec = _time_info.tm_sec;
     
+    // Proportional offsets for three digit pairs (HH:MM:SS)
+    const int32_t W = canvas->width();
+    const int pair_spacing = W * 21 / 100;  // ~33px@160, ~50px@240
+    const int h_x = cx - pair_spacing;
+    const int m_x = cx;
+    const int s_x = cx + pair_spacing;
+    
     // Draw shadow/outline for thickness effect (4 passes: down-right, down-left, up-right, up-left)
     uint16_t shadow_color = _blend_color(theme_get_bg(), theme_get_text(), 0.4f);
     canvas->setTextColor(shadow_color);
     
     // Shadow pass 1 (bottom-right)
-    _draw_digit_pair(canvas, hour, cx - 46, cy + 1, true);
-    _draw_digit_pair(canvas, min, cx - 6, cy + 1, true);
-    _draw_digit_pair(canvas, sec, cx + 34, cy + 1, false);
+    _draw_digit_pair(canvas, hour, h_x + 2, cy + 1, true);
+    _draw_digit_pair(canvas, min, m_x + 2, cy + 1, true);
+    _draw_digit_pair(canvas, sec, s_x + 2, cy + 1, false);
     
     // Shadow pass 2 (right)
-    _draw_digit_pair(canvas, hour, cx - 47, cy, true);
-    _draw_digit_pair(canvas, min, cx - 7, cy, true);
-    _draw_digit_pair(canvas, sec, cx + 33, cy, false);
+    _draw_digit_pair(canvas, hour, h_x + 1, cy, true);
+    _draw_digit_pair(canvas, min, m_x + 1, cy, true);
+    _draw_digit_pair(canvas, sec, s_x + 1, cy, false);
     
     // Shadow pass 3 (bottom)
-    _draw_digit_pair(canvas, hour, cx - 48, cy + 1, true);
-    _draw_digit_pair(canvas, min, cx - 8, cy + 1, true);
-    _draw_digit_pair(canvas, sec, cx + 32, cy + 1, false);
+    _draw_digit_pair(canvas, hour, h_x, cy + 1, true);
+    _draw_digit_pair(canvas, min, m_x, cy + 1, true);
+    _draw_digit_pair(canvas, sec, s_x, cy + 1, false);
     
     // Main pass (bright, on top)
     canvas->setTextColor(theme_get_text());
-    _draw_digit_pair(canvas, hour, cx - 48, cy, true);
-    _draw_digit_pair(canvas, min, cx - 8, cy, true);
-    _draw_digit_pair(canvas, sec, cx + 32, cy, false);
+    _draw_digit_pair(canvas, hour, h_x, cy, true);
+    _draw_digit_pair(canvas, min, m_x, cy, true);
+    _draw_digit_pair(canvas, sec, s_x, cy, false);
 }
 
 void App_ClockWeather::_draw_date_small(LGFX_Sprite* canvas, int cx, int cy) {
@@ -255,7 +268,7 @@ void App_ClockWeather::_draw_date_small(LGFX_Sprite* canvas, int cx, int cy) {
 void App_ClockWeather::_draw_weather_panel(LGFX_Sprite* canvas) {
     if (!_weather_has_data) return;
     
-    int panel_y = _h - 54;
+    int panel_y = _h * 58 / 100;  // ~74px@128, proportional to screen height
     int panel_h = _h / 3;
     
     // Beautiful rounded panel with gradient
@@ -304,7 +317,7 @@ void App_ClockWeather::_draw_weather_panel(LGFX_Sprite* canvas) {
     uint16_t desc_color = _blend_color(theme_get_text(), theme_get_accent(), 0.6f);
     canvas->setTextColor(desc_color);
     canvas->setTextDatum(textdatum_t::middle_left);
-    canvas->drawString(desc, right_start_x, panel_y + 20);
+    canvas->drawString(desc, right_start_x, panel_y + 23);
     
     // ROW 3 (BOTTOM): Details - moved lower to avoid overlap
     canvas->setFont(&fonts::Font0);
@@ -435,7 +448,8 @@ void App_ClockWeather::_draw_settings_screen(LGFX_Sprite* canvas) {
 }
 
 void App_ClockWeather::render(LGFX_Sprite* canvas) {
-    // Update dimensions from actual canvas for resolution independence
+    canvas->fillSprite(theme_get_bg());
+
     _w = canvas->width();
     _h = canvas->height();
     _cx = _w / 2;

@@ -64,6 +64,10 @@ private:
     // Cached layout
     int32_t     _cx, _cy, _w, _h;
 
+    // Pre-allocated transition sprites — created in init(), deleted in exit()
+    LGFX_Sprite* _sp_old = nullptr;
+    LGFX_Sprite* _sp_new = nullptr;
+
 public:
     App_Pomodoro();
     ~App_Pomodoro() override;

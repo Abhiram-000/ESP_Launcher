@@ -1,7 +1,9 @@
 #include "UI_WifiScanner.h"
 #include "../theme_mgr.h"
 #include "../../utils/color_utils.h"
+#include "../../config/sys_config.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include <math.h>
 #include <string.h>
 
@@ -9,7 +11,7 @@ static const char* TAG = "UI_WIFI";
 
 UI_WifiScanner::UI_WifiScanner() 
     : _active(false), _state(State::Idle), _anim_time(0), _spinner_angle(0),
-      _network_count(0), _connect_timeout_ticks(0) {}
+      _network_count(0), _connect_start_ms(0) {}
 UI_WifiScanner::~UI_WifiScanner() {}
 
 void UI_WifiScanner::begin(std::function<void(bool)> on_complete) {
@@ -20,7 +22,7 @@ void UI_WifiScanner::begin(std::function<void(bool)> on_complete) {
     _list_sel = 0;
     _list_scroll = 0;
     _connect_success = false;
-    _connect_timeout_ticks = 0;
+    _connect_start_ms = 0;
     memset(_selected_ssid, 0, sizeof(_selected_ssid));
     memset(_password, 0, sizeof(_password));
     
@@ -34,7 +36,7 @@ void UI_WifiScanner::loop() {
     
     if (_state == State::Scanning) {
         if (wifi_mgr_is_scan_done()) {
-            _network_count = wifi_mgr_get_scan_results(_networks, 15);
+            _network_count = wifi_mgr_get_scan_results(_networks, MAX_WIFI_NETWORKS);
             _state = State::List;
         }
     }
@@ -43,8 +45,9 @@ void UI_WifiScanner::loop() {
             _connect_success = true;
             _state = State::Done;
         } else {
-            _connect_timeout_ticks++;
-            if (_connect_timeout_ticks > 200) { // roughly 10 seconds at 50ms loop
+            uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+            if (_connect_start_ms == 0) _connect_start_ms = now_ms;
+            if ((now_ms - _connect_start_ms) >= WIFI_SCANNER_CONNECT_TIMEOUT_MS) {
                 ESP_LOGW(TAG, "connect timeout for %s", _selected_ssid);
                 _connect_success = false;
                 _state = State::Done;
@@ -86,14 +89,16 @@ void UI_WifiScanner::handleInput(input_event_t ev) {
             strncpy(_selected_ssid, _networks[_list_sel].ssid, sizeof(_selected_ssid)-1);
             if (_networks[_list_sel].authmode == WIFI_AUTH_OPEN) {
                 wifi_mgr_connect(_selected_ssid, "");
+                _connect_start_ms = (uint32_t)(esp_timer_get_time() / 1000);
                 _state = State::Connecting;
             } else {
                 _state = State::Password;
                 _keyboard.begin(
-                    "Password:", 
+                    "Password:",
                     [this](const char* pwd) {
                         strncpy(this->_password, pwd, sizeof(this->_password)-1);
                         wifi_mgr_connect(this->_selected_ssid, this->_password);
+                        this->_connect_start_ms = (uint32_t)(esp_timer_get_time() / 1000);
                         this->_state = State::Connecting;
                     },
                     [this]() {
@@ -112,8 +117,9 @@ void UI_WifiScanner::handleInput(input_event_t ev) {
 }
 
 void UI_WifiScanner::_draw_header(LGFX_Sprite* c, const char* title, uint16_t accent) {
-    c->fillRect(0, 0, 160, 14, theme_get_bg());
-    c->drawFastHLine(0, 14, 160, accent);
+    const int32_t W = c->width();
+    c->fillRect(0, 0, W, 14, theme_get_bg());
+    c->drawFastHLine(0, 14, W, accent);
     c->setTextDatum(textdatum_t::middle_left);
     c->setFont(&fonts::Font0);
     c->setTextColor(theme_get_text());
@@ -130,53 +136,53 @@ void UI_WifiScanner::render(LGFX_Sprite* c) {
     if (!_active) return;
     
     // Dim the background
-    c->fillRect(0, 0, 160, 128, color_blend(theme_get_bg(), 0x0000, 0.8f));
+    c->fillRect(0, 0, c->width(), c->height(), color_blend(theme_get_bg(), RGB565_BLACK, 0.8f));
 
     if (_state == State::Scanning) {
         _draw_header(c, "SCANNING WI-FI", theme_get_accent());
-        _draw_spinner(c, 80, 64, 18);
+        _draw_spinner(c, c->width()/2, c->height()/2, 18);
     }
     else if (_state == State::Connecting) {
         _draw_header(c, "CONNECTING...", theme_get_accent());
-        _draw_spinner(c, 80, 64, 18);
+        _draw_spinner(c, c->width()/2, c->height()/2, 18);
         c->setTextDatum(textdatum_t::middle_center);
         c->setFont(&fonts::Font0);
         c->setTextColor(theme_get_text_dim());
-        c->drawString(_selected_ssid, 80, 95);
+        c->drawString(_selected_ssid, c->width()/2, c->height() * 3/4);
     }
     else if (_state == State::List) {
         _draw_header(c, "SELECT NETWORK", theme_get_accent());
-        
+
         if (_network_count == 0) {
             c->setTextDatum(textdatum_t::middle_center);
             c->setTextColor(theme_get_text_dim());
-            c->drawString("No networks found.", 80, 64);
+            c->drawString("No networks found.", c->width()/2, c->height()/2);
         } else {
             for (int row = 0; row < 4; row++) {
                 int i = _list_scroll + row;
                 if (i >= _network_count) break;
-                
+
                 int y = 18 + row * 25;
                 bool sel = (i == _list_sel);
-                
+
                 uint16_t bg = sel ? theme_get_accent() : color_blend(theme_get_text_dim(), theme_get_bg(), 0.1f);
                 uint16_t fg = sel ? theme_get_bg() : theme_get_text();
-                
-                c->fillRoundRect(4, y, 152, 22, 4, bg);
+
+                c->fillRoundRect(4, y, c->width()-8, 22, 4, bg);
                 c->setTextDatum(textdatum_t::middle_left);
                 c->setFont(&fonts::Font0);
                 c->setTextColor(fg);
                 c->drawString(_networks[i].ssid, 10, y + 11);
-                
+
                 // Draw RSSI or lock icon hint
                 if (_networks[i].authmode != WIFI_AUTH_OPEN) {
-                    c->drawString("*", 140, y + 11);
+                    c->drawString("*", c->width()-20, y + 11);
                 }
             }
         }
         c->setTextDatum(textdatum_t::bottom_center);
         c->setTextColor(theme_get_text_dim());
-        c->drawString("L=Cancel  R=Rescan", 80, 126);
+        c->drawString("L=Cancel  R=Rescan", c->width()/2, c->height()-2);
     }
     else if (_state == State::Password) {
         _keyboard.render(c);

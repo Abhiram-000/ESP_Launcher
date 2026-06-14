@@ -1,8 +1,14 @@
 #ifndef _OSD_H_
 #define _OSD_H_
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <limits.h>
 #include <stdbool.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #ifndef PATH_MAX
 #define PATH_MAX 512
 #endif  
@@ -66,6 +72,12 @@ extern char *osd_newextension(char *string, char *ext);
  
 extern int osd_makesnapname(char *filename, int len);
 
-#endif  
+extern SemaphoreHandle_t osd_get_rom_path_mutex(void);
+
+#endif
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
