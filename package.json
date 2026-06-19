@@ -1,0 +1,23 @@
+{
+  "name": "esp_launcher",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Abhiram9641/ESP_Launcher.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Abhiram9641/ESP_Launcher/issues"
+  },
+  "homepage": "https://github.com/Abhiram9641/ESP_Launcher#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.61.0",
+    "@types/node": "^25.9.3"
+  }
+}

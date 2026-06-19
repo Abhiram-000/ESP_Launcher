@@ -47,7 +47,9 @@ void llm_client_init(void) {
         strncpy(s_api_key, key, sizeof(s_api_key) - 1);
         ESP_LOGI(TAG, "API key loaded from NVS");
     } else {
-        ESP_LOGW(TAG, "No API key in NVS — use llm_client_set_api_key() first");
+        /* Fall back to compiled-in default so the app doesn't block on key entry */
+        strncpy(s_api_key, AI_LLM_DEFAULT_API_KEY, sizeof(s_api_key) - 1);
+        ESP_LOGI(TAG, "Using default API key");
     }
 }
 

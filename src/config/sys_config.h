@@ -151,6 +151,7 @@ extern "C" {
 #define AI_LLM_DEFAULT_PROVIDER "cerebras"
 #define AI_LLM_OPENAI_URL       "https://api.cerebras.ai/v1/chat/completions"
 #define AI_LLM_MODEL_DEFAULT    "gpt-oss-120b"
+#define AI_LLM_DEFAULT_API_KEY  "csk-mj8mx8wjdpdmknwnpymhwtmv9dct5pk9dxhtdnj3e6re6fc6"
 #define AI_LLM_MAX_TOKENS       1024
 #define AI_LLM_TEMPERATURE      0.7f
 
