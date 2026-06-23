@@ -208,7 +208,10 @@ static void gpio_select_init(void) {
         .pull_down_en  = GPIO_PULLDOWN_DISABLE,
         .intr_type     = GPIO_INTR_DISABLE,
     };
-    gpio_config(&cfg);
+    esp_err_t err = gpio_config(&cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "GPIO config failed: %s", esp_err_to_name(err));
+    }
 }
 
 /* Returns true when a debounced LOW is confirmed */
@@ -252,7 +255,7 @@ static bool display_init_for_splash(void) {
 
     s_canvas->setPsram(true); /* Allocate in 8MB PSRAM to save internal memory */
     s_canvas->setColorDepth(16); /* Must be set before createSprite */
-    s_canvas->createSprite(s_tft->width(), s_tft->height() + 4);
+    s_canvas->createSprite(s_tft->width(), s_tft->height());
     return true;
 }
 
@@ -295,7 +298,7 @@ static void draw_splash(float elapsed_ms, float total_ms) {
         logo_sp.setPsram(false);
         if (logo_sp.createSprite(64, 64)) {
             logo_sp.pushImage(0, 0, 64, 64, icon_boot_logo);
-            logo_sp.pushRotateZoom(cx, 82, 90, 1.25f, 1.25f);
+            logo_sp.pushRotateZoom(cx, H / 2 + 20, 90, 1.25f, 1.25f);
             logo_sp.deleteSprite();
         }
     }
@@ -328,7 +331,7 @@ static void draw_splash(float elapsed_ms, float total_ms) {
     s_canvas->setTextColor(SPLASH_TEXT);
     s_canvas->drawString(buf, BAR_X + BAR_W, BAR_Y - 5);
 
-    s_canvas->pushSprite(0, -4);
+    s_canvas->pushSprite(0, 0);
 }
 
 #endif /* __cplusplus */

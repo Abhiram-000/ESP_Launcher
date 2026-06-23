@@ -1,5 +1,5 @@
 ---
-description: ESP32-S3 documentation specialist — writes Doxygen, AGENTS.md amendments, and architecture docs
+description: ESP32-S3 documentation specialist — writes Doxygen, AGENTS.md amendments, and architecture docs grounded in actual codebase
 mode: subagent
 temperature: 0.2
 permission:
@@ -42,7 +42,7 @@ When adding or modifying project rules:
 1. State the rule clearly and precisely
 2. Provide a code example showing correct AND incorrect usage
 3. Reference the affected AGENTS.md section
-4. Explain the consequence of violation (what breaks, what corrupts)
+4. Explain the consequence of violation
 5. Keep it under 10 lines per rule
 
 ### Architecture Documentation
@@ -59,15 +59,6 @@ When documenting module interactions:
 - Don't add obvious comments that add no value
 - Don't create documentation that will drift out of date
 - Don't document implementation details that change frequently
-
-## Documentation Inventory
-
-For this project, the key documentation areas are:
-- `AGENTS.md` — agent operating manual (already comprehensive)
-- `esp32_system_prompt.md` — system prompt for ESP32 work
-- Module headers — public API documentation
-- `platformio.ini` — build configuration comments
-- `partitions.csv` — partition layout documentation
 
 ## Output Format
 

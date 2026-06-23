@@ -203,6 +203,24 @@ extern "C" {
 #define HS_CATALOG_BUFFER_SIZE      (16 * 1024)
 
 /* --------------------------------------------------------------------------
+ * Lua Tool Marketplace — Cloud script store for App_AICode
+ * -------------------------------------------------------------------------- */
+#define LUA_TOOL_CATALOG_URL \
+    "https://raw.githubusercontent.com/Abhiram9641/ESP32_Store/main/lua_tools_catalog.json"
+
+#define LUA_TOOL_SCRIPTS_DIR     "/storage/ai/scripts"
+#define LUA_TOOL_CATALOG_LOCAL   "/storage/ai/lua_tools_catalog.json"
+#define LUA_TOOL_MAX_TOOLS       20
+#define LUA_TOOL_MAX_NAME        32
+#define LUA_TOOL_MAX_DESC        128
+#define LUA_TOOL_MAX_URL         192
+#define LUA_TOOL_MAX_AUTHOR      32
+#define LUA_TOOL_MAX_VERSION     12
+#define LUA_TOOL_DL_CHUNK_SIZE   (4 * 1024)
+#define LUA_TOOL_HTTP_TIMEOUT_MS 10000
+#define LUA_TOOL_MAX_SIZE        (16 * 1024)
+
+/* --------------------------------------------------------------------------
  * OTA / WiFi State Machine
  * -------------------------------------------------------------------------- */
 typedef enum {

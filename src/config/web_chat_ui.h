@@ -425,20 +425,39 @@ static const char* WEB_CHAT_HTML = R"html(<!DOCTYPE html>
             color: var(--text-dim);
             font-family: inherit;
         }
-        .load-ide-btn {
-            background: var(--accent-glow);
-            border: 1px solid var(--accent);
-            color: var(--accent);
+        .code-actions {
+            display: flex;
+            gap: 6px;
+        }
+        .load-ide-btn, .flash-btn {
             border-radius: 4px;
             padding: 3.5px 9px;
             font-size: 0.7rem;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.2s;
+        }
+        .load-ide-btn {
+            background: var(--accent-glow);
+            border: 1px solid var(--accent);
+            color: var(--accent);
             box-shadow: 0 0 10px rgba(0, 242, 254, 0.1);
+        }
+        .flash-btn {
+            background: var(--magenta-glow);
+            border: 1px solid var(--magenta);
+            color: var(--magenta);
+            box-shadow: 0 0 10px rgba(243, 85, 136, 0.1);
+        }
+        .load-ide-btn:active, .flash-btn:active {
+            transform: scale(0.95);
         }
         .load-ide-btn:active {
             background: var(--accent);
+            color: #000;
+        }
+        .flash-btn:active {
+            background: var(--magenta);
             color: #000;
         }
         .code-container pre {
@@ -474,10 +493,12 @@ static const char* WEB_CHAT_HTML = R"html(<!DOCTYPE html>
             </div>
             
             <div class="quick-prompts">
-                <div class="prompt-chip" onclick="quickPrompt('Blink onboard LED')">Blink LED</div>
-                <div class="prompt-chip" onclick="quickPrompt('Read all ADC pins')">Read ADC</div>
+                <div class="prompt-chip" onclick="quickPrompt('Blink onboard LED 10 times')">Blink LED</div>
+                <div class="prompt-chip" onclick="quickPrompt('Read all ADC pins and print values')">Read ADC</div>
                 <div class="prompt-chip" onclick="quickPrompt('Show free system memory')">Free Heap</div>
                 <div class="prompt-chip" onclick="quickPrompt('List script directory')">List Scripts</div>
+                <div class="prompt-chip" onclick="quickPrompt('Blink LED when UP button pressed')">Button LED</div>
+                <div class="prompt-chip" onclick="quickPrompt('Read I2C device at address 0x68')">I2C Scan</div>
             </div>
 
             <div class="chat-input-bar">
@@ -564,10 +585,14 @@ static const char* WEB_CHAT_HTML = R"html(<!DOCTYPE html>
             let formatted = text;
             formatted = formatted.replace(codeBlockRegex, (match, code) => {
                 const escapedCode = btoa(unescape(encodeURIComponent(code.trim())));
+                const escapedFilename = btoa(unescape(encodeURIComponent('ai_script.lua')));
                 return `<div class="code-container">
                     <div class="code-header">
                         <span>Lua Script</span>
-                        <button class="load-ide-btn" onclick="loadToIde('${escapedCode}')">⚡ Load into IDE</button>
+                        <div class="code-actions">
+                            <button class="load-ide-btn" onclick="loadToIde('${escapedCode}')">Edit</button>
+                            <button class="flash-btn" onclick="flashCode('${escapedCode}','${escapedFilename}')">Flash</button>
+                        </div>
                     </div>
                     <pre><code>${escapeHtml(code.trim())}</code></pre>
                 </div>`;
@@ -600,6 +625,53 @@ static const char* WEB_CHAT_HTML = R"html(<!DOCTYPE html>
             if (consoleLog) {
                 consoleLog.innerHTML = `<span style="color:#00f2fe;">[SYSTEM] Loaded script from AI chat successfully! Click "Run Code" to execute.</span>\n` + consoleLog.innerHTML;
             }
+        }
+
+        function flashCode(base64Code, base64Filename) {
+            const code = decodeURIComponent(escape(atob(base64Code)));
+            let filename = 'ai_script.lua';
+            try { filename = decodeURIComponent(escape(atob(base64Filename))); } catch(e) {}
+            
+            vibrate(60);
+            const consoleLog = document.getElementById('console-log');
+            
+            // Step 1: Save the script
+            printConsoleLog('System: Flashing "' + filename + '"...');
+            
+            fetch('/chat/ide/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: 'file=' + encodeURIComponent(filename) + '&code=' + encodeURIComponent(code)
+            })
+            .then(r => r.json())
+            .then(res => {
+                if (!res.ok) {
+                    printConsoleLog('Error saving: ' + (res.error || 'unknown'));
+                    return;
+                }
+                // Step 2: Run it immediately
+                printConsoleLog('System: Saved. Executing...');
+                return fetch('/chat/ide/run?file=' + encodeURIComponent(filename));
+            })
+            .then(r => r ? r.json() : null)
+            .then(res => {
+                if (!res) return;
+                if (res.ok) {
+                    let out = 'Flash complete! Executed in ' + res.elapsed_ms + 'ms\n';
+                    out += '---------------------------------\n';
+                    out += res.logs || '(No console output)';
+                    printConsoleLog(out);
+                } else {
+                    let err = 'Runtime Error: ' + (res.error || 'Unknown') + '\n';
+                    err += '---------------------------------\n';
+                    err += res.logs || '';
+                    printConsoleLog(err);
+                }
+            })
+            .catch(err => printConsoleLog('Flash failed: ' + err));
+            
+            // Switch to IDE tab to show console output
+            switchTab('ide-tab');
         }
 
         function sendChatMessage() {

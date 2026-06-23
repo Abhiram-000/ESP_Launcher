@@ -9,7 +9,8 @@
  *   - Smooth transitions between all states
  */
 #include "App_ClockWeather.h"
-#include "../theme_mgr.h"
+#include "../../ui/theme_mgr.h"
+#include "../../platform/board.h"
 #include "../../services/ntp_service.h"
 #include "../../services/weather_service.h"
 #include "../../services/wifi_mgr.h"
@@ -29,7 +30,7 @@ App_ClockWeather::App_ClockWeather()
       _weather_busy(false), _temperature(0), _wind_speed(0), _humidity(0),
       _weather_code(0), _is_day(1), _settings_cursor(0),
       _keyboard_active(false), _breath_phase(0), _weather_icon_bounce(0),
-      _temp_glow(0), _cx(80), _w(160), _h(128)
+      _temp_glow(0), _cx(LAUNCHER_DISPLAY_W / 2), _w(LAUNCHER_DISPLAY_W), _h(LAUNCHER_DISPLAY_H)
 {
     memset(&_time_info, 0, sizeof(_time_info));
     memset(_city_name, 0, sizeof(_city_name));
@@ -96,8 +97,10 @@ void App_ClockWeather::loop() {
         _weather_code = wx_status.current.weather_code;
         _is_day = wx_status.current.is_day;
         strncpy(_city_name, wx_status.location.city_name, sizeof(_city_name) - 1);
+        _city_name[sizeof(_city_name) - 1] = '\0';
     }
     strncpy(_status_msg, wx_status.status_msg, sizeof(_status_msg) - 1);
+    _status_msg[sizeof(_status_msg) - 1] = '\0';
     
     // Auto-refresh weather if connected and data is stale
     if (wifi_mgr_is_connected() && _weather_is_stale && !_weather_busy) {

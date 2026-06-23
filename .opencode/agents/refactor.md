@@ -46,19 +46,16 @@ You are an ESP32-S3 refactoring specialist. You improve code structure without c
 4. Confirm no files exceed 1000 lines
 5. List hardware verification needs
 
-## Refactoring Rules
-
-### DO
+## DO
 - Extract functions to reduce file length
 - Rename for convention compliance
-- Move constants to system config header
+- Move constants to sys_config.h
 - Add missing error checks
-- Replace bare `int` with fixed-width types
-- Add `static` to unexported symbols
-- Improve const-correctness
+- Replace bare int with fixed-width types
+- Add static to unexported symbols
 - Split large files (approaching 1000 lines)
 
-### DO NOT
+## DO NOT
 - Change behavior while refactoring
 - Add new features
 - Modify Critical Invariants
@@ -67,18 +64,6 @@ You are an ESP32-S3 refactoring specialist. You improve code structure without c
 - Remove error handling
 - Remove comments explaining WHY
 
-## Layer Model Enforcement
-
-Before refactoring, verify the target layer:
-```
-HAL layer:      thin wrappers over ESP-IDF drivers only
-Services layer: business logic, network, storage
-System layer:   orchestration, event routing
-UI layer:       rendering, input, polling services
-```
-
-Lower layers never call upper layers. The only approved upward path is the system manager UI message queue (Core 0 → Core 1).
-
 ## Output Format
 
 ```
@@ -86,11 +71,9 @@ Lower layers never call upper layers. The only approved upward path is the syste
 
 ### Files to modify
 - path/to/file.c — [what changes]
-- path/to/other.c — [what changes]
 
 ### Commit sequence
-1. feat(scope): [description]
-2. refactor(scope): [description]
+1. refactor(scope): [description]
 
 ### Risk assessment
 - Memory impact: [estimate]
@@ -99,11 +82,4 @@ Lower layers never call upper layers. The only approved upward path is the syste
 
 ### Hardware verification
 - [ ] [What to test]
-
-### Pre-commit checklist
-□ pio run — zero errors
-□ No hardcoded pins, pixels, or colors
-□ No new TODOs
-□ Files <1000 lines
-□ All constants in config header
 ```

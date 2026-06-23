@@ -13,6 +13,7 @@
 
 #include "lua_engine.h"
 #include "../config/sys_config.h"
+#include "../platform/board.h"
 #include "esp_log.h"
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
@@ -350,12 +351,297 @@ void LuaEngine::_bind_net(lua_State* L) {
     luaL_newlib(L, m); lua_setglobal(L, "net");
 }
 
-// ─── disp.* (minimal display bindings for Lua scripts) ──────────────────────
-// Display drawing from Lua requires routing commands through the ui_task queue.
-// This is not yet implemented — expose an empty table so scripts can detect it.
+// ─── disp.* (display bindings for Lua scripts) ─────────────────────────
+// Lua scripts draw to a PSRAM framebuffer. The UI task pushes it to TFT
+// when the LUA_RUNNING screen is active.
+
+static uint16_t* s_lua_fb = nullptr;  // Lua framebuffer (RGB565)
+static int s_lua_fb_w = 0;
+static int s_lua_fb_h = 0;
+
+// Helper: set pixel in framebuffer (bounds-checked)
+static inline void _fb_pixel(int x, int y, uint16_t color) {
+    if (x >= 0 && x < s_lua_fb_w && y >= 0 && y < s_lua_fb_h && s_lua_fb) {
+        s_lua_fb[y * s_lua_fb_w + x] = color;
+    }
+}
+
+// Helper: fill rectangle in framebuffer
+static inline void _fb_fill_rect(int rx, int ry, int rw, int rh, uint16_t color) {
+    for (int y = ry; y < ry + rh && y < s_lua_fb_h; y++)
+        for (int x = rx; x < rx + rw && x < s_lua_fb_w; x++)
+            _fb_pixel(x, y, color);
+}
+
+// Helper: draw rectangle outline
+static inline void _fb_draw_rect(int rx, int ry, int rw, int rh, uint16_t color) {
+    for (int x = rx; x < rx + rw; x++) { _fb_pixel(x, ry, color); _fb_pixel(x, ry+rh-1, color); }
+    for (int y = ry; y < ry + rh; y++) { _fb_pixel(rx, y, color); _fb_pixel(rx+rw-1, y, color); }
+}
+
+// disp.init() — allocate framebuffer
+static int l_disp_init(lua_State* L) {
+    if (s_lua_fb) return 0; // already init
+    s_lua_fb_w = LAUNCHER_DISPLAY_W;
+    s_lua_fb_h = LAUNCHER_DISPLAY_H;
+    s_lua_fb = (uint16_t*)heap_caps_malloc(s_lua_fb_w * s_lua_fb_h * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_lua_fb) { lua_pushboolean(L, 0); return 1; }
+    memset(s_lua_fb, 0, s_lua_fb_w * s_lua_fb_h * 2);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+// disp.clear(color?) — fill screen
+static int l_disp_clear(lua_State* L) {
+    if (!s_lua_fb) return 0;
+    uint16_t color = luaL_optinteger(L, 1, 0x0000);
+    _fb_fill_rect(0, 0, s_lua_fb_w, s_lua_fb_h, color);
+    return 0;
+}
+
+// disp.pixel(x, y, color)
+static int l_disp_pixel(lua_State* L) {
+    int x = luaL_checkinteger(L, 1);
+    int y = luaL_checkinteger(L, 2);
+    uint16_t color = luaL_checkinteger(L, 3);
+    _fb_pixel(x, y, color);
+    return 0;
+}
+
+// disp.rect(x, y, w, h, color) — outline
+static int l_disp_rect(lua_State* L) {
+    int x = luaL_checkinteger(L, 1);
+    int y = luaL_checkinteger(L, 2);
+    int w = luaL_checkinteger(L, 3);
+    int h = luaL_checkinteger(L, 4);
+    uint16_t color = luaL_checkinteger(L, 5);
+    _fb_draw_rect(x, y, w, h, color);
+    return 0;
+}
+
+// disp.fill(x, y, w, h, color) — filled rectangle
+static int l_disp_fill(lua_State* L) {
+    int x = luaL_checkinteger(L, 1);
+    int y = luaL_checkinteger(L, 2);
+    int w = luaL_checkinteger(L, 3);
+    int h = luaL_checkinteger(L, 4);
+    uint16_t color = luaL_checkinteger(L, 5);
+    _fb_fill_rect(x, y, w, h, color);
+    return 0;
+}
+
+/* 5x7 bitmap font — each character is 5 columns, 7 rows, stored as 5 bytes (MSB = top) */
+static const uint8_t font5x7[][5] = {
+    {0x00,0x00,0x00,0x00,0x00}, /* 32 ' ' */
+    {0x00,0x00,0x5F,0x00,0x00}, /* 33 '!' */
+    {0x00,0x07,0x00,0x07,0x00}, /* 34 '"' */
+    {0x14,0x7F,0x14,0x7F,0x14}, /* 35 '#' */
+    {0x24,0x2A,0x7F,0x2A,0x12}, /* 36 '$' */
+    {0x23,0x13,0x08,0x64,0x62}, /* 37 '%' */
+    {0x36,0x49,0x55,0x22,0x50}, /* 38 '&' */
+    {0x00,0x05,0x03,0x00,0x00}, /* 39 ''' */
+    {0x00,0x1C,0x22,0x41,0x00}, /* 40 '(' */
+    {0x00,0x41,0x22,0x1C,0x00}, /* 41 ')' */
+    {0x08,0x2A,0x1C,0x2A,0x08}, /* 42 '*' */
+    {0x08,0x08,0x3E,0x08,0x08}, /* 43 '+' */
+    {0x00,0x50,0x30,0x00,0x00}, /* 44 ',' */
+    {0x08,0x08,0x08,0x08,0x08}, /* 45 '-' */
+    {0x00,0x60,0x60,0x00,0x00}, /* 46 '.' */
+    {0x20,0x10,0x08,0x04,0x02}, /* 47 '/' */
+    {0x3E,0x51,0x49,0x45,0x3E}, /* 48 '0' */
+    {0x00,0x42,0x7F,0x40,0x00}, /* 49 '1' */
+    {0x42,0x61,0x51,0x49,0x46}, /* 50 '2' */
+    {0x21,0x41,0x45,0x4B,0x31}, /* 51 '3' */
+    {0x18,0x14,0x12,0x7F,0x10}, /* 52 '4' */
+    {0x27,0x45,0x45,0x45,0x39}, /* 53 '5' */
+    {0x3C,0x4A,0x49,0x49,0x30}, /* 54 '6' */
+    {0x01,0x71,0x09,0x05,0x03}, /* 55 '7' */
+    {0x36,0x49,0x49,0x49,0x36}, /* 56 '8' */
+    {0x06,0x49,0x49,0x29,0x1E}, /* 57 '9' */
+    {0x00,0x36,0x36,0x00,0x00}, /* 58 ':' */
+    {0x00,0x56,0x36,0x00,0x00}, /* 59 ';' */
+    {0x00,0x08,0x14,0x22,0x41}, /* 60 '<' */
+    {0x14,0x14,0x14,0x14,0x14}, /* 61 '=' */
+    {0x41,0x22,0x14,0x08,0x00}, /* 62 '>' */
+    {0x02,0x01,0x51,0x09,0x06}, /* 63 '?' */
+    {0x32,0x49,0x79,0x41,0x3E}, /* 64 '@' */
+    {0x7E,0x11,0x11,0x11,0x7E}, /* 65 'A' */
+    {0x7F,0x49,0x49,0x49,0x36}, /* 66 'B' */
+    {0x3E,0x41,0x41,0x41,0x22}, /* 67 'C' */
+    {0x7F,0x41,0x41,0x22,0x1C}, /* 68 'D' */
+    {0x7F,0x49,0x49,0x49,0x41}, /* 69 'E' */
+    {0x7F,0x09,0x09,0x01,0x01}, /* 70 'F' */
+    {0x3E,0x41,0x41,0x51,0x32}, /* 71 'G' */
+    {0x7F,0x08,0x08,0x08,0x7F}, /* 72 'H' */
+    {0x00,0x41,0x7F,0x41,0x00}, /* 73 'I' */
+    {0x20,0x40,0x41,0x3F,0x01}, /* 74 'J' */
+    {0x7F,0x08,0x14,0x22,0x41}, /* 75 'K' */
+    {0x7F,0x40,0x40,0x40,0x40}, /* 76 'L' */
+    {0x7F,0x02,0x04,0x02,0x7F}, /* 77 'M' */
+    {0x7F,0x04,0x08,0x10,0x7F}, /* 78 'N' */
+    {0x3E,0x41,0x41,0x41,0x3E}, /* 79 'O' */
+    {0x7F,0x09,0x09,0x09,0x06}, /* 80 'P' */
+    {0x3E,0x41,0x51,0x21,0x5E}, /* 81 'Q' */
+    {0x7F,0x09,0x19,0x29,0x46}, /* 82 'R' */
+    {0x46,0x49,0x49,0x49,0x31}, /* 83 'S' */
+    {0x01,0x01,0x7F,0x01,0x01}, /* 84 'T' */
+    {0x3F,0x40,0x40,0x40,0x3F}, /* 85 'U' */
+    {0x1F,0x20,0x40,0x20,0x1F}, /* 86 'V' */
+    {0x7F,0x20,0x18,0x20,0x7F}, /* 87 'W' */
+    {0x63,0x14,0x08,0x14,0x63}, /* 88 'X' */
+    {0x03,0x04,0x78,0x04,0x03}, /* 89 'Y' */
+    {0x61,0x51,0x49,0x49,0x46}, /* 90 'Z' */
+    {0x00,0x00,0x7F,0x41,0x41}, /* 91 '[' */
+    {0x02,0x04,0x08,0x10,0x20}, /* 92 '\' */
+    {0x41,0x41,0x7F,0x00,0x00}, /* 93 ']' */
+    {0x04,0x02,0x01,0x02,0x04}, /* 94 '^' */
+    {0x40,0x40,0x40,0x40,0x40}, /* 95 '_' */
+    {0x00,0x01,0x02,0x04,0x00}, /* 96 '`' */
+    {0x20,0x54,0x54,0x54,0x78}, /* 97 'a' */
+    {0x7F,0x48,0x44,0x44,0x38}, /* 98 'b' */
+    {0x38,0x44,0x44,0x44,0x20}, /* 99 'c' */
+    {0x38,0x44,0x44,0x48,0x7F}, /* 100 'd' */
+    {0x38,0x54,0x54,0x54,0x18}, /* 101 'e' */
+    {0x08,0x7E,0x09,0x01,0x02}, /* 102 'f' */
+    {0x08,0x54,0x54,0x54,0x3C}, /* 103 'g' */
+    {0x7F,0x08,0x04,0x04,0x78}, /* 104 'h' */
+    {0x00,0x44,0x7D,0x40,0x00}, /* 105 'i' */
+    {0x20,0x40,0x44,0x3D,0x00}, /* 106 'j' */
+    {0x00,0x7F,0x10,0x28,0x44}, /* 107 'k' */
+    {0x00,0x41,0x7F,0x40,0x00}, /* 108 'l' */
+    {0x7C,0x04,0x18,0x04,0x78}, /* 109 'm' */
+    {0x7C,0x08,0x04,0x04,0x78}, /* 110 'n' */
+    {0x38,0x44,0x44,0x44,0x38}, /* 111 'o' */
+    {0x7C,0x14,0x14,0x14,0x08}, /* 112 'p' */
+    {0x08,0x14,0x14,0x18,0x7C}, /* 113 'q' */
+    {0x7C,0x08,0x04,0x04,0x08}, /* 114 'r' */
+    {0x48,0x54,0x54,0x54,0x20}, /* 115 's' */
+    {0x04,0x3F,0x44,0x40,0x20}, /* 116 't' */
+    {0x3C,0x40,0x40,0x20,0x7C}, /* 117 'u' */
+    {0x1C,0x20,0x40,0x20,0x1C}, /* 118 'v' */
+    {0x3C,0x40,0x30,0x40,0x3C}, /* 119 'w' */
+    {0x44,0x28,0x10,0x28,0x44}, /* 120 'x' */
+    {0x0C,0x50,0x50,0x50,0x3C}, /* 121 'y' */
+    {0x44,0x64,0x54,0x4C,0x44}, /* 122 'z' */
+    {0x00,0x08,0x36,0x41,0x00}, /* 123 '{' */
+    {0x00,0x00,0x7F,0x00,0x00}, /* 124 '|' */
+    {0x00,0x41,0x36,0x08,0x00}, /* 125 '}' */
+    {0x08,0x04,0x08,0x10,0x08}, /* 126 '~' */
+};
+
+// disp.text(x, y, str, color?, size?) — draw text with 5x7 bitmap font
+static int l_disp_text(lua_State* L) {
+    int x = luaL_checkinteger(L, 1);
+    int y = luaL_checkinteger(L, 2);
+    const char* str = luaL_checkstring(L, 3);
+    uint16_t color = luaL_optinteger(L, 4, 0xFFFF);
+
+    int cx = x;
+    for (const char* p = str; *p; p++) {
+        if (*p == '\n') { cx = x; y += 8; continue; }
+        int ch = (unsigned char)*p;
+        if (ch < 32 || ch > 126) continue; /* skip non-printable */
+        const uint8_t* glyph = font5x7[ch - 32];
+        for (int row = 0; row < 7; row++) {
+            uint8_t bits = glyph[row];
+            for (int col = 0; col < 5; col++) {
+                if (bits & (0x20 >> col)) {
+                    _fb_pixel(cx + col, y + row, color);
+                }
+            }
+        }
+        cx += 6; /* 5px glyph + 1px spacing */
+    }
+    return 0;
+}
+
+// disp.line(x1, y1, x2, y2, color) — draw line
+static int l_disp_line(lua_State* L) {
+    int x1 = luaL_checkinteger(L, 1);
+    int y1 = luaL_checkinteger(L, 2);
+    int x2 = luaL_checkinteger(L, 3);
+    int y2 = luaL_checkinteger(L, 4);
+    uint16_t color = luaL_checkinteger(L, 5);
+    // Bresenham's line algorithm
+    int dx = abs(x2 - x1), dy = abs(y2 - y1);
+    int sx = x1 < x2 ? 1 : -1, sy = y1 < y2 ? 1 : -1;
+    int err = dx - dy;
+    while (true) {
+        _fb_pixel(x1, y1, color);
+        if (x1 == x2 && y1 == y2) break;
+        int e2 = 2 * err;
+        if (e2 > -dy) { err -= dy; x1 += sx; }
+        if (e2 < dx) { err += dx; y1 += sy; }
+    }
+    return 0;
+}
+
+// disp.circle(cx, cy, r, color) — draw circle outline
+static int l_disp_circle(lua_State* L) {
+    int cx = luaL_checkinteger(L, 1);
+    int cy = luaL_checkinteger(L, 2);
+    int r = luaL_checkinteger(L, 3);
+    uint16_t color = luaL_checkinteger(L, 4);
+    // Midpoint circle algorithm
+    int x = r, y = 0, err = 1 - r;
+    while (x >= y) {
+        _fb_pixel(cx+x, cy+y, color); _fb_pixel(cx+y, cy+x, color);
+        _fb_pixel(cx-y, cy+x, color); _fb_pixel(cx-x, cy+y, color);
+        _fb_pixel(cx-x, cy-y, color); _fb_pixel(cx-y, cy-x, color);
+        _fb_pixel(cx+y, cy-x, color); _fb_pixel(cx+x, cy-y, color);
+        y++;
+        if (err < 0) { err += 2*y + 1; }
+        else { x--; err += 2*(y-x) + 1; }
+    }
+    return 0;
+}
+
+// disp.width() — return display width
+static int l_disp_width(lua_State* L) {
+    lua_pushinteger(L, s_lua_fb_w ? s_lua_fb_w : LAUNCHER_DISPLAY_W);
+    return 1;
+}
+
+// disp.height() — return display height
+static int l_disp_height(lua_State* L) {
+    lua_pushinteger(L, s_lua_fb_h ? s_lua_fb_h : LAUNCHER_DISPLAY_H);
+    return 1;
+}
+
+// disp.rgb(r, g, b) — create RGB565 color
+static int l_disp_rgb(lua_State* L) {
+    int r = luaL_checkinteger(L, 1);
+    int g = luaL_checkinteger(L, 2);
+    int b = luaL_checkinteger(L, 3);
+    uint16_t color = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+    lua_pushinteger(L, color);
+    return 1;
+}
+
+// disp.get_fb() — return pointer to framebuffer for UI task
+uint16_t* lua_disp_get_fb(void) { return s_lua_fb; }
+int lua_disp_get_fb_w(void) { return s_lua_fb_w; }
+int lua_disp_get_fb_h(void) { return s_lua_fb_h; }
+void lua_disp_free_fb(void) {
+    if (s_lua_fb) { heap_caps_free(s_lua_fb); s_lua_fb = nullptr; }
+}
+
 void LuaEngine::_bind_disp(lua_State* L) {
-    lua_newtable(L);
-    lua_setglobal(L, "disp");
+    static const luaL_Reg m[] = {
+        {"init",    l_disp_init},
+        {"clear",   l_disp_clear},
+        {"pixel",   l_disp_pixel},
+        {"rect",    l_disp_rect},
+        {"fill",    l_disp_fill},
+        {"text",    l_disp_text},
+        {"line",    l_disp_line},
+        {"circle",  l_disp_circle},
+        {"width",   l_disp_width},
+        {"height",  l_disp_height},
+        {"rgb",     l_disp_rgb},
+        {nullptr, nullptr}
+    };
+    luaL_newlib(L, m); lua_setglobal(L, "disp");
 }
 
 // ─── Master binding registration ─────────────────────────────────────────────

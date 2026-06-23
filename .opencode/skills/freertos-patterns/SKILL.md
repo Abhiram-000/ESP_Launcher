@@ -1,23 +1,13 @@
 ---
 name: freertos-patterns
-description: FreeRTOS patterns for ESP32-S3 — ISR discipline, task architecture, mutex usage, inter-task communication
+description: FreeRTOS patterns for ESP32-S3 — ISR discipline, task architecture, mutex usage, inter-task communication. Load when writing ISR handlers, creating tasks, or designing concurrency.
 ---
 
-## What I do
+# FreeRTOS Patterns
 
-I enforce FreeRTOS patterns from AGENTS.md Part II Section 6. Load me when writing ISR handlers, creating tasks, using mutexes, or designing inter-task communication.
+Enforce AGENTS.md Part II Section 6. ISR safety is non-negotiable.
 
-## When to use me
-
-- Writing GPIO/interrupt handlers
-- Creating FreeRTOS tasks
-- Using mutexes, queues, event groups
-- Designing producer-consumer patterns
-- Debugging race conditions or deadlocks
-
-## ISR Pattern
-
-Every ISR MUST follow this template:
+## ISR Pattern — Mandatory
 
 ```c
 static void IRAM_ATTR gpio_isr_handler(void* arg) {
@@ -27,17 +17,16 @@ static void IRAM_ATTR gpio_isr_handler(void* arg) {
 }
 ```
 
-### ISR Rules
-- `IRAM_ATTR` on ALL ISR functions
+**ISR Rules:**
+- `IRAM_ATTR` on ALL ISR functions and functions called from ISR
 - `DRAM_ATTR` on ALL data accessed from ISRs
 - `volatile` on ALL flags shared between tasks and ISRs
 - Only ISR-safe primitives: `xQueueSendFromISR`, `xTaskNotifyFromISR`, `xSemaphoreGiveFromISR`
 - ISRs complete in <50µs
 
-## Mutex Pattern
+## Mutex Pattern — Always Timeout
 
 ```c
-// Always with timeout
 if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
     ESP_LOGW(TAG, "Mutex timeout");
     return ERR_BUSY;
@@ -46,33 +35,29 @@ if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
 xSemaphoreGive(s_mutex);
 ```
 
-### Mutex Rules
-- Always timeout — never `portMAX_DELAY`
+- `portMAX_DELAY` on application mutexes → REJECTED
 - Protect `s_status` on every read and write
-- Copy shared state under mutex at start of loop(); render() reads cached values
 
 ## Task Architecture
 
-| Task | Core | Priority | Notes |
-|------|------|----------|-------|
-| Display/UI renderer | Core 1 | High | Never blocks |
-| Input handler | Core 1 | High | ISR-based |
-| Network/Storage services | Core 0 | Medium | Worker tasks |
-| Background/logging | Core 0 | Low | Non-critical |
+| Task | Core | Stack | Notes |
+|------|------|-------|-------|
+| Display/UI | 1 | 8KB | Never blocks |
+| Input ISR | 1 | — | ISR → queue |
+| Services | 0 | 8-16KB | Network/storage I/O |
 
-### Task Rules
+## Task Rules
+
 - Core affinity explicit — never rely on scheduler default
-- Worker tasks always self-delete: `vTaskDelete(NULL)`
-- External `vTaskDelete(handle)` → FORBIDDEN
-- `vTaskDelay()` in render/driver paths → FORBIDDEN
-- Use `vTaskDelayUntil()` for periodic tasks
+- Worker tasks self-delete: `vTaskDelete(NULL)` — external delete FORBIDDEN
+- `vTaskDelay()` in render/driver paths → FORBIDDEN. Use `vTaskDelayUntil()`
 
 ## Service Worker Pattern
 
 ```c
 static void worker_task(void* arg) {
     while (!s_abort_flag) {
-        // Do work...
+        // Work...
         // Check abort_flag every iteration
     }
     s_task_handle = NULL;
@@ -80,30 +65,10 @@ static void worker_task(void* arg) {
 }
 ```
 
-### Service Invariants
-1. `s_mutex` protects `s_status`
-2. Worker pinned to Core 0
-3. Abort: `volatile bool s_abort_flag`, checked every iteration
-4. Worker self-deletes
-5. Public API non-blocking
-6. `status_msg` human-readable
-7. Event group: `EVT_DONE` / `EVT_FAILED` bits
-
 ## Event Group Pattern
 
 ```c
 EventBits_t bits = xEventGroupWaitBits(s_events,
     EVT_DONE | EVT_FAILED,
-    pdTRUE,        // clear on exit
-    pdFALSE,       // wait for any
-    pdMS_TO_TICKS(5000));  // timeout, never portMAX_DELAY
+    pdTRUE, pdFALSE, pdMS_TO_TICKS(5000));  // Never portMAX_DELAY
 ```
-
-## Forbidden
-
-- `vTaskDelay()` in render or driver paths
-- `portMAX_DELAY` on application mutexes
-- `vTaskDelete(external_handle)`
-- Allocation in ISR context
-- Blocking SPI/I2C in UI thread
-- Polling loops instead of event/queue/notification

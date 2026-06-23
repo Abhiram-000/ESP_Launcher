@@ -123,10 +123,12 @@ void wifi_mgr_init(void) {
 
     // Create default netifs only if they don't exist
     if (esp_netif_get_handle_from_ifkey("WIFI_AP_DEF") == NULL) {
-        esp_netif_create_default_wifi_ap();
+        esp_netif_t* ap = esp_netif_create_default_wifi_ap();
+        if (!ap) ESP_LOGE(TAG, "Failed to create AP netif");
     }
     if (esp_netif_get_handle_from_ifkey("WIFI_STA_DEF") == NULL) {
-        esp_netif_create_default_wifi_sta();
+        esp_netif_t* sta = esp_netif_create_default_wifi_sta();
+        if (!sta) ESP_LOGE(TAG, "Failed to create STA netif");
     }
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();

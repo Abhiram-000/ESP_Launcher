@@ -30,6 +30,7 @@
 #include "services/idle_mgr.h"
 #include "services/game_store.h"
 #include "services/hack_store.h"
+#include "services/lua_tool_store.h"
 #include "services/pomodoro_service.h"
 #include "ui/ui_task.h"
 
@@ -90,6 +91,12 @@ extern "C" void app_main(void) {
 
     // 5c. Initialize Hack Store
     hack_store_init();
+
+    // 5d. Initialize Lua Tool Marketplace
+    lua_tool_err_t lt_ret = lua_tool_store_init();
+    if (lt_ret != LUA_TOOL_ERR_OK) {
+        ESP_LOGW(TAG, "Lua tool store init warning: %d", lt_ret);
+    }
 
     // 6. Start HTTP Server for OTA uploads
     web_server_init();

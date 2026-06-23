@@ -101,6 +101,7 @@ static void _hs_status_reset_transfer(const char *id) {
     memset(hs_status.active_id, 0, sizeof(hs_status.active_id));
     if (id) {
         strncpy(hs_status.active_id, id, sizeof(hs_status.active_id) - 1);
+        hs_status.active_id[sizeof(hs_status.active_id) - 1] = '\0';
     }
     _hs_unlock();
 }
@@ -135,6 +136,7 @@ static void _save_installed_id(const char* id) {
     }
     _hs_lock();
     strncpy(hs_installed_id, id, sizeof(hs_installed_id) - 1);
+    hs_installed_id[sizeof(hs_installed_id) - 1] = '\0';
     hs_installed_id[sizeof(hs_installed_id) - 1] = '\0';
     _hs_unlock();
 }
@@ -306,12 +308,27 @@ static void _cloud_fetch_task(void *pvParameters) {
             cJSON *size = cJSON_GetObjectItem(f, "size_bytes");
             cJSON *url = cJSON_GetObjectItem(f, "url");
 
-            if (cJSON_IsString(id)) strncpy(entry->id, id->valuestring, sizeof(entry->id)-1);
-            if (cJSON_IsString(name)) strncpy(entry->name, name->valuestring, sizeof(entry->name)-1);
-            if (cJSON_IsString(ver)) strncpy(entry->version, ver->valuestring, sizeof(entry->version)-1);
-            if (cJSON_IsString(desc)) strncpy(entry->description, desc->valuestring, sizeof(entry->description)-1);
+            if (cJSON_IsString(id)) {
+                strncpy(entry->id, id->valuestring, sizeof(entry->id)-1);
+                entry->id[sizeof(entry->id)-1] = '\0';
+            }
+            if (cJSON_IsString(name)) {
+                strncpy(entry->name, name->valuestring, sizeof(entry->name)-1);
+                entry->name[sizeof(entry->name)-1] = '\0';
+            }
+            if (cJSON_IsString(ver)) {
+                strncpy(entry->version, ver->valuestring, sizeof(entry->version)-1);
+                entry->version[sizeof(entry->version)-1] = '\0';
+            }
+            if (cJSON_IsString(desc)) {
+                strncpy(entry->description, desc->valuestring, sizeof(entry->description)-1);
+                entry->description[sizeof(entry->description)-1] = '\0';
+            }
             if (cJSON_IsNumber(size)) entry->size_bytes = size->valueint;
-            if (cJSON_IsString(url)) strncpy(entry->url, url->valuestring, sizeof(entry->url)-1);
+            if (cJSON_IsString(url)) {
+                strncpy(entry->url, url->valuestring, sizeof(entry->url)-1);
+                entry->url[sizeof(entry->url)-1] = '\0';
+            }
             
             ESP_LOGI(TAG, "Parsed Firmware: %s (%lu bytes, id: %s)", entry->name, (unsigned long)entry->size_bytes, entry->id);
         }
@@ -355,6 +372,7 @@ static void _ota_download_task(void *pvParameters) {
     hack_entry_t *entry = _find_entry(id);
     if (entry) {
         strncpy(url_buf, entry->url, sizeof(url_buf) - 1);
+        url_buf[sizeof(url_buf) - 1] = '\0';
     }
     _hs_unlock();
 
@@ -592,6 +610,7 @@ hack_store_err_t hack_store_install(const char* id) {
      * go out of scope.
      */
     strncpy(s_ota_id_buf, id, sizeof(s_ota_id_buf) - 1);
+    s_ota_id_buf[sizeof(s_ota_id_buf) - 1] = '\0';
     s_ota_id_buf[sizeof(s_ota_id_buf) - 1] = '\0';
 
     /*

@@ -20,8 +20,8 @@
 
 static const char* TAG = "NTP_SVC";
 
-static bool s_ntp_synced = false;
-static bool s_initialized = false;
+static volatile bool s_ntp_synced = false;
+static volatile bool s_initialized = false;
 
 // Sanity bounds for restored time validation — defined in sys_config.h
 // NTP_EPOCH_MIN, NTP_EPOCH_MAX, NTP_BUILD_MIN
@@ -45,15 +45,15 @@ ntp_err_t ntp_service_init(void) {
         ESP_LOGW(TAG, "No valid NVS time found, awaiting NTP sync");
     }
     
-    // Configure SNTP with multiple servers (older ESP-IDF API)
+    // Configure SNTP with multiple servers
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
     esp_sntp_setservername(0, NTP_SERVER_1);
     esp_sntp_setservername(1, NTP_SERVER_2);
     esp_sntp_setservername(2, NTP_SERVER_3);
-    
+
     // Set callback for sync notification
     sntp_set_time_sync_notification_cb(_sntp_sync_time_cb);
-    
+
     // Start SNTP
     esp_sntp_init();
     

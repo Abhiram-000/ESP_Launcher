@@ -55,7 +55,8 @@ static void enter_deep_sleep(void) {
     ESP_LOGI(TAG, "Stopping services for safe shutdown...");
     
     // 1. Stop Wi-Fi gracefully
-    esp_wifi_stop();
+    esp_err_t werr = esp_wifi_stop();
+    if (werr != ESP_OK) ESP_LOGW(TAG, "WiFi stop: %s", esp_err_to_name(werr));
     esp_wifi_deinit();
     
     // 2. Commit NVS
@@ -64,9 +65,10 @@ static void enter_deep_sleep(void) {
     ESP_LOGI(TAG, "Entering Deep Sleep... Wake source: SELECT button (GPIO %d)", WAKE_GPIO);
     
     // 3. Configure Wake Source: SELECT button (LOW trigger)
-    esp_sleep_enable_ext0_wakeup((gpio_num_t)WAKE_GPIO, 0); // 0 = Wake on LOW
+    esp_err_t serr = esp_sleep_enable_ext0_wakeup((gpio_num_t)WAKE_GPIO, 0);
+    if (serr != ESP_OK) ESP_LOGE(TAG, "Sleep config failed: %s", esp_err_to_name(serr));
     
-    // 4. Ensure internal pull-up remains active during sleep to prevent false wakeups
+    // 4. Ensure internal pull-up remains active during sleep
     rtc_gpio_pullup_en((gpio_num_t)WAKE_GPIO);
     rtc_gpio_pulldown_dis((gpio_num_t)WAKE_GPIO);
 

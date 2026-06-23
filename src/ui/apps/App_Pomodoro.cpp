@@ -27,7 +27,7 @@ App_Pomodoro::App_Pomodoro()
       _circle_pulse(0), _particle_phase(0), _last_seconds(0),
       _just_completed(false), _completion_anim(0),
       _stats_scroll(0), _settings_cursor(0), _editing_value(false),
-      _confirm_choice(0), _cx(80), _cy(64), _w(160), _h(128),
+      _confirm_choice(0), _cx(LAUNCHER_DISPLAY_W / 2), _cy(LAUNCHER_DISPLAY_H / 2), _w(LAUNCHER_DISPLAY_W), _h(LAUNCHER_DISPLAY_H),
       _sp_old(nullptr), _sp_new(nullptr)
 {
     memset(&_status, 0, sizeof(_status));

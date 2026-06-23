@@ -1,28 +1,54 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "instructions": ["AGENTS.md", "esp32_system_prompt.md"],
+  "instructions": ["AGENTS.md", "esp32_system_prompt.md", "ARCHITECTURE.md"],
   "model": "opencode/mimo-v2.5-free",
   "agent": {
     "build": {
       "mode": "primary",
       "model": "opencode/mimo-v2.5-free",
-      "prompt": "{file:./AGENTS.md}\n\n{file:./esp32_system_prompt.md}",
+      "prompt": "{file:./AGENTS.md}\n\n{file:./esp32_system_prompt.md}\n\n{file:./ARCHITECTURE.md}",
       "permission": {
         "edit": "allow",
         "bash": "allow"
       }
     },
+    "router": {
+      "mode": "primary",
+      "model": "opencode/mimo-v2.5-free",
+      "prompt": "{file:.opencode/agents/router.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow",
+        "webfetch": "allow",
+        "websearch": "allow"
+      }
+    },
+    "implementer": {
+      "mode": "primary",
+      "model": "opencode/mimo-v2.5-free",
+      "prompt": "{file:.opencode/agents/implementer.md}",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow",
+        "webfetch": "allow",
+        "websearch": "allow"
+      }
+    },
     "plan": {
       "mode": "primary",
       "model": "opencode/mimo-v2.5-free",
+      "prompt": "{file:.opencode/agents/plan.md}",
       "permission": {
         "edit": "ask",
-        "bash": "ask"
+        "bash": "ask",
+        "webfetch": "allow",
+        "websearch": "allow"
       }
     },
     "review": {
       "mode": "subagent",
       "model": "opencode/mimo-v2.5-free",
+      "prompt": "{file:.opencode/agents/review.md}",
       "permission": {
         "edit": "deny",
         "bash": "deny"
@@ -31,22 +57,56 @@
     "debug": {
       "mode": "subagent",
       "model": "opencode/mimo-v2.5-free",
+      "prompt": "{file:.opencode/agents/debug.md}",
       "permission": {
         "bash": "ask",
-        "edit": "allow"
+        "edit": "allow",
+        "webfetch": "allow",
+        "websearch": "allow"
       }
     },
     "refactor": {
       "mode": "subagent",
       "model": "opencode/mimo-v2.5-free",
+      "prompt": "{file:.opencode/agents/refactor.md}",
       "permission": {
-        "bash": "deny"
+        "bash": "deny",
+        "edit": "allow"
       }
     },
     "docs": {
       "mode": "subagent",
       "model": "opencode/mimo-v2.5-free",
+      "prompt": "{file:.opencode/agents/docs.md}",
       "permission": {
+        "bash": "deny",
+        "edit": "allow"
+      }
+    },
+    "perf-analyzer": {
+      "mode": "subagent",
+      "model": "opencode/mimo-v2.5-free",
+      "prompt": "{file:.opencode/agents/perf-analyzer.md}",
+      "permission": {
+        "bash": "allow",
+        "edit": "allow"
+      }
+    },
+    "arch-explorer": {
+      "mode": "subagent",
+      "model": "opencode/mimo-v2.5-free",
+      "prompt": "{file:.opencode/agents/arch-explorer.md}",
+      "permission": {
+        "bash": "deny",
+        "edit": "deny"
+      }
+    },
+    "ecet-research": {
+      "mode": "subagent",
+      "model": "opencode/mimo-v2.5-free",
+      "prompt": "{file:.opencode/agents/ecet-research.md}",
+      "permission": {
+        "edit": "deny",
         "bash": "deny"
       }
     }
@@ -76,7 +136,8 @@
       "git log*": "allow",
       "rg *": "allow",
       "cat *": "allow",
-      "ls *": "allow"
+      "ls *": "allow",
+      "python3 convert_icons.py*": "allow"
     }
   },
   "plugin": [

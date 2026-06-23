@@ -6,8 +6,8 @@
 
 static const char *TAG = "LED_DRIVER";
 static led_strip_handle_t led_strip = NULL;
-static bool initialized = false;
-static uint8_t brightness = 255;  /* Global brightness scaling (0-255) */
+static volatile bool initialized = false;
+static volatile uint8_t brightness = 255;  /* Global brightness scaling (0-255) */
 
 void led_driver_init(void) {
     ESP_LOGI(TAG, "Initializing NeoPixel on GPIO %d", LAUNCHER_PIN_LED);

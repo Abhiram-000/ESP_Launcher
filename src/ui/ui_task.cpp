@@ -115,7 +115,7 @@ static void _run_slide_transition(LGFX_Sprite* old_snap, LGFX_Sprite* new_snap) 
         new_snap->pushSprite(&canvas, W - offset, 0);
 
         // Push the completely rendered composite canvas frame to physical display at -4 Y offset
-        canvas.pushSprite(&tft, 0, -4);
+        canvas.pushSprite(&tft, 0, 0);
 
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(20)); // ~50fps logic update
     }
@@ -133,8 +133,8 @@ void switch_to_app(IApp* next_app) {
     new_snap.setPsram(true);
     old_snap.setColorDepth(16);
     new_snap.setColorDepth(16);
-    bool old_snap_ok = old_snap.createSprite(tft.width(), tft.height() + 4);
-    bool new_snap_ok = new_snap.createSprite(tft.width(), tft.height() + 4);
+    bool old_snap_ok = old_snap.createSprite(tft.width(), tft.height());
+    bool new_snap_ok = new_snap.createSprite(tft.width(), tft.height());
     bool transition_ok = old_snap_ok && new_snap_ok;
     if (!transition_ok) {
         if (old_snap_ok) old_snap.deleteSprite();
@@ -198,7 +198,7 @@ static void ui_task_runner(void *arg) {
 
     canvas.setColorDepth(16);
     canvas.setPsram(true);
-    if (!canvas.createSprite(tft.width(), tft.height() + 4)) {
+    if (!canvas.createSprite(tft.width(), tft.height())) {
         ESP_LOGE(TAG, "Failed to create main UI canvas");
         vTaskDelete(nullptr);
         return;
@@ -321,7 +321,7 @@ static void ui_task_runner(void *arg) {
             canvas.drawString("Press any key", text_x, bar_y + 32);
         }
 
-        canvas.pushSprite(0, -4);
+        canvas.pushSprite(0, 0);
 
         // Precise frame timing
         vTaskDelayUntil(&xLastWakeTime, xFrameTime);

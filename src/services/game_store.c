@@ -77,6 +77,7 @@ static void _gs_status_reset_transfer(const char *id) {
     memset(s_gs_status.active_game_id, 0, sizeof(s_gs_status.active_game_id));
     if (id) {
         strncpy(s_gs_status.active_game_id, id, sizeof(s_gs_status.active_game_id) - 1);
+        s_gs_status.active_game_id[sizeof(s_gs_status.active_game_id) - 1] = '\0';
     }
     _gs_unlock();
 }
@@ -327,9 +328,13 @@ static void _gs_autodiscover_roms(void) {
         game_entry_t *e = &s_local_catalog[s_local_catalog_count++];
         memset(e, 0, sizeof(game_entry_t));
         strncpy(e->id,      id, sizeof(e->id) - 1);
+        e->id[sizeof(e->id) - 1] = '\0';
         strncpy(e->name,    id, sizeof(e->name) - 1);  /* ID as display name */
+        e->name[sizeof(e->name) - 1] = '\0';
         strncpy(e->version, "1.0", sizeof(e->version) - 1);
+        e->version[sizeof(e->version) - 1] = '\0';
         strncpy(e->genre,   "Unknown", sizeof(e->genre) - 1);
+        e->genre[sizeof(e->genre) - 1] = '\0';
         e->is_installed = true;
 
         /* Fill size from stat */
@@ -380,13 +385,14 @@ game_store_err_t game_store_init(void) {
                     DIR *dsub = opendir(fp);
                     if (dsub) {
                         struct dirent *sub;
-                        while ((sub = readdir(dsub)) != NULL) {
-                            char sfp[560];
-                            snprintf(sfp, sizeof(sfp), "%s/%s", fp, sub->d_name);
-                            struct stat sst;
-                            if (stat(sfp, &sst) == 0)
-                                ESP_LOGI(TAG, "  [FILE] %s (%ld B)", sfp, (long)sst.st_size);
-                        }
+                    while ((sub = readdir(dsub)) != NULL) {
+                        /* Static buffer avoids 560B stack allocation */
+                        static char s_sfp[560];
+                        snprintf(s_sfp, sizeof(s_sfp), "%s/%s", fp, sub->d_name);
+                        struct stat sst;
+                        if (stat(s_sfp, &sst) == 0)
+                            ESP_LOGI(TAG, "  [FILE] %s (%ld B)", s_sfp, (long)sst.st_size);
+                    }
                         closedir(dsub);
                     }
                 } else {
@@ -591,6 +597,7 @@ static void _gs_cloud_fetch_task(void *pvParameters) {
                 entry = &s_local_catalog[s_local_catalog_count++];
                 memset(entry, 0, sizeof(game_entry_t));
                 strncpy(entry->id, gid, sizeof(entry->id)-1);
+                entry->id[sizeof(entry->id) - 1] = '\0';
                 entry->is_installed = false;
             }
             
@@ -604,13 +611,28 @@ static void _gs_cloud_fetch_task(void *pvParameters) {
                 cJSON *url = cJSON_GetObjectItem(game, "url");
                 cJSON *mapper = cJSON_GetObjectItem(game, "mapper");
 
-                if (cJSON_IsString(name)) strncpy(entry->name, name->valuestring, sizeof(entry->name)-1);
-                if (cJSON_IsString(version)) strncpy(entry->version, version->valuestring, sizeof(entry->version)-1);
-                if (cJSON_IsString(genre)) strncpy(entry->genre, genre->valuestring, sizeof(entry->genre)-1);
-                if (cJSON_IsString(desc)) strncpy(entry->description, desc->valuestring, sizeof(entry->description)-1);
+                if (cJSON_IsString(name)) {
+                    strncpy(entry->name, name->valuestring, sizeof(entry->name)-1);
+                    entry->name[sizeof(entry->name)-1] = '\0';
+                }
+                if (cJSON_IsString(version)) {
+                    strncpy(entry->version, version->valuestring, sizeof(entry->version)-1);
+                    entry->version[sizeof(entry->version)-1] = '\0';
+                }
+                if (cJSON_IsString(genre)) {
+                    strncpy(entry->genre, genre->valuestring, sizeof(entry->genre)-1);
+                    entry->genre[sizeof(entry->genre)-1] = '\0';
+                }
+                if (cJSON_IsString(desc)) {
+                    strncpy(entry->description, desc->valuestring, sizeof(entry->description)-1);
+                    entry->description[sizeof(entry->description)-1] = '\0';
+                }
                 if (cJSON_IsNumber(size_bytes)) entry->size_bytes = size_bytes->valueint;
                 if (cJSON_IsString(crc32)) entry->crc32 = strtoul(crc32->valuestring, NULL, 16);
-                if (cJSON_IsString(url)) strncpy(entry->url, url->valuestring, sizeof(entry->url)-1);
+                if (cJSON_IsString(url)) {
+                    strncpy(entry->url, url->valuestring, sizeof(entry->url)-1);
+                    entry->url[sizeof(entry->url)-1] = '\0';
+                }
                 if (cJSON_IsNumber(mapper)) entry->mapper = mapper->valueint;
             }
             _gs_unlock();
@@ -689,6 +711,7 @@ static void _gs_download_task(void *pvParameters) {
     game_entry_t *entry = _gs_local_catalog_find(id);
     if (entry) {
         strncpy(url_buf, entry->url, sizeof(url_buf) - 1);
+        url_buf[sizeof(url_buf) - 1] = '\0';
         size_bytes = entry->size_bytes;
         crc32 = entry->crc32;
     }

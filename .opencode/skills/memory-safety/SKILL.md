@@ -1,51 +1,33 @@
 ---
 name: memory-safety
-description: ESP32-S3 memory management rules — PSRAM allocation, ISR safety, stack budgets, heap monitoring
+description: ESP32-S3 memory management — PSRAM allocation, ISR safety, stack budgets, heap monitoring. Load when allocating memory, managing buffers, or debugging memory issues.
 ---
 
-## What I do
+# Memory Safety
 
-I enforce memory safety rules from AGENTS.md Part II Section 5 and Part VI. Load me when allocating memory, managing buffers, or debugging memory issues.
+Enforce AGENTS.md Part II Section 5 and Part VI. PSRAM is mandatory for large allocations.
 
-## When to use me
-
-- Allocating buffers (heap or PSRAM)
-- Debugging memory leaks or crashes
-- Setting up task stacks
-- Working with LovyanGFX sprites
-- Monitoring memory health
-
-## PSRAM Allocation Rule
-
-ALL allocations >1KB MUST use PSRAM. No exceptions.
+## PSRAM Allocation — ALL Buffers >1KB
 
 ```c
-// CORRECT
 uint8_t* buf = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 if (!buf) {
     ESP_LOGE(TAG, "PSRAM alloc failed: %zu bytes", size);
     return ERR_OOM;
 }
-
-// WRONG — will be rejected
-uint8_t* buf = malloc(size);  // REJECTED for >1KB
 ```
+
+- `malloc()` for >1KB → REJECTED
+- No allocation in ISRs
+- No stack allocations >512 bytes
+- `alloca()` in variable-input paths → FORBIDDEN
 
 ## LovyanGFX Sprites
 
 ```cpp
-sprite.setPsram(true);
+sprite.setPsram(true);  // ALWAYS before createSprite
 sprite.createSprite(w, h);
 ```
-
-Always set PSRAM before creating the sprite.
-
-## ISR Memory Rules
-
-- NO allocation in ISR context — ever
-- NO stack allocations >512 bytes
-- `alloca()` in variable-input paths → FORBIDDEN
-- Static allocation preferred over heap
 
 ## Stack Budgets
 
@@ -67,8 +49,6 @@ ESP_LOGI(TAG, "Heap: %lu KB | PSRAM: %lu KB | Stack: %u B",
     (unsigned)uxTaskGetStackHighWaterMark(NULL));
 ```
 
-### Thresholds
-
 | Metric | Floor |
 |--------|-------|
 | Free heap | 20KB |
@@ -77,32 +57,4 @@ ESP_LOGI(TAG, "Heap: %lu KB | PSRAM: %lu KB | Stack: %u B",
 
 ## Allocation Patterns
 
-### Pre-allocate at init
-```c
-static uint8_t* s_buffer = NULL;
-
-esp_err_t module_init(void) {
-    s_buffer = heap_caps_malloc(BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!s_buffer) return ESP_ERR_NO_MEM;
-    return ESP_OK;
-}
-```
-
-### Free at deinit
-```c
-void module_deinit(void) {
-    free(s_buffer);
-    s_buffer = NULL;
-}
-```
-
-### No dynamic allocation in steady-state
-If you find yourself calling malloc in a loop or periodic function, pre-allocate at init instead.
-
-## Forbidden
-
-- `malloc()` >1KB without PSRAM flags
-- `alloca()` in variable-input paths
-- Stack allocations >512 bytes
-- Unchecked allocation return values
-- Dynamic allocation in steady-state code
+Pre-allocate at init, free at deinit. No dynamic allocation in steady-state.

@@ -6,6 +6,7 @@
 
 #include "llm_client.h"
 #include "../config/sys_config.h"
+#include "../config/ai_sys_prompt.h"
 #include "wifi_mgr.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
@@ -45,10 +46,11 @@ void llm_client_init(void) {
     char key[128] = {0};
     if (llm_client_get_api_key(key, sizeof(key))) {
         strncpy(s_api_key, key, sizeof(s_api_key) - 1);
+        s_api_key[sizeof(s_api_key) - 1] = '\0';
         ESP_LOGI(TAG, "API key loaded from NVS");
     } else {
-        /* Fall back to compiled-in default so the app doesn't block on key entry */
         strncpy(s_api_key, AI_LLM_DEFAULT_API_KEY, sizeof(s_api_key) - 1);
+        s_api_key[sizeof(s_api_key) - 1] = '\0';
         ESP_LOGI(TAG, "Using default API key");
     }
 }
@@ -59,7 +61,10 @@ bool llm_client_set_api_key(const char* key) {
     if (nvs_open(AI_NVS_NAMESPACE, NVS_READWRITE, &h) != ESP_OK) return false;
     bool ok = nvs_set_str(h, AI_NVS_KEY_APIKEY, key) == ESP_OK;
     nvs_commit(h); nvs_close(h);
-    if (ok) strncpy(s_api_key, key, sizeof(s_api_key) - 1);
+    if (ok) {
+        strncpy(s_api_key, key, sizeof(s_api_key) - 1);
+        s_api_key[sizeof(s_api_key) - 1] = '\0';
+    }
     return ok;
 }
 
@@ -191,19 +196,18 @@ static char* _build_payload(const char* user_msg) {
         "\"messages\":[",
         s_model, AI_LLM_MAX_TOKENS);
 
-    /* Load system prompt */
-    static char sysprompt[1024] = "You are a helpful AI assistant on an ESP32-S3 handheld. "
-        "Your responses MUST be extremely concise, brief, and under 150 characters total. Keep explanations minimal. "
-        "For coding tasks, write clean, self-contained Lua 5.4 scripts using the available hardware libraries: "
-        "sys (sleep(ms), time(), heap(), reboot()), "
-        "gpio (mode(pin,mode), write(pin,val), read(pin), toggle(pin)), "
-        "i2c (write, read), uart, spi, "
-        "adc (read(pin)), pwm (setup, set), "
-        "fs (list(), read(file), write(file,data), delete(file)), "
-        "net (wifi_connect(ssid,pass), is_connected(), http_get(url)). "
-        "Always return ready-to-run Lua code without generic explanations.";
+    /* Load system prompt — prefer custom file, fall back to agentic prompt */
+    static char sysprompt[2048] = {0};
+    if (sysprompt[0] == '\0') {
+        strncpy(sysprompt, AI_AGENTIC_SYS_PROMPT, sizeof(sysprompt) - 1);
+        sysprompt[sizeof(sysprompt) - 1] = '\0';
+    }
     FILE* fp = fopen(AI_SYSPROMPT_PATH, "r");
-    if (fp) { fread(sysprompt, 1, sizeof(sysprompt) - 1, fp); fclose(fp); }
+    if (fp) {
+        size_t n = fread(sysprompt, 1, sizeof(sysprompt) - 1, fp);
+        sysprompt[n] = '\0';
+        fclose(fp);
+    }
 
     char* payload = (char*)heap_caps_malloc(BUF_CAP, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!payload) return NULL;

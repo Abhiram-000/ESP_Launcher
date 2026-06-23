@@ -190,14 +190,20 @@ static weather_err_t _fetch_ip_geolocation(weather_location_t* loc) {
     
     if (city && lat && lon && tz) {
         strncpy(loc->city_name, city->valuestring, sizeof(loc->city_name) - 1);
+        loc->city_name[sizeof(loc->city_name) - 1] = '\0';
         loc->latitude = lat->valuedouble;
         loc->longitude = lon->valuedouble;
         strncpy(loc->timezone_iana, tz->valuestring, sizeof(loc->timezone_iana) - 1);
-        if (country) strncpy(loc->country, country->valuestring, sizeof(loc->country) - 1);
+        loc->timezone_iana[sizeof(loc->timezone_iana) - 1] = '\0';
+        if (country) {
+            strncpy(loc->country, country->valuestring, sizeof(loc->country) - 1);
+            loc->country[sizeof(loc->country) - 1] = '\0';
+        }
         
         // Convert IANA to POSIX
         const char* posix = _iana_to_posix(loc->timezone_iana);
         strncpy(loc->timezone_posix, posix, sizeof(loc->timezone_posix) - 1);
+        loc->timezone_posix[sizeof(loc->timezone_posix) - 1] = '\0';
         
         ESP_LOGI(TAG, "Location: %s (%.2f, %.2f), TZ: %s → %s",
                  loc->city_name, loc->latitude, loc->longitude,
@@ -289,6 +295,7 @@ static weather_err_t _reverse_geocode_city(weather_location_t* loc) {
     if (new_city && new_city[0] != '\0') {
         ESP_LOGI(TAG, "Reverse geocode: %s → %s", loc->city_name, new_city);
         strncpy(loc->city_name, new_city, sizeof(loc->city_name) - 1);
+        loc->city_name[sizeof(loc->city_name) - 1] = '\0';
     } else {
         ESP_LOGW(TAG, "Reverse geocode: no city in response, keeping '%s'", loc->city_name);
     }
@@ -507,11 +514,17 @@ static bool _load_from_cache(weather_location_t* loc, weather_current_t* wx, int
     
     if (valid) {
         strncpy(loc->city_name, city->valuestring, sizeof(loc->city_name) - 1);
+        loc->city_name[sizeof(loc->city_name) - 1] = '\0';
         loc->latitude = lat->valuedouble;
         loc->longitude = lon->valuedouble;
         strncpy(loc->timezone_iana, tz_iana->valuestring, sizeof(loc->timezone_iana) - 1);
+        loc->timezone_iana[sizeof(loc->timezone_iana) - 1] = '\0';
         strncpy(loc->timezone_posix, tz_posix->valuestring, sizeof(loc->timezone_posix) - 1);
-        if (country) strncpy(loc->country, country->valuestring, sizeof(loc->country) - 1);
+        loc->timezone_posix[sizeof(loc->timezone_posix) - 1] = '\0';
+        if (country) {
+            strncpy(loc->country, country->valuestring, sizeof(loc->country) - 1);
+            loc->country[sizeof(loc->country) - 1] = '\0';
+        }
         
         wx->temperature = (float)temp->valuedouble;
         wx->humidity = hum->valueint;
@@ -534,6 +547,7 @@ static void _worker_task(void* arg) {
     LOCK();
     s_status.is_busy = true;
     strncpy(s_status.status_msg, "Fetching location...", sizeof(s_status.status_msg) - 1);
+    s_status.status_msg[sizeof(s_status.status_msg) - 1] = '\0';
     UNLOCK();
     
     weather_location_t loc = {0};
@@ -552,6 +566,7 @@ static void _worker_task(void* arg) {
         if (err != WEATHER_ERR_OK && !s_abort_requested) {
             LOCK();
             strncpy(s_status.status_msg, "Location lookup failed", sizeof(s_status.status_msg) - 1);
+            s_status.status_msg[sizeof(s_status.status_msg) - 1] = '\0';
             UNLOCK();
             ESP_LOGW(TAG, "Geolocation failed, skipping weather fetch");
             goto cleanup;
@@ -568,6 +583,7 @@ static void _worker_task(void* arg) {
     // Step 2: Get weather
     LOCK();
     strncpy(s_status.status_msg, "Fetching weather...", sizeof(s_status.status_msg) - 1);
+    s_status.status_msg[sizeof(s_status.status_msg) - 1] = '\0';
     UNLOCK();
     
     if (err == WEATHER_ERR_OK) {
@@ -575,6 +591,7 @@ static void _worker_task(void* arg) {
         if (err != WEATHER_ERR_OK) {
             LOCK();
             strncpy(s_status.status_msg, "Weather fetch failed", sizeof(s_status.status_msg) - 1);
+            s_status.status_msg[sizeof(s_status.status_msg) - 1] = '\0';
             UNLOCK();
         }
     }
@@ -590,6 +607,7 @@ static void _worker_task(void* arg) {
         s_status.is_stale = false;
         s_status.last_update_time = time(NULL);
         strncpy(s_status.status_msg, "Updated", sizeof(s_status.status_msg) - 1);
+        s_status.status_msg[sizeof(s_status.status_msg) - 1] = '\0';
         UNLOCK();
         
         // Save to cache
@@ -634,6 +652,7 @@ weather_err_t weather_service_init(void) {
     // Initialize status
     memset(&s_status, 0, sizeof(s_status));
     strncpy(s_status.status_msg, "Not updated", sizeof(s_status.status_msg) - 1);
+    s_status.status_msg[sizeof(s_status.status_msg) - 1] = '\0';
     
     // Load manual location override from NVS
     _load_manual_location_from_nvs();
@@ -686,20 +705,26 @@ weather_err_t weather_service_refresh(void) {
 weather_err_t weather_service_set_location(const char* city_name, float lat, float lon, const char* tz_iana) {
     LOCK();
     strncpy(s_status.location.city_name, city_name, sizeof(s_status.location.city_name) - 1);
+    s_status.location.city_name[sizeof(s_status.location.city_name) - 1] = '\0';
     s_status.location.latitude = lat;
     s_status.location.longitude = lon;
     strncpy(s_status.location.timezone_iana, tz_iana, sizeof(s_status.location.timezone_iana) - 1);
+    s_status.location.timezone_iana[sizeof(s_status.location.timezone_iana) - 1] = '\0';
     
     const char* posix = _iana_to_posix(tz_iana);
     strncpy(s_status.location.timezone_posix, posix, sizeof(s_status.location.timezone_posix) - 1);
+    s_status.location.timezone_posix[sizeof(s_status.location.timezone_posix) - 1] = '\0';
     
     // Store as manual override
     s_has_manual_location = true;
     strncpy(s_manual_location.city_name, city_name, sizeof(s_manual_location.city_name) - 1);
+    s_manual_location.city_name[sizeof(s_manual_location.city_name) - 1] = '\0';
     s_manual_location.latitude = lat;
     s_manual_location.longitude = lon;
     strncpy(s_manual_location.timezone_iana, tz_iana, sizeof(s_manual_location.timezone_iana) - 1);
+    s_manual_location.timezone_iana[sizeof(s_manual_location.timezone_iana) - 1] = '\0';
     strncpy(s_manual_location.timezone_posix, posix, sizeof(s_manual_location.timezone_posix) - 1);
+    s_manual_location.timezone_posix[sizeof(s_manual_location.timezone_posix) - 1] = '\0';
     UNLOCK();
     
     _save_manual_location_to_nvs();

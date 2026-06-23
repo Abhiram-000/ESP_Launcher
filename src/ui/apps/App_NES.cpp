@@ -1,5 +1,6 @@
 #include "App_NES.h"
 #include "../../ui/theme_mgr.h"
+#include "../../platform/board.h"
 #include "esp_log.h"
 #include "sys_config.h"
 #include "nvs_flash.h"
@@ -147,9 +148,10 @@ void App_NES::init() {
     }
     ESP_LOGI(TAG, "ROM mapper %d — supported. Launching emulator.", mapper);
 
-    // ── Allocate double-buffers in PSRAM (160x128 x 2 bytes = 40KB each) ─
-    _front_buffer = (uint16_t*)heap_caps_malloc(160 * 128 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    _back_buffer  = (uint16_t*)heap_caps_malloc(160 * 128 * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    // ── Allocate double-buffers in PSRAM ─────────────────────────────────
+    const size_t fb_size = LAUNCHER_DISPLAY_W * LAUNCHER_DISPLAY_H * 2;
+    _front_buffer = (uint16_t*)heap_caps_malloc(fb_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    _back_buffer  = (uint16_t*)heap_caps_malloc(fb_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
     if (!_front_buffer || !_back_buffer) {
         ESP_LOGE(TAG, "Framebuffer alloc failed! PSRAM free: %u",
@@ -158,8 +160,8 @@ void App_NES::init() {
         _emu_task_done = true;
         return;
     }
-    memset(_front_buffer, 0, 160 * 128 * 2);
-    memset(_back_buffer,  0, 160 * 128 * 2);
+    memset(_front_buffer, 0, fb_size);
+    memset(_back_buffer,  0, fb_size);
 
     _buffer_mutex = xSemaphoreCreateBinary();
     if (!_buffer_mutex) {
@@ -287,7 +289,7 @@ void App_NES::render(LGFX_Sprite* canvas) {
     // ── Buffer swap was moved to loop() — just use _front_buffer directly ──
 
     canvas->fillSprite(theme_get_bg());
-    canvas->pushImage(0, 0, 160, 128, _front_buffer);
+    canvas->pushImage(0, 0, LAUNCHER_DISPLAY_W, LAUNCHER_DISPLAY_H, _front_buffer);
 
     // ── Exit-confirmation overlay ─────────────────────────────────────────
     if (_exit_pending) {

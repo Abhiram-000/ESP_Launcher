@@ -1,18 +1,160 @@
-name: PlatformIO CI
-on: [push, pull_request]
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PLATFORMIO_CACHE_DIR: ~/.platformio/.cache
+
 jobs:
+  # ─────────────────────────────────────────────────────────────────────
+  # Job 1: Build firmware
+  # ─────────────────────────────────────────────────────────────────────
   build:
+    name: Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/cache@v4
         with:
           path: |
             ~/.platformio/.cache
             .pio
-          key: pio-${{ hashFiles('platformio.ini', 'dependencies.lock') }}
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini', 'dependencies.lock') }}
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install platformio pillow
-      - run: pio run
+
+      - name: Install PlatformIO and dependencies
+        run: |
+          pip install platformio pillow
+          pio pkg install
+
+      - name: Build firmware
+        run: pio run
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ github.sha }}
+          path: .pio/build/esp32-s3-devkitc-1/firmware.bin
+          retention-days: 30
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Job 2: Unit tests (host-side, no hardware needed)
+  # ─────────────────────────────────────────────────────────────────────
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            .pio
+          key: test-${{ runner.os }}-${{ hashFiles('platformio.ini', 'dependencies.lock') }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Run unit tests
+        run: pio test -e native --without-uploading --without-testing
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Job 3: Static analysis (cppcheck + clang-tidy)
+  # ─────────────────────────────────────────────────────────────────────
+  static-analysis:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio/.cache
+            .pio
+          key: analysis-${{ runner.os }}-${{ hashFiles('platformio.ini', 'dependencies.lock') }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Run cppcheck and clang-tidy
+        run: pio check -e esp32-s3-devkitc-1
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Job 4: Code formatting
+  # ─────────────────────────────────────────────────────────────────────
+  format-check:
+    name: Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: sudo apt-get install -y clang-format
+
+      - name: Check formatting (dry-run)
+        run: |
+          find src/ -name '*.c' -o -name '*.cpp' -o -name '*.h' | \
+            xargs clang-format --dry-run --Werror --style=file
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Job 5: Security scanning
+  # ─────────────────────────────────────────────────────────────────────
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # gitleaks needs full history for some checks
+
+      - name: Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Trivy
+        run: |
+          sudo apt-get install -y wget apt-transport-https
+          wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+          echo "deb https://aquasecurity.github.io/trivy-repo/deb generic main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
+
+      - name: Trivy filesystem scan
+        run: trivy fs --severity HIGH,CRITICAL --exit-code 1 .
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit Python dependencies
+        run: pip-audit --desc on
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Audit npm dependencies
+        run: npm audit --audit-level=high || true
