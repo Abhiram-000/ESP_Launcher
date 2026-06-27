@@ -24,6 +24,9 @@
 #include "esp_http_client.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "esp_wifi.h"
+#include "../services/wifi_mgr.h"
+#include "../drivers/led_driver.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -142,11 +145,35 @@ static int l_i2c_read(lua_State* L) {
     lua_pushlstring(L, (const char*)buf, len); return 1;
 }
 
+// i2c.probe(bus, addr) — attempt a 1-byte write to check if device ACKs
+static int l_i2c_probe(lua_State* L) {
+    int bus  = luaL_checkinteger(L, 1);
+    int addr = luaL_checkinteger(L, 2);
+    if (bus < 0 || bus > 1 || !s_i2c_bus[bus]) { lua_pushboolean(L, 0); return 1; }
+
+    i2c_device_config_t dev_cfg = {};
+    dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dev_cfg.device_address = addr;
+    dev_cfg.scl_speed_hz = s_i2c_freq[bus];
+
+    i2c_master_dev_handle_t dev_handle;
+    if (i2c_master_bus_add_device(s_i2c_bus[bus], &dev_cfg, &dev_handle) != ESP_OK) {
+        lua_pushboolean(L, 0); return 1;
+    }
+
+    uint8_t dummy = 0;
+    esp_err_t e = i2c_master_transmit(dev_handle, &dummy, 1, pdMS_TO_TICKS(50));
+    i2c_master_bus_rm_device(dev_handle);
+
+    lua_pushboolean(L, e == ESP_OK); return 1;
+}
+
 void LuaEngine::_bind_i2c(lua_State* L) {
     static const luaL_Reg m[] = {
         {"setup", l_i2c_setup},
         {"write", l_i2c_write},
         {"read",  l_i2c_read},
+        {"probe", l_i2c_probe},
         {nullptr, nullptr}
     };
     luaL_newlib(L, m); lua_setglobal(L, "i2c");
@@ -644,6 +671,105 @@ void LuaEngine::_bind_disp(lua_State* L) {
     luaL_newlib(L, m); lua_setglobal(L, "disp");
 }
 
+// ─── wifi.* ────────────────────────────────────────────────────────────────
+static int l_wifi_get_ip(lua_State* L) {
+    lua_pushstring(L, wifi_mgr_get_ip());
+    return 1;
+}
+
+static int l_wifi_get_rssi(lua_State* L) {
+    lua_pushinteger(L, wifi_mgr_get_rssi());
+    return 1;
+}
+
+// wifi.scan() — blocking WiFi scan, returns array of {ssid, rssi, channel, auth}
+static int l_wifi_scan(lua_State* L) {
+    // Start a blocking scan (max ~5s)
+    wifi_scan_config_t scan_cfg = {};
+    scan_cfg.show_hidden = false;
+    scan_cfg.scan_type = WIFI_SCAN_TYPE_ACTIVE;
+    scan_cfg.scan_time.active.min = 100;
+    scan_cfg.scan_time.active.max = 300;
+
+    esp_err_t err = esp_wifi_scan_start(&scan_cfg, true);
+    if (err != ESP_OK) {
+        lua_newtable(L);
+        return 1;
+    }
+
+    uint16_t count = 0;
+    esp_wifi_scan_get_ap_num(&count);
+    if (count > MAX_WIFI_NETWORKS) count = MAX_WIFI_NETWORKS;
+    if (count == 0) {
+        lua_newtable(L);
+        return 1;
+    }
+
+    wifi_ap_record_t* records = (wifi_ap_record_t*)heap_caps_malloc(
+        count * sizeof(wifi_ap_record_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!records) {
+        lua_newtable(L);
+        return 1;
+    }
+
+    esp_wifi_scan_get_ap_records(&count, records);
+
+    lua_newtable(L);
+    for (uint16_t i = 0; i < count; i++) {
+        lua_newtable(L);
+
+        lua_pushstring(L, (const char*)records[i].ssid);
+        lua_setfield(L, -2, "ssid");
+
+        lua_pushinteger(L, records[i].rssi);
+        lua_setfield(L, -2, "rssi");
+
+        lua_pushinteger(L, records[i].primary);
+        lua_setfield(L, -2, "channel");
+
+        lua_pushinteger(L, (int)records[i].authmode);
+        lua_setfield(L, -2, "auth");
+
+        lua_rawseti(L, -2, i + 1);
+    }
+
+    heap_caps_free(records);
+    return 1;
+}
+
+void LuaEngine::_bind_wifi(lua_State* L) {
+    static const luaL_Reg m[] = {
+        {"get_ip",   l_wifi_get_ip},
+        {"get_rssi", l_wifi_get_rssi},
+        {"scan",     l_wifi_scan},
+        {nullptr, nullptr}
+    };
+    luaL_newlib(L, m); lua_setglobal(L, "wifi");
+}
+
+// ─── led.* ──────────────────────────────────────────────────────────────────
+static int l_led_set_rgb(lua_State* L) {
+    int r = luaL_checkinteger(L, 1);
+    int g = luaL_checkinteger(L, 2);
+    int b = luaL_checkinteger(L, 3);
+    led_driver_set_rgb((uint8_t)r, (uint8_t)g, (uint8_t)b);
+    return 0;
+}
+
+static int l_led_off(lua_State* L) {
+    led_driver_off();
+    return 0;
+}
+
+void LuaEngine::_bind_led(lua_State* L) {
+    static const luaL_Reg m[] = {
+        {"set_rgb", l_led_set_rgb},
+        {"off",     l_led_off},
+        {nullptr, nullptr}
+    };
+    luaL_newlib(L, m); lua_setglobal(L, "led");
+}
+
 // ─── Master binding registration ─────────────────────────────────────────────
 void LuaEngine::_register_bindings() {
     _bind_sys(m_L);
@@ -656,5 +782,7 @@ void LuaEngine::_register_bindings() {
     _bind_adc(m_L);
     _bind_pwm(m_L);
     _bind_spi(m_L);
+    _bind_wifi(m_L);
+    _bind_led(m_L);
     ESP_LOGI(TAG, "All hardware bindings registered");
 }

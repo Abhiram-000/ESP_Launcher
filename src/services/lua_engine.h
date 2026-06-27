@@ -103,6 +103,8 @@ private:
     static void _bind_uart(lua_State* L);
     static void _bind_adc(lua_State* L);
     static void _bind_pwm(lua_State* L);
+    static void _bind_wifi(lua_State* L);
+    static void _bind_led(lua_State* L);
 };
 
 #endif /* __cplusplus */

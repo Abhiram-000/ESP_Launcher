@@ -58,6 +58,18 @@ bool wifi_mgr_is_connected(void);
  */
 const char* wifi_mgr_get_connected_ssid(void);
 
+/**
+ * @brief Get current STA IP address as a string (e.g. "192.168.1.42").
+ * @return Pointer to static buffer. Returns "0.0.0.0" if not connected.
+ */
+const char* wifi_mgr_get_ip(void);
+
+/**
+ * @brief Get RSSI (signal strength) of the currently connected AP.
+ * @return RSSI in dBm (e.g. -62), or -100 if not connected.
+ */
+int8_t wifi_mgr_get_rssi(void);
+
 #ifdef __cplusplus
 }
 #endif

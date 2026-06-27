@@ -229,10 +229,13 @@ typedef enum {
 
 | Name | Type | SubType | Offset | Size | Purpose |
 |------|------|---------|--------|------|---------|
-| ota_0 | app | ota_0 | 0x10000 | 3MB | Launcher (always boots first) |
-| ota_1 | app | ota_1 | 0x310000 | 3MB | New firmware (rollback target) |
-| nvs | data | nvs | 0x610000 | 64KB | Non-volatile storage |
-| games | data | spiffs | 0x620000 | ~3.4MB | NES ROMs + AI data |
+| nvs | data | nvs | 0x9000 | 16KB | Non-volatile storage |
+| otadata | data | ota | 0xD000 | 8KB | OTA boot state |
+| phy_init | data | phy | 0xF000 | 4KB | PHY init data |
+| ota_0 | app | ota_0 | 0x10000 | 4MB | Launcher (always boots first) |
+| ota_1 | app | ota_1 | 0x410000 | 4MB | New firmware (rollback target) |
+| games | data | littlefs | 0x810000 | 4MB | NES ROMs + AI data |
+| spiffs | data | spiffs | 0xC10000 | 3.94MB | Bruce firmware storage |
 
 ---
 

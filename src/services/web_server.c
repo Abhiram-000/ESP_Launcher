@@ -189,7 +189,7 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
     if ((size_t)total_len > APP_OTA_MAX_IMAGE_SIZE) {
         ESP_LOGE(TAG, "File too large (%d B)", total_len);
         return _send_json_error(req, HTTPD_400_BAD_REQUEST,
-                                "File exceeds OTA partition size (3 MB)");
+                                "File exceeds OTA partition size (4 MB)");
     }
 
     /* --- Begin OTA --- */

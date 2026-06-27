@@ -34,48 +34,67 @@ void App_AICode::draw_header(LGFX_Sprite* c, const char* title) {
 // ─── Wi-Fi check screen (simplified — UI_WifiScanner overlay does the work) ──
 void App_AICode::draw_wifi_check(LGFX_Sprite* c) {
     draw_header(c, "AI ASSISTANT");
-    int cx = c->width()/2, cy = c->height()/2;
+    const int32_t W = c->width();
+    const int32_t H = c->height();
+    const int32_t CX = W / 2;
+    const int32_t HEADER_H = 18;
+    int y = HEADER_H + 20;
+
     c->setFont(&fonts::Font0);
     c->setTextDatum(textdatum_t::middle_center);
+
     if (wifi_mgr_is_connected()) {
         c->setTextColor(theme_get_success());
-        c->drawString("Wi-Fi Connected", cx, cy - 12);
+        c->drawString("Wi-Fi Connected", CX, y);
+        y += 16;
         c->setTextColor(theme_get_text_dim());
-        c->drawString(wifi_mgr_get_connected_ssid(), cx, cy + 2);
-        c->drawString("SELECT = Continue", cx, cy + 18);
+        c->drawString(wifi_mgr_get_connected_ssid(), CX, y);
+        y += 20;
+        c->drawString("SELECT = Continue", CX, y);
     } else {
         c->setTextColor(theme_get_text());
-        c->drawString("No Wi-Fi", cx, cy - 10);
+        c->drawString("No Wi-Fi", CX, y);
+        y += 20;
         c->setTextColor(theme_get_text_dim());
-        c->drawString("SELECT = Scan & Connect", cx, cy + 8);
+        c->drawString("SELECT = Scan & Connect", CX, y);
     }
-    c->setTextDatum(textdatum_t::bottom_left);
+
+    c->setTextDatum(textdatum_t::bottom_center);
     c->setTextColor(theme_get_text_dim());
-    c->drawString("L=Back", 6, c->height() - 4);
+    c->drawString("L=Back", CX, H - 2);
 }
 
 // ─── API key entry screen (keyboard overlay is triggered by handleInput) ──
 void App_AICode::draw_api_key_entry(LGFX_Sprite* c) {
     draw_header(c, "CEREBRAS API KEY");
-    int cx = c->width()/2;
+    const int32_t W = c->width();
+    const int32_t H = c->height();
+    const int32_t CX = W / 2;
+    const int32_t HEADER_H = 18;
+    int y = HEADER_H + 16;
+
     c->setFont(&fonts::Font0);
     c->setTextDatum(textdatum_t::middle_center);
 
     char key[128] = {};
     bool has_key = llm_client_get_api_key(key, sizeof(key)) && key[0];
 
-    const int32_t H = c->height();
     if (has_key) {
         c->setTextColor(theme_get_success());
-        c->drawString("Key saved.", cx, H * 30 / 100);
+        c->drawString("Key saved.", CX, y);
+        y += 20;
         c->setTextColor(theme_get_text_dim());
-        c->drawString("SEL=Change  L=Continue", cx, H * 44 / 100);
+        c->drawString("SEL=Change", CX, y);
+        y += 12;
+        c->drawString("L=Continue", CX, y);
     } else {
         c->setTextColor(theme_get_text());
-        c->drawString("No API key set.", cx, H * 30 / 100);
+        c->drawString("No API key set.", CX, y);
+        y += 20;
         c->setTextColor(theme_get_text_dim());
-        c->drawString("Press SELECT to type key.", cx, H * 44 / 100);
-        c->drawString("L=Skip", cx, H * 58 / 100);
+        c->drawString("SELECT = Type key", CX, y);
+        y += 16;
+        c->drawString("L=Skip", CX, y);
     }
 }
 
@@ -83,232 +102,407 @@ void App_AICode::draw_main_menu(LGFX_Sprite* c) {
     draw_header(c, "AI ASSISTANT");
     const int32_t W  = c->width();
     const int32_t H  = c->height();
-    const int32_t HEADER_H = H / 9;
-    const int32_t ITEM_H   = H / 5;
-    const int32_t MARGIN   = W / 20;
-    const int32_t cy = HEADER_H + 4;
+    const int32_t MARGIN = 6;
+    const int32_t HEADER_H = 18;
+    const int32_t FOOTER_H = 12;
+    const int32_t CONTENT_H = H - HEADER_H - FOOTER_H;
+    const int32_t ITEM_H = CONTENT_H / MENU_ITEMS;
+
     for (int i = 0; i < MENU_ITEMS; i++) {
         bool sel = i == _menu_sel;
-        const int32_t iy = cy + i * ITEM_H;
+        const int32_t iy = HEADER_H + i * ITEM_H;
         if (sel) {
             float pulse = 0.5f + 0.5f * sinf(_anim_time * 4.0f);
-            c->fillRoundRect(MARGIN, iy, W - MARGIN * 2, ITEM_H - 2, 5,
+            c->fillRoundRect(MARGIN, iy + 1, W - MARGIN * 2, ITEM_H - 3, 4,
                 color_blend(theme_get_accent(), theme_get_bg(), 0.3f * pulse + 0.2f));
-            c->drawRoundRect(MARGIN, iy, W - MARGIN * 2, ITEM_H - 2, 5, theme_get_accent());
+            c->drawRoundRect(MARGIN, iy + 1, W - MARGIN * 2, ITEM_H - 3, 4, theme_get_accent());
+        } else {
+            c->drawFastHLine(MARGIN + 8, iy + ITEM_H - 1, W - MARGIN * 2 - 16,
+                color_blend(theme_get_text_dim(), theme_get_bg(), 0.15f));
         }
+        c->setFont(&fonts::Font0);
         c->setTextDatum(textdatum_t::middle_left);
         c->setTextColor(sel ? theme_get_text() : theme_get_text_dim());
-        c->drawString(MENU_LABELS[i], MARGIN + W / 25, iy + ITEM_H / 2);
+        c->drawString(MENU_LABELS[i], MARGIN + 8, iy + ITEM_H / 2);
     }
-    c->setTextDatum(textdatum_t::bottom_left);
+
     c->setTextColor(theme_get_text_dim());
-    c->drawString("L=Launcher", 4, c->height()-2);
+    c->setFont(&fonts::Font0);
+    c->setTextDatum(textdatum_t::bottom_center);
+    c->drawString("L=Back", W / 2, H - 2);
 }
 
 void App_AICode::draw_chat_select(LGFX_Sprite* c) {
     draw_header(c, "SELECT INPUT");
-    const int32_t W      = c->width();
-    const int32_t H      = c->height();
-    const int32_t HEADER_H = H / 9;
-    const int32_t MARGIN = W / 20;
-    const int32_t ITEM_H = H * 27 / 100;
-    const int32_t GAP    = H / 16;
-    const int32_t cy     = HEADER_H + GAP;
+    const int32_t W = c->width();
+    const int32_t H = c->height();
+    const int32_t MARGIN = 6;
+    const int32_t HEADER_H = 18;
+    const int32_t FOOTER_H = 12;
+    const int32_t CONTENT_H = H - HEADER_H - FOOTER_H;
+    const int32_t ITEM_H = CONTENT_H / 2;
+    const int32_t GAP = 4;
+
     const char* options[] = {"Inbuilt Keyboard", "From Phone"};
     const char* subs[]    = {"Type on device",   "Connect via WiFi"};
 
     for (int i = 0; i < 2; i++) {
         bool sel = i == _chat_select_sel;
-        const int32_t y = cy + i * (ITEM_H + GAP);
+        const int32_t y = HEADER_H + i * ITEM_H + GAP / 2;
+        const int32_t card_h = ITEM_H - GAP;
+
         if (sel) {
             float pulse = 0.5f + 0.5f * sinf(_anim_time * 4.0f);
-            c->fillRoundRect(MARGIN, y, W - MARGIN * 2, ITEM_H, 6,
+            c->fillRoundRect(MARGIN, y, W - MARGIN * 2, card_h, 5,
                 color_blend(theme_get_accent(), theme_get_bg(), 0.3f * pulse + 0.2f));
-            c->drawRoundRect(MARGIN, y, W - MARGIN * 2, ITEM_H, 6, theme_get_accent());
+            c->drawRoundRect(MARGIN, y, W - MARGIN * 2, card_h, 5, theme_get_accent());
         } else {
-            c->fillRoundRect(MARGIN, y, W - MARGIN * 2, ITEM_H, 6,
-                color_blend(theme_get_text_dim(), theme_get_bg(), 0.1f));
-            c->drawRoundRect(MARGIN, y, W - MARGIN * 2, ITEM_H, 6, theme_get_text_dim());
+            c->fillRoundRect(MARGIN, y, W - MARGIN * 2, card_h, 5,
+                color_blend(theme_get_text_dim(), theme_get_bg(), 0.08f));
+            c->drawRoundRect(MARGIN, y, W - MARGIN * 2, card_h, 5,
+                color_blend(theme_get_text_dim(), theme_get_bg(), 0.3f));
         }
+
         c->setFont(&fonts::Font0);
         c->setTextDatum(textdatum_t::top_left);
         c->setTextColor(sel ? theme_get_text() : theme_get_text_dim());
-        c->drawString(options[i], MARGIN + W / 30, y + ITEM_H / 5);
-        c->setTextColor(theme_get_text_dim());
-        c->drawString(subs[i],    MARGIN + W / 30, y + ITEM_H * 55 / 100);
+        c->drawString(options[i], MARGIN + 6, y + 6);
+        c->setTextColor(sel ?
+            color_blend(theme_get_text(), theme_get_accent(), 0.4f) :
+            theme_get_text_dim());
+        c->drawString(subs[i], MARGIN + 6, y + 18);
     }
+
+    c->setTextColor(theme_get_text_dim());
+    c->setFont(&fonts::Font0);
     c->setTextDatum(textdatum_t::bottom_center);
-    c->drawString("SELECT=Confirm  L=Back", W / 2, H - 2);
+    c->drawString("SEL=Confirm  L=Back", W / 2, H - 2);
 }
 
 void App_AICode::draw_chat_phone(LGFX_Sprite* c) {
     draw_header(c, "PHONE CHAT");
-    const int32_t W        = c->width();
-    const int32_t H        = c->height();
-    const int32_t HEADER_H = H / 9;
-    const int32_t MARGIN   = W / 20;
-    const int32_t BOX_H    = H / 6;
-    const int32_t LBL_Y1   = HEADER_H + H / 16;
-    const int32_t BOX_Y1   = LBL_Y1 + H / 10;
-    const int32_t LBL_Y2   = BOX_Y1 + BOX_H + H / 16;
-    const int32_t BOX_Y2   = LBL_Y2 + H / 10;
-    const int32_t STATUS_Y = H - H / 12;
+    const int32_t W = c->width();
+    const int32_t H = c->height();
+    const int32_t MARGIN = 6;
+    const int32_t HEADER_H = 18;
+    const int32_t BOX_H = 20;
+    int y = HEADER_H + 8;
 
     c->setFont(&fonts::Font0);
+
+    /* "Connect to:" label */
     c->setTextColor(theme_get_text());
     c->setTextDatum(textdatum_t::top_left);
-    c->drawString("Connect your phone to:", MARGIN, LBL_Y1);
+    c->drawString("Connect phone to:", MARGIN, y);
+    y += 12;
 
-    c->fillRoundRect(MARGIN - 2, BOX_Y1, W - MARGIN * 2 + 4, BOX_H, 4,
+    /* SSID box */
+    c->fillRoundRect(MARGIN, y, W - MARGIN * 2, BOX_H, 4,
                      color_blend(theme_get_accent(), theme_get_bg(), 0.15f));
-    c->drawRoundRect(MARGIN - 2, BOX_Y1, W - MARGIN * 2 + 4, BOX_H, 4, theme_get_accent());
+    c->drawRoundRect(MARGIN, y, W - MARGIN * 2, BOX_H, 4, theme_get_accent());
     c->setTextColor(theme_get_accent());
-    c->drawString(APP_WIFI_SSID, MARGIN + 2, BOX_Y1 + BOX_H / 3);
+    c->setTextDatum(textdatum_t::middle_center);
+    c->drawString(APP_WIFI_SSID, W / 2, y + BOX_H / 2);
+    y += BOX_H + 8;
 
+    /* "Open browser:" label */
     c->setTextColor(theme_get_text());
-    c->drawString("Then open browser at:", MARGIN, LBL_Y2);
+    c->setTextDatum(textdatum_t::top_left);
+    c->drawString("Open browser at:", MARGIN, y);
+    y += 12;
 
-    c->fillRoundRect(MARGIN - 2, BOX_Y2, W - MARGIN * 2 + 4, BOX_H, 4,
+    /* URL box */
+    c->fillRoundRect(MARGIN, y, W - MARGIN * 2, BOX_H, 4,
                      color_blend(theme_get_accent(), theme_get_bg(), 0.15f));
-    c->drawRoundRect(MARGIN - 2, BOX_Y2, W - MARGIN * 2 + 4, BOX_H, 4, theme_get_accent());
+    c->drawRoundRect(MARGIN, y, W - MARGIN * 2, BOX_H, 4, theme_get_accent());
     c->setTextColor(theme_get_accent());
-    c->drawString("http://192.168.4.1/chat", MARGIN + 2, BOX_Y2 + BOX_H / 3);
+    c->setTextDatum(textdatum_t::middle_center);
+    c->drawString("192.168.4.1/chat", W / 2, y + BOX_H / 2);
+    y += BOX_H + 10;
 
+    /* Status indicator */
     float pulse = 0.6f + 0.4f * sinf(_anim_time * 5.0f);
-    c->fillCircle(MARGIN / 2, STATUS_Y, H / 30,
+    c->fillCircle(MARGIN + 4, y + 4, 4,
                   color_blend(theme_get_success(), theme_get_bg(), pulse));
     c->setTextColor(theme_get_text_dim());
-    c->drawString("Hosting local portal...", MARGIN, STATUS_Y - H / 30);
+    c->setTextDatum(textdatum_t::middle_left);
+    c->drawString("Hosting portal...", MARGIN + 14, y + 4);
 
     c->setTextDatum(textdatum_t::bottom_center);
-    c->drawString("SELECT=Back", W/2, c->height()-2);
+    c->drawString("SELECT=Back", W / 2, H - 2);
 }
 
 void App_AICode::draw_chat(LGFX_Sprite* c) {
     draw_header(c, "AI CHAT");
-    int W = c->width(), H = c->height();
-    c->setFont(&fonts::Font0); c->setTextColor(theme_get_text());
+    const int32_t W = c->width();
+    const int32_t H = c->height();
+    const int32_t MARGIN = 4;
+    const int32_t HEADER_H = 18;
+    const int32_t FOOTER_H = 12;
+    const int32_t LINE_H = 10;
+    const int32_t MAX_CHARS = (W - MARGIN * 2) / 6;
+    const int32_t CONTENT_BOTTOM = H - FOOTER_H;
+
+    c->setFont(&fonts::Font0);
+    c->setTextColor(theme_get_text());
     c->setTextDatum(textdatum_t::top_left);
-    int y = 18, line_h = 10;
-    // Read cached state — no mutex in render path (cached in loop())
+
     const std::string& chat_display = _cached_chat_display;
     bool llm_busy = _cached_llm_busy;
     const char* txt = chat_display.c_str();
-    int start = (int)chat_display.size() - (H - 50) / line_h * 20;
-    if (start < 0) start = 0;
-    char line[24] = {};
-    int lp = 0;
-    for (int i = start; txt[i] && y < H - 28; i++) {
-        if (txt[i] == '\n' || lp >= 22) {
-            line[lp] = '\0'; c->drawString(line, 4, y); y += line_h; lp = 0;
-        } else line[lp++] = txt[i];
-    }
-    if (lp) { line[lp] = '\0'; c->drawString(line, 4, y); }
+    int txt_len = (int)chat_display.size();
 
+    /* Calculate how many lines fit */
+    int visible_lines = (CONTENT_BOTTOM - HEADER_H) / LINE_H;
+    if (visible_lines < 1) visible_lines = 1;
+
+    /* Count total lines */
+    int total_lines = 0;
+    for (int i = 0; i < txt_len; i++) {
+        if (txt[i] == '\n') total_lines++;
+        else if (i == 0 || txt[i - 1] == '\n') total_lines++;
+    }
+    if (total_lines < 1) total_lines = 1;
+
+    /* Scroll to show latest content */
+    int scroll_line = total_lines - visible_lines;
+    if (scroll_line < 0) scroll_line = 0;
+
+    /* Draw visible lines */
+    int y = HEADER_H + 2;
+    int line_idx = 0;
+    int char_idx = 0;
+    bool drawing = (scroll_line == 0);
+
+    while (char_idx < txt_len && y < CONTENT_BOTTOM) {
+        char row[24] = {};
+        int rp = 0;
+
+        /* Read one line */
+        while (char_idx < txt_len && txt[char_idx] != '\n' && rp < MAX_CHARS) {
+            row[rp++] = txt[char_idx++];
+        }
+        while (char_idx < txt_len && txt[char_idx] != '\n') char_idx++;
+        if (char_idx < txt_len) char_idx++; /* skip newline */
+
+        if (drawing) {
+            row[rp] = '\0';
+            c->drawString(row, MARGIN, y);
+            y += LINE_H;
+        }
+
+        line_idx++;
+        if (!drawing && line_idx >= scroll_line) drawing = true;
+    }
+
+    /* Loading indicator */
     if (llm_busy) {
         float a = fmodf(_anim_time * 5.0f, 360.0f);
-        c->drawArc(W - 12, H - 22, 6, 4, (int)a, (int)a+120, theme_get_accent());
+        c->drawArc(W - 10, CONTENT_BOTTOM - 4, 5, 3, (int)a, (int)a + 120, theme_get_accent());
     }
+
     c->setTextColor(theme_get_text_dim());
+    c->setFont(&fonts::Font0);
     c->setTextDatum(textdatum_t::bottom_center);
-    c->drawString(llm_busy ? "Responding..." : "SELECT=Type  L=Back", W/2, H-2);
+    c->drawString(llm_busy ? "Responding..." : "SEL=Type  L=Back", W / 2, H - 2);
 }
 
 void App_AICode::draw_ide(LGFX_Sprite* c) {
     draw_header(c, _ide_filename.c_str());
-    int W = c->width(), H = c->height();
+    const int32_t W = c->width();
+    const int32_t H = c->height();
+    const int32_t MARGIN = 4;
+    const int32_t HEADER_H = 18;
+    const int32_t FOOTER_H = 12;
+    const int32_t LH = 10;
+    const int32_t MAX_CHARS = (W - MARGIN * 2) / 6;
+    const int32_t CONTENT_BOTTOM = H - FOOTER_H;
+
     c->setFont(&fonts::Font0);
-    int lh = 10, y = 18, lnum = 0;
+
     const char* src = _ide_buf.c_str();
     int len = _ide_buf.size();
     int cur_line = 0;
     for (int i = 0; i < _ide_cursor; i++) if (src[i] == '\n') cur_line++;
 
+    int y = HEADER_H + 2;
     int i = 0, line = 0;
-    while (i <= len && y < H - 20) {
+
+    while (i <= len && y < CONTENT_BOTTOM) {
         if (line < _ide_scroll_line) {
             while (i <= len && src[i] != '\n') i++;
             i++; line++; continue;
         }
-        char row[24] = {}; int rp = 0;
-        while (i <= len && src[i] != '\n' && rp < 22) row[rp++] = src[i++];
+        char row[24] = {};
+        int rp = 0;
+        while (i <= len && src[i] != '\n' && rp < MAX_CHARS) row[rp++] = src[i++];
         while (i <= len && src[i] != '\n') i++;
         i++;
+
         bool is_cur = (line == cur_line);
-        if (is_cur) c->fillRect(0, y, W, lh, color_blend(theme_get_accent(), theme_get_bg(), 0.15f));
+        if (is_cur) {
+            c->fillRoundRect(MARGIN, y - 1, W - MARGIN * 2, LH + 1, 2,
+                color_blend(theme_get_accent(), theme_get_bg(), 0.15f));
+        }
         c->setTextColor(is_cur ? theme_get_text() : theme_get_text_dim());
         c->setTextDatum(textdatum_t::top_left);
-        c->drawString(row, 4, y);
-        y += lh; line++; lnum++;
+        c->drawString(row, MARGIN, y);
+        y += LH;
+        line++;
     }
+
     c->setTextColor(theme_get_text_dim());
-    c->setTextDatum(textdatum_t::bottom_left);
-    c->drawString(_ide_dirty ? "SEL=Edit R=Save D=Run L=Back" : "SEL=Edit D=Run L=Back", 2, H-2);
+    c->setFont(&fonts::Font0);
+    c->setTextDatum(textdatum_t::bottom_center);
+    c->drawString(_ide_dirty ? "SEL=Edit R=Save D=Run L=Back" : "SEL=Edit D=Run L=Back",
+        W / 2, H - 2);
 }
 
 void App_AICode::draw_script_list(LGFX_Sprite* c) {
     draw_header(c, "SCRIPTS");
-    int y = 20, h = 16;
+    const int32_t W = c->width();
+    const int32_t H = c->height();
+    const int32_t MARGIN = 6;
+    const int32_t HEADER_H = 18;
+    const int32_t FOOTER_H = 12;
+    const int32_t ITEM_H = 14;
+
     if (_scripts.empty()) {
         c->setTextColor(theme_get_text_dim());
+        c->setFont(&fonts::Font0);
         c->setTextDatum(textdatum_t::middle_center);
-        c->drawString("No scripts yet", c->width()/2, c->height()/2);
+        c->drawString("No scripts yet", W / 2, H / 2 - 6);
+        c->drawString("Write code in IDE", W / 2, H / 2 + 6);
         return;
     }
-    for (int i = 0; i < (int)_scripts.size() && y < c->height()-4; i++, y += h) {
+
+    int visible = (H - HEADER_H - FOOTER_H) / ITEM_H;
+    if (visible < 1) visible = 1;
+    if (_script_sel < 0) _script_sel = 0;
+    if (_script_sel >= (int)_scripts.size()) _script_sel = (int)_scripts.size() - 1;
+
+    int scroll = _script_sel - visible / 2;
+    if (scroll < 0) scroll = 0;
+    if (scroll + visible > (int)_scripts.size()) scroll = (int)_scripts.size() - visible;
+    if (scroll < 0) scroll = 0;
+
+    for (int i = scroll; i < (int)_scripts.size() && i < scroll + visible; i++) {
+        int32_t y = HEADER_H + (i - scroll) * ITEM_H;
         bool sel = i == _script_sel;
-        if (sel) c->fillRoundRect(4, y, c->width()-8, h-2, 3, color_blend(theme_get_accent(), theme_get_bg(), 0.25f));
+        if (sel) {
+            c->fillRoundRect(MARGIN, y, W - MARGIN * 2, ITEM_H - 2, 3,
+                color_blend(theme_get_accent(), theme_get_bg(), 0.25f));
+        }
+        c->setFont(&fonts::Font0);
         c->setTextColor(sel ? theme_get_text() : theme_get_text_dim());
         c->setTextDatum(textdatum_t::middle_left);
-        c->drawString(_scripts[i].c_str(), 10, y + h/2 - 1);
+        c->drawString(_scripts[i].c_str(), MARGIN + 4, y + ITEM_H / 2 - 1);
     }
+
     c->setTextColor(theme_get_text_dim());
+    c->setFont(&fonts::Font0);
     c->setTextDatum(textdatum_t::bottom_center);
-    c->drawString("SEL=Run  R=Edit  L=Back", c->width()/2, c->height()-2);
+    c->drawString("SEL=Run  R=Edit  L=Back", W / 2, H - 2);
 }
 
 void App_AICode::draw_lua_running(LGFX_Sprite* c) {
     draw_header(c, "RUNNING");
+    const int32_t W = c->width();
+    const int32_t H = c->height();
+    const int32_t CX = W / 2;
+    const int32_t HEADER_H = 18;
+    int cy = HEADER_H + (H - HEADER_H) / 2 - 6;
+
     float a = fmodf(_anim_time * 5.0f, 360.0f);
-    c->drawArc(c->width()/2, c->height()/2, 18, 14, (int)a, (int)a+120, theme_get_accent());
-    c->setTextColor(theme_get_text_dim()); c->setTextDatum(textdatum_t::bottom_center);
-    c->drawString("Executing Lua script...", c->width()/2, c->height()-4);
+    c->drawArc(CX, cy, 16, 12, (int)a, (int)a + 120, theme_get_accent());
+
+    c->setTextColor(theme_get_text_dim());
+    c->setFont(&fonts::Font0);
+    c->setTextDatum(textdatum_t::middle_center);
+    c->drawString("Executing...", CX, cy + 22);
+    c->drawString("Check serial monitor", CX, cy + 34);
 }
 
 void App_AICode::draw_lua_result(LGFX_Sprite* c) {
-    // Read cached state — no mutex in render path (cached in loop())
     lua_engine_result_t lua_result = _cached_lua_result;
     bool ok = lua_result.status == LUA_ENGINE_OK;
     draw_header(c, ok ? "SCRIPT OK" : "SCRIPT ERROR");
+
+    const int32_t W = c->width();
+    const int32_t H = c->height();
+    const int32_t CX = W / 2;
+    const int32_t MARGIN = 6;
+    const int32_t HEADER_H = 18;
+
     uint16_t col = ok ? theme_get_success() : theme_get_fail();
-    c->setFont(&fonts::Font0); c->setTextColor(col);
+    c->setFont(&fonts::Font0);
+    c->setTextColor(col);
     c->setTextDatum(textdatum_t::top_left);
-    int y = 20;
-    std::string ok_msg;
-    const char* msg = nullptr;
+
+    int y = HEADER_H + 12;
     if (ok) {
-        ok_msg = "Done in " + std::to_string(lua_result.elapsed_ms) + "ms";
-        msg = ok_msg.c_str();
+        char buf[32];
+        snprintf(buf, sizeof(buf), "Done in %lums", (unsigned long)lua_result.elapsed_ms);
+        c->drawString(buf, MARGIN, y);
     } else {
-        msg = lua_result.error;
+        /* Word-wrap error message */
+        const int MAX_CHARS = (W - MARGIN * 2) / 6;
+        const char* p = lua_result.error;
+        while (*p && y < H - 20) {
+            int chars = 0;
+            const char* ls = p;
+            while (*p && *p != '\n' && chars < MAX_CHARS) { chars++; p++; }
+            c->drawString(std::string(ls, chars).c_str(), MARGIN, y);
+            y += 12;
+            if (*p == '\n') p++;
+        }
     }
-    c->drawString(msg, 4, y);
-    c->setTextColor(theme_get_text_dim()); c->setTextDatum(textdatum_t::bottom_center);
-    c->drawString("SELECT=Back", c->width()/2, c->height()-2);
+
+    c->setTextColor(theme_get_text_dim());
+    c->setFont(&fonts::Font0);
+    c->setTextDatum(textdatum_t::bottom_center);
+    c->drawString("SELECT=Back", CX, H - 2);
 }
 
 void App_AICode::draw_settings(LGFX_Sprite* c) {
     draw_header(c, "SETTINGS");
-    c->setTextDatum(textdatum_t::middle_left);
+    const int32_t W = c->width();
+    const int32_t H = c->height();
+    const int32_t MARGIN = 8;
+    const int32_t HEADER_H = 18;
+    int y = HEADER_H + 12;
+
+    c->setFont(&fonts::Font0);
+    c->setTextDatum(textdatum_t::top_left);
+
+    /* Model */
     c->setTextColor(theme_get_text());
-    c->drawString("Model: " AI_LLM_MODEL_DEFAULT, 8, 40);
-    c->setTextColor(theme_get_text_dim());
-    char key[12] = "Not set";
+    c->drawString("Model", MARGIN, y);
+    y += 12;
+    c->setTextColor(theme_get_accent());
+    c->drawString(AI_LLM_MODEL_DEFAULT, MARGIN + 4, y);
+    y += 16;
+
+    /* API Key */
+    c->setTextColor(theme_get_text());
+    c->drawString("API Key", MARGIN, y);
+    y += 12;
     char k[128] = {};
-    if (llm_client_get_api_key(k, sizeof(k)) && k[0]) { strncpy(key, "sk-...", 8); }
-    c->drawString(std::string("API: " + std::string(key)).c_str(), 8, 58);
+    if (llm_client_get_api_key(k, sizeof(k)) && k[0]) {
+        c->setTextColor(theme_get_success());
+        c->drawString("sk-...", MARGIN + 4, y);
+    } else {
+        c->setTextColor(theme_get_fail());
+        c->drawString("Not set", MARGIN + 4, y);
+    }
+    y += 20;
+
+    /* Prompt */
+    c->setTextColor(theme_get_text_dim());
+    c->drawString("SEL = Change Key", MARGIN, y);
+
     c->setTextDatum(textdatum_t::bottom_center);
-    c->drawString("SEL=Change Key  L=Back", c->width()/2, c->height()-2);
+    c->drawString("L=Back", W / 2, H - 2);
 }
 
 // ─── CODE_GENERATED screen — review extracted code + Flash action ─────────
@@ -316,37 +510,35 @@ void App_AICode::draw_code_generated(LGFX_Sprite* c) {
     draw_header(c, "AI GENERATED CODE");
     const int32_t W = c->width();
     const int32_t H = c->height();
-    const int32_t MARGIN = W / 20;
-    const int32_t LH = 9;   /* line height for code */
+    const int32_t MARGIN = 6;
+    const int32_t LH = 9;
     const int32_t CODE_Y = 18;
-    const int32_t CODE_H = H - 44;  /* code area height */
-    const int32_t ACTIONS_Y = H - 24;
+    const int32_t BTN_H = 16;
+    const int32_t FOOTER_GAP = 4;
+    const int32_t CODE_BOTTOM = H - BTN_H - FOOTER_GAP * 2 - 10;
 
-    // Code area with subtle border
-    c->fillRoundRect(MARGIN - 1, CODE_Y - 1, W - MARGIN * 2 + 2, CODE_H + 2, 3,
-                     color_blend(theme_get_text_dim(), theme_get_bg(), 0.1f));
+    /* Code area background */
+    c->fillRoundRect(MARGIN, CODE_Y, W - MARGIN * 2, CODE_BOTTOM - CODE_Y, 3,
+                     color_blend(theme_get_text_dim(), theme_get_bg(), 0.08f));
 
-    // Draw code lines (scrollable)
+    /* Draw code lines (scrollable) */
     const char* src = _gen_code.c_str();
     int len = (int)_gen_code.size();
     int y = CODE_Y + 2;
-    int line = 0;
     int i = 0;
 
-    // Skip to scroll position
     int skip = _gen_scroll;
     while (i < len && skip > 0) {
         if (src[i] == '\n') skip--;
         i++;
     }
 
-    // Draw visible lines
-    while (i <= len && y < CODE_Y + CODE_H - 2) {
+    while (i <= len && y < CODE_BOTTOM - 2) {
         char row[24] = {};
         int rp = 0;
         while (i <= len && src[i] != '\n' && rp < 22) row[rp++] = src[i++];
         while (i <= len && src[i] != '\n') i++;
-        i++; // skip newline
+        i++;
         row[rp] = '\0';
 
         c->setFont(&fonts::Font0);
@@ -354,31 +546,34 @@ void App_AICode::draw_code_generated(LGFX_Sprite* c) {
         c->setTextDatum(textdatum_t::top_left);
         c->drawString(row, MARGIN + 2, y);
         y += LH;
-        line++;
     }
 
-    // Action buttons row
+    /* Filename above buttons */
+    c->setTextColor(theme_get_text_dim());
+    c->setFont(&fonts::Font0);
+    c->setTextDatum(textdatum_t::bottom_left);
+    c->drawString(_gen_filename.c_str(), MARGIN, H - BTN_H - FOOTER_GAP);
+
+    /* Action buttons — anchored at bottom */
     const char* actions[] = {"Flash", "Edit", "Save", "Back"};
-    int btn_w = (W - MARGIN * 2 - 12) / 4;
+    int gap = 3;
+    int btn_w = (W - MARGIN * 2 - gap * 3) / 4;
+    int btn_y = H - BTN_H;
+
     for (int a = 0; a < 4; a++) {
-        int bx = MARGIN + a * (btn_w + 4);
+        int bx = MARGIN + a * (btn_w + gap);
         bool sel = (a == _gen_action_sel);
         if (sel) {
-            c->fillRoundRect(bx, ACTIONS_Y, btn_w, 18, 4, theme_get_accent());
+            c->fillRoundRect(bx, btn_y, btn_w, BTN_H, 3, theme_get_accent());
             c->setTextColor(theme_get_bg());
         } else {
-            c->drawRoundRect(bx, ACTIONS_Y, btn_w, 18, 4, theme_get_text_dim());
+            c->drawRoundRect(bx, btn_y, btn_w, BTN_H, 3, theme_get_text_dim());
             c->setTextColor(theme_get_text_dim());
         }
         c->setFont(&fonts::Font0);
         c->setTextDatum(textdatum_t::middle_center);
-        c->drawString(actions[a], bx + btn_w / 2, ACTIONS_Y + 9);
+        c->drawString(actions[a], bx + btn_w / 2, btn_y + BTN_H / 2);
     }
-
-    // Filename hint
-    c->setTextColor(theme_get_text_dim());
-    c->setTextDatum(textdatum_t::bottom_left);
-    c->drawString(_gen_filename.c_str(), MARGIN, ACTIONS_Y - 2);
 }
 
 // ─── Input handler ────────────────────────────────────────────────────────
@@ -653,38 +848,38 @@ void App_AICode::draw_marketplace(LGFX_Sprite* c) {
     const int32_t W = c->width();
     const int32_t H = c->height();
     const int32_t CX = W / 2;
-    const int32_t MARGIN = W / 20;
-    /* Each item: name (8px) + gap (2px) + version (8px) + padding (4px) = 22px min */
-    const int32_t ITEM_H = (H / 6 < 22) ? 22 : H / 6;
+    const int32_t MARGIN = 6;
+    const int32_t HEADER_H = 18;
+    const int32_t FOOTER_H = 12;
+    const int32_t ITEM_H = 20;
 
     draw_header(c, "Tool Marketplace");
 
     if (_cached_mkt_refreshing) {
-        /* Animated dots */
         int dots = ((int)(_anim_time * 3.0f)) % 4;
         char msg[32];
         snprintf(msg, sizeof(msg), "Loading%s", std::string(dots, '.').c_str());
         c->setTextColor(theme_get_text_dim());
+        c->setFont(&fonts::Font0);
         c->setTextDatum(textdatum_t::middle_center);
-        c->drawString(msg, CX, H / 2);
+        c->drawString(msg, CX, H / 2 - 6);
+        c->setTextColor(theme_get_text_dim());
+        c->drawString("Check serial monitor", CX, H / 2 + 8);
         return;
     }
 
     if (_cached_mkt_tool_count == 0) {
         c->setTextColor(theme_get_text_dim());
+        c->setFont(&fonts::Font0);
         c->setTextDatum(textdatum_t::middle_center);
-        c->drawString("No tools found", CX, H / 3);
-        c->drawString("R=Refresh L=Back", CX, H / 3 + 14);
+        c->drawString("No tools found", CX, H / 2 - 6);
+        c->drawString("R=Refresh", CX, H / 2 + 8);
         return;
     }
 
-    /* Tool list */
-    const int32_t HEADER_H = 18;
-    const int32_t FOOTER_H = 14;
     int visible = (H - HEADER_H - FOOTER_H) / ITEM_H;
     if (visible < 1) visible = 1;
 
-    /* Auto-scroll to keep selection visible */
     if (_mkt_sel < _mkt_scroll) _mkt_scroll = _mkt_sel;
     if (_mkt_sel >= _mkt_scroll + visible) _mkt_scroll = _mkt_sel - visible + 1;
 
@@ -694,46 +889,61 @@ void App_AICode::draw_marketplace(LGFX_Sprite* c) {
         const auto& tool = _cached_mkt_tools[i];
 
         if (sel) {
-            c->fillRoundRect(MARGIN - 2, y, W - 2 * MARGIN + 4, ITEM_H - 2, 3,
-                theme_get_accent());
+            c->fillRoundRect(MARGIN, y, W - MARGIN * 2 - 6, ITEM_H - 2, 3, theme_get_accent());
+        } else {
+            c->drawFastHLine(MARGIN, y + ITEM_H - 2, W - MARGIN * 2 - 6,
+                color_blend(theme_get_text_dim(), theme_get_bg(), 0.2f));
         }
 
-        /* Tool name — first line */
-        c->setTextColor(sel ? theme_get_bg() : theme_get_text());
         c->setFont(&fonts::Font0);
         c->setTextDatum(textdatum_t::top_left);
-        c->drawString(tool.name, MARGIN + 2, y + 2);
+        c->setTextColor(sel ? theme_get_bg() : theme_get_text());
+        c->drawString(tool.name, MARGIN + 4, y + 2);
 
-        /* Version + installed badge — second line, clearly separated */
         char info[48];
         if (tool.is_installed) {
-            snprintf(info, sizeof(info), "v%s [Installed]", tool.version);
+            snprintf(info, sizeof(info), "v%s  Installed", tool.version);
             c->setTextColor(sel ? theme_get_bg() : theme_get_success());
         } else {
             snprintf(info, sizeof(info), "v%s", tool.version);
             c->setTextColor(sel ? theme_get_bg() : theme_get_text_dim());
         }
-        c->drawString(info, MARGIN + 2, y + 12);
+        c->drawString(info, MARGIN + 4, y + 11);
     }
 
-    /* Footer */
+    /* Scroll bar */
+    if (_cached_mkt_tool_count > visible) {
+        int32_t sb_x = W - 4;
+        int32_t sb_track_top = HEADER_H;
+        int32_t sb_track_h = H - HEADER_H - FOOTER_H;
+        int32_t sb_h = (sb_track_h * visible) / _cached_mkt_tool_count;
+        if (sb_h < 8) sb_h = 8;
+        int32_t sb_y = sb_track_top + (sb_track_h - sb_h) * _mkt_scroll /
+            (_cached_mkt_tool_count - visible);
+        c->fillRoundRect(sb_x, sb_track_top, 3, sb_track_h, 1,
+            color_blend(theme_get_text_dim(), theme_get_bg(), 0.15f));
+        c->fillRoundRect(sb_x, sb_y, 3, sb_h, 1,
+            color_blend(theme_get_accent(), theme_get_bg(), 0.6f));
+    }
+
     c->setTextColor(theme_get_text_dim());
     c->setFont(&fonts::Font0);
     c->setTextDatum(textdatum_t::bottom_center);
-    c->drawString("SEL=Detail L=Back R=Refresh", CX, H - 2);
+    c->drawString("SEL=Open  L=Back", CX, H - 2);
 }
 
 void App_AICode::draw_marketplace_detail(LGFX_Sprite* c) {
     const int32_t W = c->width();
     const int32_t H = c->height();
     const int32_t CX = W / 2;
-    const int32_t MARGIN = W / 20;
+    const int32_t MARGIN = 6;
+    const int32_t FOOTER_H = 18;
 
-    // Use cached marketplace state — no side effects in render
     int tool_count = _cached_mkt_tool_count;
     if (_mkt_sel >= tool_count || tool_count == 0) {
         draw_header(c, "No Tool");
         c->setTextColor(theme_get_text_dim());
+        c->setFont(&fonts::Font0);
         c->setTextDatum(textdatum_t::middle_center);
         c->drawString("No tool selected", CX, H / 2);
         c->drawString("L=Back", CX, H / 2 + 14);
@@ -743,65 +953,87 @@ void App_AICode::draw_marketplace_detail(LGFX_Sprite* c) {
 
     draw_header(c, tool.name);
 
-    /* Description */
-    c->setTextColor(theme_get_text());
+    /* Info row: version + author + size — one line */
     c->setFont(&fonts::Font0);
     c->setTextDatum(textdatum_t::top_left);
     int y = 20;
-    /* Simple word wrap */
+
+    c->setTextColor(theme_get_text_dim());
+    char info_line[64];
+    if (tool.size_bytes > 1024) {
+        snprintf(info_line, sizeof(info_line), "v%s  %.1fKB  %s",
+            tool.version, tool.size_bytes / 1024.0f, tool.author);
+    } else {
+        snprintf(info_line, sizeof(info_line), "v%s  %uB  %s",
+            tool.version, tool.size_bytes, tool.author);
+    }
+    c->drawString(info_line, MARGIN, y);
+    y += 11;
+
+    /* Separator */
+    c->drawFastHLine(MARGIN, y, W - MARGIN * 2,
+        color_blend(theme_get_text_dim(), theme_get_bg(), 0.3f));
+    y += 4;
+
+    /* Description with proper word wrap */
+    c->setTextColor(theme_get_text());
+    const int MAX_CHARS = (W - MARGIN * 2) / 6;
     const char* p = tool.description;
-    while (*p && y < H - 50) {
+    while (*p && y < H - FOOTER_H) {
+        /* Skip leading spaces */
+        while (*p == ' ') p++;
+        if (!*p || *p == '\n') { if (*p == '\n') p++; continue; }
+
+        /* Count chars for this line */
         int chars = 0;
         const char* line_start = p;
-        while (*p && *p != '\n') { chars++; p++; }
+        while (*p && *p != '\n' && chars < MAX_CHARS) { chars++; p++; }
+
+        /* Try to break at space for word wrap */
+        if (*p && *p != '\n' && chars >= MAX_CHARS) {
+            const char* sp = p;
+            while (sp > line_start && *sp != ' ') sp--;
+            if (sp > line_start) {
+                chars = (int)(sp - line_start);
+                p = sp + 1;
+            }
+        }
+
         c->drawString(std::string(line_start, chars).c_str(), MARGIN, y);
-        y += 12;
+        y += 10;
         if (*p == '\n') p++;
     }
 
-    /* Author */
-    y += 4;
-    c->setTextColor(theme_get_text_dim());
-    char author_buf[48];
-    snprintf(author_buf, sizeof(author_buf), "By: %s", tool.author);
-    c->drawString(author_buf, MARGIN, y);
-    y += 12;
-
-    /* Size */
-    char size_buf[32];
-    if (tool.size_bytes > 1024) {
-        snprintf(size_buf, sizeof(size_buf), "Size: %.1f KB", tool.size_bytes / 1024.0f);
-    } else {
-        snprintf(size_buf, sizeof(size_buf), "Size: %u B", tool.size_bytes);
-    }
-    c->drawString(size_buf, MARGIN, y);
-    y += 16;
-
-    /* Action buttons */
+    /* Action buttons — anchored to bottom */
     const char* actions[3];
+    int num_actions;
     if (tool.is_installed) {
-        actions[0] = "Run";
-        actions[1] = "Uninstall";
+        actions[0] = "Run"; actions[1] = "Del"; actions[2] = "Back";
+        num_actions = 3;
     } else {
-        actions[0] = "Install";
-        actions[1] = "Back";
+        actions[0] = "Install"; actions[1] = "Back";
+        num_actions = 2;
     }
-    actions[2] = "Back";
 
-    for (int i = 0; i < 3; i++) {
+    int btn_y = H - FOOTER_H;
+    int btn_area_w = W - MARGIN * 2;
+    int gap = 4;
+    int bw = (btn_area_w - gap * (num_actions - 1)) / num_actions;
+
+    for (int i = 0; i < num_actions; i++) {
         bool sel = (i == _mkt_detail_sel);
-        int bx = MARGIN + (i * (W - 2 * MARGIN) / 3);
-        int bw = (W - 2 * MARGIN) / 3 - 4;
+        int bx = MARGIN + i * (bw + gap);
 
         if (sel) {
-            c->fillRoundRect(bx, y, bw, 16, 3, theme_get_accent());
+            c->fillRoundRect(bx, btn_y, bw, 14, 3, theme_get_accent());
             c->setTextColor(theme_get_bg());
         } else {
-            c->drawRoundRect(bx, y, bw, 16, 3, theme_get_text_dim());
+            c->drawRoundRect(bx, btn_y, bw, 14, 3, theme_get_text_dim());
             c->setTextColor(theme_get_text());
         }
+        c->setFont(&fonts::Font0);
         c->setTextDatum(textdatum_t::middle_center);
-        c->drawString(actions[i], bx + bw / 2, y + 8);
+        c->drawString(actions[i], bx + bw / 2, btn_y + 7);
     }
 }
 
@@ -812,13 +1044,16 @@ void App_AICode::draw_marketplace_install(LGFX_Sprite* c) {
 
     draw_header(c, "Installing...");
 
+    const int32_t HEADER_H = 18;
+    int cy = HEADER_H + (H - HEADER_H) / 2;
+
     /* Spinner */
     float angle = _anim_time * 6.0f;
     for (int i = 0; i < 8; i++) {
         float a = angle + i * 0.785f;
         int r = 12;
         int sx = CX + (int)(cosf(a) * r);
-        int sy = H / 2 + (int)(sinf(a) * r);
+        int sy = cy + (int)(sinf(a) * r);
         float brightness = (sinf(a) + 1.0f) * 0.5f;
         uint16_t col = color_blend(theme_get_accent(), theme_get_bg(), brightness);
         c->fillCircle(sx, sy, 2, col);
@@ -828,8 +1063,10 @@ void App_AICode::draw_marketplace_install(LGFX_Sprite* c) {
     c->setTextColor(theme_get_text());
     c->setFont(&fonts::Font0);
     c->setTextDatum(textdatum_t::middle_center);
-    c->drawString(_cached_mkt_status_msg, CX, H / 2 + 20);
+    c->drawString(_cached_mkt_status_msg, CX, cy + 20);
 
     c->setTextColor(theme_get_text_dim());
-    c->drawString("L=Cancel", CX, H - 10);
+    c->drawString("Check serial monitor", CX, cy + 32);
+
+    c->drawString("L=Cancel", CX, H - 4);
 }

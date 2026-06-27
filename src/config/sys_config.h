@@ -41,8 +41,8 @@ extern "C" {
  * A real ESP32 app is always > 64 KB. Reject anything smaller. */
 #define APP_OTA_MIN_IMAGE_SIZE  (64 * 1024)
 
-/* Maximum OTA image size — matches ota_0/ota_1 partition sizes (3 MB). */
-#define APP_OTA_MAX_IMAGE_SIZE  (3 * 1024 * 1024)
+/* Maximum OTA image size — matches ota_0/ota_1 partition sizes (4 MB). */
+#define APP_OTA_MAX_IMAGE_SIZE  (4 * 1024 * 1024)
 
 /* Delay in ms after sending "success" HTTP response before esp_restart().
  * Gives the browser enough time to receive and display the success page. */
@@ -166,7 +166,7 @@ extern "C" {
 #define AI_STREAM_BUF_SIZE      (4 * 1024)
 
 /* Lua runtime safety */
-#define AI_LUA_TIMEOUT_MS       5000   /* Script force-aborted after 5 s       */
+#define AI_LUA_TIMEOUT_MS       60000  /* Script force-aborted after 60 s       */
 #define AI_LUA_HOOK_INTERVAL    500    /* Instruction-count hook granularity    */
 #define AI_LUA_MAX_SCRIPT_BYTES (16 * 1024) /* Max .lua source size from LittleFS */
 
@@ -193,7 +193,7 @@ extern "C" {
 
 /* Hack Store cloud catalog URL */
 #define HS_CATALOG_URL \
-    "https://raw.githubusercontent.com/Abhiram9641/ESP_Store/main/firmware_catalog.json"
+    "https://raw.githubusercontent.com/Abhiram9641/ESP32_Store/main/firmware_catalog.json"
 
 /* HTTP timeout and chunk size for Hack Store downloads */
 #define HS_HTTP_TIMEOUT_MS          10000

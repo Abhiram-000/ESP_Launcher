@@ -34,7 +34,7 @@ Current in `partitions.csv`:
 - `ota_0` — Launcher (always boots first)
 - `ota_1` — New firmware (rollback target)
 - `nvs` — Non-volatile storage
-- `littlefs` — Games partition (4MB at 0x610000)
+- `littlefs` — Games partition (4MB at 0x810000)
 
 **Critical:** Partition table changes require full flash erase + re-flash. Partial re-flash causes silent corruption.
 

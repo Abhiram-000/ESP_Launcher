@@ -255,3 +255,20 @@ const char* wifi_mgr_get_connected_ssid(void) {
     _unlock();
     return s_copy;
 }
+
+const char* wifi_mgr_get_ip(void) {
+    static char s_ip_copy[16];
+    _lock();
+    strncpy(s_ip_copy, s_sta_ip, sizeof(s_ip_copy) - 1);
+    s_ip_copy[sizeof(s_ip_copy) - 1] = '\0';
+    _unlock();
+    return s_ip_copy;
+}
+
+int8_t wifi_mgr_get_rssi(void) {
+    if (!s_sta_connected) return -100;
+    wifi_ap_record_t ap_info = {};
+    esp_err_t err = esp_wifi_sta_get_ap_info(&ap_info);
+    if (err != ESP_OK) return -100;
+    return ap_info.rssi;
+}

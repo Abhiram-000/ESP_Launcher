@@ -37,6 +37,11 @@
 
 static const char *TAG = "UI_TASK";
 
+// The ST7735 panel displays the framebuffer shifted ~4px down, so the bottom
+// rows wrap to the top. Pushing the canvas at this Y offset cancels the shift.
+// Do NOT set this to 0 — it reintroduces the bottom-clips-to-top regression.
+static const int PANEL_Y_OFFSET = -4;
+
 static LGFX_ESP32S3_ST7735 tft;
 static LGFX_Sprite canvas(&tft);
 
@@ -114,8 +119,11 @@ static void _run_slide_transition(LGFX_Sprite* old_snap, LGFX_Sprite* new_snap) 
         // Draw new frame sliding in over the old one onto canvas (0-based Y offset)
         new_snap->pushSprite(&canvas, W - offset, 0);
 
-        // Push the completely rendered composite canvas frame to physical display at -4 Y offset
-        canvas.pushSprite(&tft, 0, 0);
+        // Push the composite frame to the panel. The ST7735 module has an
+        // intrinsic ~4px vertical offset; pushing at y=-4 compensates so the
+        // bottom rows don't wrap to the top. Keep this in sync with the main
+        // loop push below — dropping it makes every screen clip at the bottom.
+        canvas.pushSprite(&tft, 0, PANEL_Y_OFFSET);
 
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(20)); // ~50fps logic update
     }
@@ -321,7 +329,8 @@ static void ui_task_runner(void *arg) {
             canvas.drawString("Press any key", text_x, bar_y + 32);
         }
 
-        canvas.pushSprite(0, 0);
+        // Compensate the panel's intrinsic ~4px vertical offset (see PANEL_Y_OFFSET).
+        canvas.pushSprite(0, PANEL_Y_OFFSET);
 
         // Precise frame timing
         vTaskDelayUntil(&xLastWakeTime, xFrameTime);

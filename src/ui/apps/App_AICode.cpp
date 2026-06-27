@@ -566,11 +566,12 @@ void App_AICode::handle_marketplace_input(input_event_t ev) {
 
         case Screen::MARKETPLACE_DETAIL:
             if (ev == BTN_LEFT) { _screen = Screen::MARKETPLACE; return; }
-            if (ev == BTN_UP   && _mkt_detail_sel > 0) _mkt_detail_sel--;
-            if (ev == BTN_DOWN && _mkt_detail_sel < 2) _mkt_detail_sel++;
-            if (ev == BTN_SELECT) {
-                if (_mkt_sel < tool_count) {
-                    const auto& tool = tools[_mkt_sel];
+            if (_mkt_sel < tool_count) {
+                const auto& tool = tools[_mkt_sel];
+                int max_sel = tool.is_installed ? 2 : 1;
+                if (ev == BTN_UP   && _mkt_detail_sel > 0) _mkt_detail_sel--;
+                if (ev == BTN_DOWN && _mkt_detail_sel < max_sel) _mkt_detail_sel++;
+                if (ev == BTN_SELECT) {
                     if (_mkt_detail_sel == 0) {
                         if (tool.is_installed) {
                             _run_installed_tool(tool.id);
