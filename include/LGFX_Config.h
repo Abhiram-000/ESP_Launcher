@@ -32,7 +32,13 @@ public:
       cfg.pin_rst          = LAUNCHER_PIN_RST;    
       cfg.panel_width      = 128;
       cfg.panel_height     = 160;
-      cfg.offset_x         = 0;
+      // ST7735 GRAM is 132x162 while the visible panel is 128x160. In
+      // rotation 1 LovyanGFX computes _rowstart = memory_width-(panel_width+
+      // offset_x) = 132-(128+offset_x). With offset_x=0 that leaves a 4px
+      // vertical shift (content slides down, bottom rows wrap to the top).
+      // offset_x=4 makes _rowstart=0 so the framebuffer maps 1:1 to the glass.
+      // This only affects the vertical axis; _colstart (horizontal) stays 0.
+      cfg.offset_x         = 4;
       cfg.offset_y         = 0;
       cfg.invert           = false;
       cfg.rgb_order        = false;
