@@ -245,6 +245,12 @@ extern "C" {
 /* Passive promiscuous listen window per channel to discover client STAs */
 #define PENTEST_SNIFF_WINDOW_MS         120
 
+/* FLOOD mode: frames fired per target per channel visit, then a 1-task-tick
+ * yield so the WiFi TX task can drain its queue. No sniff windows, no dwell
+ * pacing — this is the saturation path. */
+#define PENTEST_FLOOD_FRAMES_PER_TARGET 12
+#define PENTEST_FLOOD_SWEEP_DELAY_MS    2
+
 /* BLE spam: rotate spoofed MAC + payload freshness on this period */
 #define PENTEST_BLE_ROTATE_MS           400
 
