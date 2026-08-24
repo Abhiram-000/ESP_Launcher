@@ -693,6 +693,8 @@ void web_server_init(void) {
     config.lru_purge_enable = true;
     /* Generous stack for the upload handler (has a large local recv buffer) */
     config.stack_size       = 8192;
+    /* 12 routes registered — default is only 8 */
+    config.max_uri_handlers = 16;
     /* Allow longer uploads without server-side timeout */
     config.recv_wait_timeout  = 10;
     config.send_wait_timeout  = 10;

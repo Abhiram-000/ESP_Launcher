@@ -2,6 +2,7 @@
 #include "../../ui/theme_mgr.h"
 #include "../../platform/board.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "sys_config.h"
 #include "nvs_flash.h"
 #include "nvs.h"
@@ -198,20 +199,35 @@ void App_NES::init() {
     _reset_boot_count();
 
     // ── Spawn emulator on Core 0 ─────────────────────────────────────────
-    BaseType_t ret = xTaskCreatePinnedToCore(
-        _emu_task_func,
-        "emu_task",
-        NES_EMU_TASK_STACK,
-        this,                    // pass 'this' so task can set _emu_task_done
-        NES_EMU_TASK_PRIORITY,
-        &_emu_task,
-        NES_EMU_TASK_CORE
-    );
-    if (ret != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create emulator task!");
-        _cleanup_resources();
-        _emu_task_done = true;
+    // Retry up to 3 times — PSRAM fragmentation from framebuffer alloc
+    // can cause transient failures.
+    for (int attempt = 0; attempt < 3; attempt++) {
+        ESP_LOGI(TAG, "Task create attempt %d — heap: %lu, PSRAM: %lu",
+                 attempt + 1,
+                 (unsigned long)esp_get_free_heap_size(),
+                 (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        BaseType_t ret = xTaskCreatePinnedToCore(
+            _emu_task_func,
+            "emu_task",
+            NES_EMU_TASK_STACK,
+            this,
+            NES_EMU_TASK_PRIORITY,
+            &_emu_task,
+            NES_EMU_TASK_CORE
+        );
+        if (ret == pdPASS) {
+            ESP_LOGI(TAG, "Emulator task created successfully on attempt %d", attempt + 1);
+            return;  // Success — exit init()
+        }
+        ESP_LOGW(TAG, "Task create failed (attempt %d)", attempt + 1);
+        // No delay — retry immediately. A delay allows other tasks to fragment heap further.
     }
+    ESP_LOGE(TAG, "Failed to create emulator task after 3 attempts!");
+    ESP_LOGE(TAG, "Final heap: %lu, PSRAM: %lu",
+             (unsigned long)esp_get_free_heap_size(),
+             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    _cleanup_resources();
+    _emu_task_done = true;
 }
 
 void App_NES::exit() {
@@ -225,6 +241,9 @@ void App_NES::exit() {
 }
 
 void App_NES::loop() {
+    // ── Early exit if init() failed or resources were cleaned up ────────
+    if (!_buffer_mutex) return;
+
     // ── Buffer swap — move from render() to loop() for render-lock safety ─
     // Emulator gives nes_frame_sem when a frame is done rendering.
     // Drain any pending signals and mark back buffer ready.
