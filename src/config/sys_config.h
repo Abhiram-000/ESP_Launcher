@@ -221,6 +221,45 @@ extern "C" {
 #define LUA_TOOL_MAX_SIZE        (16 * 1024)
 
 /* --------------------------------------------------------------------------
+ * Pentest Service — WiFi/BLE Security Auditing Engine
+ * -------------------------------------------------------------------------- */
+/* Worker task (Core 0 — radio I/O; UI stays on Core 1) */
+#define PENTEST_TASK_STACK          (12 * 1024)
+#define PENTEST_TASK_PRIORITY       5
+#define PENTEST_TASK_CORE           0
+
+/* AP target list capacity (static — no runtime allocation) */
+#define PENTEST_MAX_APS             16
+
+/* Discovered client stations per AP (promiscuous sniffing during attack) */
+#define PENTEST_MAX_CLIENTS         8
+
+/* Deauth pacing: N frames per target per burst, then yield. Flooding faster
+ * than this saturates the radio FIFO and DROPS frames — slower is stronger. */
+#define PENTEST_DEAUTH_BURST_COUNT      6
+#define PENTEST_DEAUTH_BURST_GAP_MS     30
+
+/* Per-channel dwell before hopping to the next target channel */
+#define PENTEST_CHANNEL_DWELL_MS        200
+
+/* Passive promiscuous listen window per channel to discover client STAs */
+#define PENTEST_SNIFF_WINDOW_MS         120
+
+/* BLE spam: rotate spoofed MAC + payload freshness on this period */
+#define PENTEST_BLE_ROTATE_MS           400
+
+/* BLE advertising interval in 0.625ms units (32 ≈ 20ms — matches real devices) */
+#define PENTEST_BLE_ADV_ITVL_MIN        32
+#define PENTEST_BLE_ADV_ITVL_MAX        48
+
+/* Status message buffer shared with the UI */
+#define PENTEST_STATUS_MSG_LEN          64
+
+/* NVS persistence (authorization consent gate) */
+#define PENTEST_NVS_NAMESPACE           "pentest"
+#define PENTEST_NVS_KEY_CONSENT         "consent"
+
+/* --------------------------------------------------------------------------
  * Input Manager — Button Debounce
  * -------------------------------------------------------------------------- */
 /* Depth of the ISR→task button event queue (input_event_t elements). */
