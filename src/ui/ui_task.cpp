@@ -18,6 +18,7 @@
 #include "apps/App_HackStore.h"
 #include "apps/App_ClockWeather.h"
 #include "apps/App_Pomodoro.h"
+#include "apps/App_Pentest.h"
 #include "theme_mgr.h"
 #include "../utils/color_utils.h"
 #include "nvs_flash.h"
@@ -34,6 +35,7 @@
 #include "../assets/icons/app_store.h"
 #include "../assets/icons/weather.h"
 #include "../assets/icons/pomodoro.h"
+#include "../assets/icons/deauther.h"
 
 static const char *TAG = "UI_TASK";
 
@@ -73,6 +75,7 @@ static App_GameStore    app_gamestore;
 static App_HackStore    app_hackstore;
 static App_ClockWeather app_clockweather;
 static App_Pomodoro     app_pomodoro;
+static App_Pentest      app_pentest;
 
 static IApp* current_app = nullptr;
 
@@ -220,6 +223,7 @@ static void ui_task_runner(void *arg) {
     app_grid.registerApp("Hack Store",  icon_app_store, &app_hackstore,   "Community scripts and extensions",    "Development");
     app_grid.registerApp("Clock",       icon_weather,   &app_clockweather,"Time, weather, and forecast",         "Utilities");
     app_grid.registerApp("Pomodoro",    icon_pomodoro,  &app_pomodoro,    "Focus timer and productivity tool",   "Productivity");
+    app_grid.registerApp("Pentest",     icon_deauther,  &app_pentest,     "WiFi/BLE security auditing",          "Security");
 
     // Use a direct init for the first launch — no slide needed at boot
     current_app = &app_grid;
