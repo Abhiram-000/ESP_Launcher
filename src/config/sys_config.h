@@ -221,6 +221,20 @@ extern "C" {
 #define LUA_TOOL_MAX_SIZE        (16 * 1024)
 
 /* --------------------------------------------------------------------------
+ * Input Manager — Button Debounce
+ * -------------------------------------------------------------------------- */
+/* Depth of the ISR→task button event queue (input_event_t elements). */
+#define INPUT_QUEUE_SIZE            10
+
+/* Suppress re-triggers within this window after an accepted ISR edge.
+ * Contact bounce fires multiple edges per press; 30ms filters them. */
+#define INPUT_DEBOUNCE_MS           30
+
+/* Minimum interval between queued events for the same button — prevents a
+ * single physical press from producing repeated events. */
+#define INPUT_MIN_PRESS_MS          200
+
+/* --------------------------------------------------------------------------
  * OTA / WiFi State Machine
  * -------------------------------------------------------------------------- */
 typedef enum {

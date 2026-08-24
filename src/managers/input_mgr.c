@@ -2,28 +2,26 @@
 #include "esp_log.h"
 #include "../services/idle_mgr.h"
 #include "../hal/hal_gpio.h"
+#include "../config/sys_config.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
-#include "esp_timer.h"
 #include "../platform/board.h"
 
 static const char *TAG = "INPUT_MGR";
-
-#define INPUT_QUEUE_SIZE 10
-#define DEBOUNCE_MS     30
-#define MIN_PRESS_MS    200   /* Minimum interval between events for same button */
 
 static QueueHandle_t s_input_queue = NULL;
 
 typedef struct {
     gpio_num_t pin;
     input_event_t event;
-    volatile uint32_t last_isr_time;
-    volatile uint32_t last_event_time;
+    volatile TickType_t last_isr_time;
+    volatile TickType_t last_event_time;
 } btn_state_t;
 
-static btn_state_t s_buttons[5] = {
+/* DRAM_ATTR: handler runs from ISR context — state must not live in
+ * flash-mapped sections that are unreachable when the cache is disabled. */
+static DRAM_ATTR btn_state_t s_buttons[5] = {
     {(gpio_num_t)LAUNCHER_PIN_UP,     BTN_UP,     0, 0},
     {(gpio_num_t)LAUNCHER_PIN_DOWN,   BTN_DOWN,   0, 0},
     {(gpio_num_t)LAUNCHER_PIN_LEFT,   BTN_LEFT,   0, 0},
@@ -33,15 +31,15 @@ static btn_state_t s_buttons[5] = {
 
 static void IRAM_ATTR gpio_isr_handler(void* arg) {
     btn_state_t* btn = (btn_state_t*) arg;
-    const uint32_t now = esp_timer_get_time() / 1000;
+    const TickType_t now = xTaskGetTickCountFromISR();
 
-    if (now - btn->last_isr_time > DEBOUNCE_MS) {
+    if (now - btn->last_isr_time > pdMS_TO_TICKS(INPUT_DEBOUNCE_MS)) {
         btn->last_isr_time = now;
 
         if (hal_gpio_get_level(btn->pin) == 0) {
             /* Require minimum interval between events for the same button.
              * Prevents noise-induced repeat triggers from a single physical press. */
-            if (now - btn->last_event_time < MIN_PRESS_MS) {
+            if (now - btn->last_event_time < pdMS_TO_TICKS(INPUT_MIN_PRESS_MS)) {
                 return;
             }
             btn->last_event_time = now;
@@ -97,6 +95,8 @@ input_event_t input_mgr_get_event(void) {
     return BTN_NONE;
 }
 
+/* Injection bypasses ISR debouncing entirely — synthetic events enter the
+ * queue unfiltered, so callers own rate limiting. */
 void input_mgr_inject_event(input_event_t ev) {
     if (s_input_queue && ev != BTN_NONE) {
         xQueueSend(s_input_queue, &ev, 0);

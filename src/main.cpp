@@ -90,7 +90,10 @@ extern "C" void app_main(void) {
     }
 
     // 5c. Initialize Hack Store
-    hack_store_init();
+    hack_store_err_t hs_ret = hack_store_init();
+    if (hs_ret != HACK_STORE_ERR_OK) {
+        ESP_LOGW(TAG, "Hack Store init warning: %d", hs_ret);
+    }
 
     // 5d. Initialize Lua Tool Marketplace
     lua_tool_err_t lt_ret = lua_tool_store_init();

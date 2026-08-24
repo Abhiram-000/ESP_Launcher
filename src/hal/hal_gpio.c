@@ -31,7 +31,9 @@ esp_err_t hal_gpio_set_level(gpio_num_t pin, uint32_t level) {
     return gpio_set_level(pin, level);
 }
 
-int hal_gpio_get_level(gpio_num_t pin) {
+/* IRAM_ATTR: called directly from the input GPIO ISR — must reside in
+ * instruction RAM or the ISR faults when flash cache is disabled. */
+int32_t IRAM_ATTR hal_gpio_get_level(gpio_num_t pin) {
     return gpio_get_level(pin);
 }
 

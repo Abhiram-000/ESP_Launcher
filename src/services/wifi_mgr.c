@@ -204,13 +204,19 @@ int wifi_mgr_get_scan_results(wifi_scan_info_t* results, int max_results) {
     if (!results || max_results <= 0) return 0;
 
     uint16_t number = (uint16_t)(max_results < MAX_WIFI_NETWORKS ? max_results : MAX_WIFI_NETWORKS);
-    wifi_ap_record_t ap_info[MAX_WIFI_NETWORKS]; /* fixed-size — no VLA; fits within 512B stack limit */
-    if (esp_wifi_scan_get_ap_records(&number, ap_info) != ESP_OK) return 0;
+    /* WHY static: ap_info[MAX_WIFI_NETWORKS] is ~1KB of wifi_ap_record_t —
+     * over the 512B stack budget (the old comment claiming it fit was wrong).
+     * Sole caller today is the Core-1 UI WifiScanner component; the module
+     * mutex serializes access defensively in case a second task ever calls. */
+    static wifi_ap_record_t ap_info[MAX_WIFI_NETWORKS];
+    _lock();
+    if (esp_wifi_scan_get_ap_records(&number, ap_info) != ESP_OK) { _unlock(); return 0; }
     for (int i = 0; i < number; i++) {
         strncpy(results[i].ssid, (char*)ap_info[i].ssid, sizeof(results[i].ssid)-1);
         results[i].rssi = ap_info[i].rssi;
         results[i].authmode = ap_info[i].authmode;
     }
+    _unlock();
     return number;
 }
 

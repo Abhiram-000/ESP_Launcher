@@ -43,13 +43,13 @@ static bool _url_is_valid(const char *url) {
     return (strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 8) == 0);
 }
 
-static hack_store_status_t hs_status;
-static hack_entry_t hs_catalog[HACK_STORE_MAX_FIRMS];
-static int hs_catalog_count = 0;
-static char hs_installed_id[32] = {0};
-static SemaphoreHandle_t hs_mutex = NULL;
+static hack_store_status_t s_status;
+static hack_entry_t s_catalog[HACK_STORE_MAX_FIRMS];
+static int s_catalog_count = 0;
+static char s_installed_id[32] = {0};
+static SemaphoreHandle_t s_mutex = NULL;
 
-static EventGroupHandle_t hs_event_group = NULL;
+static EventGroupHandle_t s_event_group = NULL;
 #define HS_EVT_CATALOG_DONE (1 << 0)
 #define HS_EVT_CATALOG_FAIL (1 << 1)
 #define HS_EVT_DL_DONE      (1 << 2)
@@ -60,48 +60,48 @@ static volatile bool s_abort_requested = false;
 static char s_ota_id_buf[32] = {0};  // Stable buffer for ID passed to OTA task
 
 static void _hs_lock(void) {
-    if (hs_mutex) {
-        if (xSemaphoreTake(hs_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+    if (s_mutex) {
+        if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
             ESP_LOGW(TAG, "Mutex timeout");
         }
     }
 }
 
 static void _hs_unlock(void) {
-    if (hs_mutex) {
-        xSemaphoreGive(hs_mutex);
+    if (s_mutex) {
+        xSemaphoreGive(s_mutex);
     }
 }
 
 static void _hs_status_snapshot(hack_store_status_t *out) {
     if (!out) return;
     _hs_lock();
-    *out = hs_status;
+    *out = s_status;
     _hs_unlock();
 }
 
 static void _hs_status_set_busy(bool busy) {
     _hs_lock();
-    hs_status.is_busy = busy;
+    s_status.is_busy = busy;
     _hs_unlock();
 }
 
 static void _hs_status_set_error(hack_store_err_t err) {
     _hs_lock();
-    hs_status.last_error = err;
+    s_status.last_error = err;
     _hs_unlock();
 }
 
 static void _hs_status_reset_transfer(const char *id) {
     _hs_lock();
-    hs_status.last_error = HACK_STORE_ERR_OK;
-    hs_status.progress_pct = 0;
-    hs_status.bytes_done = 0;
-    hs_status.bytes_total = 0;
-    memset(hs_status.active_id, 0, sizeof(hs_status.active_id));
+    s_status.last_error = HACK_STORE_ERR_OK;
+    s_status.progress_pct = 0;
+    s_status.bytes_done = 0;
+    s_status.bytes_total = 0;
+    memset(s_status.active_id, 0, sizeof(s_status.active_id));
     if (id) {
-        strncpy(hs_status.active_id, id, sizeof(hs_status.active_id) - 1);
-        hs_status.active_id[sizeof(hs_status.active_id) - 1] = '\0';
+        strncpy(s_status.active_id, id, sizeof(s_status.active_id) - 1);
+        s_status.active_id[sizeof(s_status.active_id) - 1] = '\0';
     }
     _hs_unlock();
 }
@@ -112,10 +112,10 @@ static void _hs_status_reset_transfer(const char *id) {
 static void _load_installed_id(void) {
     nvs_handle_t h;
     _hs_lock();
-    hs_installed_id[0] = '\0';
+    s_installed_id[0] = '\0';
     if (nvs_open("hack_store", NVS_READONLY, &h) == ESP_OK) {
-        size_t len = sizeof(hs_installed_id);
-        nvs_get_str(h, "installed_id", hs_installed_id, &len);
+        size_t len = sizeof(s_installed_id);
+        nvs_get_str(h, "installed_id", s_installed_id, &len);
         nvs_close(h);
     }
     _hs_unlock();
@@ -123,6 +123,13 @@ static void _load_installed_id(void) {
 
 static void _save_installed_id(const char* id) {
     nvs_handle_t h;
+    /*
+     * NVS writes and the RAM mirror update share one lock scope so the
+     * persisted value and s_installed_id cannot diverge for concurrent
+     * readers — matches _load_installed_id(), which also holds the lock
+     * across its NVS calls.
+     */
+    _hs_lock();
     if (nvs_open("hack_store", NVS_READWRITE, &h) == ESP_OK) {
         esp_err_t err1 = nvs_set_str(h, "installed_id", id);
         esp_err_t err2 = nvs_commit(h);
@@ -134,16 +141,14 @@ static void _save_installed_id(const char* id) {
         }
         nvs_close(h);
     }
-    _hs_lock();
-    strncpy(hs_installed_id, id, sizeof(hs_installed_id) - 1);
-    hs_installed_id[sizeof(hs_installed_id) - 1] = '\0';
-    hs_installed_id[sizeof(hs_installed_id) - 1] = '\0';
+    strncpy(s_installed_id, id, sizeof(s_installed_id) - 1);
+    s_installed_id[sizeof(s_installed_id) - 1] = '\0';
     _hs_unlock();
 }
 
 static hack_entry_t* _find_entry(const char* id) {
-    for (int i = 0; i < hs_catalog_count; i++) {
-        if (strcmp(hs_catalog[i].id, id) == 0) return &hs_catalog[i];
+    for (int i = 0; i < s_catalog_count; i++) {
+        if (strcmp(s_catalog[i].id, id) == 0) return &s_catalog[i];
     }
     return NULL;
 }
@@ -156,15 +161,15 @@ static esp_err_t _http_event_handle(esp_http_client_event_t *evt) {
         case HTTP_EVENT_ON_HEADER:
             if (strcasecmp(evt->header_key, "Content-Length") == 0) {
                 _hs_lock();
-                hs_status.bytes_total = atoi(evt->header_value);
+                s_status.bytes_total = atoi(evt->header_value);
                 _hs_unlock();
             }
             break;
         case HTTP_EVENT_ON_DATA:
             _hs_lock();
-            if (hs_status.bytes_total > 0) {
-                hs_status.bytes_done += evt->data_len;
-                hs_status.progress_pct = (hs_status.bytes_done * 100) / hs_status.bytes_total;
+            if (s_status.bytes_total > 0) {
+                s_status.bytes_done += evt->data_len;
+                s_status.progress_pct = (s_status.bytes_done * 100) / s_status.bytes_total;
             }
             _hs_unlock();
             break;
@@ -292,13 +297,13 @@ static void _cloud_fetch_task(void *pvParameters) {
     heap_caps_free(buffer);
 
     _hs_lock();
-    hs_catalog_count = 0;
+    s_catalog_count = 0;
     cJSON *firms = cJSON_GetObjectItem(root, "firmwares");
     if (cJSON_IsArray(firms)) {
         cJSON *f;
         cJSON_ArrayForEach(f, firms) {
-            if (hs_catalog_count >= HACK_STORE_MAX_FIRMS) break;
-            hack_entry_t *entry = &hs_catalog[hs_catalog_count++];
+            if (s_catalog_count >= HACK_STORE_MAX_FIRMS) break;
+            hack_entry_t *entry = &s_catalog[s_catalog_count++];
             memset(entry, 0, sizeof(hack_entry_t));
 
             cJSON *id = cJSON_GetObjectItem(f, "id");
@@ -335,7 +340,7 @@ static void _cloud_fetch_task(void *pvParameters) {
     } else {
         ESP_LOGW(TAG, "No 'firmwares' array found in JSON.");
     }
-    int catalog_count = hs_catalog_count;
+    int catalog_count = s_catalog_count;
     _hs_unlock();
     cJSON_Delete(root);
 
@@ -343,7 +348,7 @@ static void _cloud_fetch_task(void *pvParameters) {
     _hs_status_set_busy(false);
     s_abort_requested = false;
     s_current_task_handle = NULL;
-    xEventGroupSetBits(hs_event_group, HS_EVT_CATALOG_DONE);
+    xEventGroupSetBits(s_event_group, HS_EVT_CATALOG_DONE);
     vTaskDelete(NULL);
     return;
 
@@ -351,7 +356,7 @@ fetch_fail:
     _hs_status_set_busy(false);
     s_abort_requested = false;
     s_current_task_handle = NULL;
-    xEventGroupSetBits(hs_event_group, HS_EVT_CATALOG_FAIL);
+    xEventGroupSetBits(s_event_group, HS_EVT_CATALOG_FAIL);
     vTaskDelete(NULL);
 }
 
@@ -363,7 +368,7 @@ static void _ota_download_task(void *pvParameters) {
     _hs_status_reset_transfer(id);
 
     /*
-     * FIX: Copy entry URL under lock so we don't use a pointer into hs_catalog[]
+     * FIX: Copy entry URL under lock so we don't use a pointer into s_catalog[]
      * after releasing the mutex (another task could refresh the catalog and
      * overwrite the entry).
      */
@@ -480,7 +485,7 @@ dl_fail:
     _hs_status_set_busy(false);
     s_abort_requested = false;
     s_current_task_handle = NULL;
-    xEventGroupSetBits(hs_event_group, HS_EVT_DL_FAIL);
+    xEventGroupSetBits(s_event_group, HS_EVT_DL_FAIL);
     vTaskDelete(NULL);
 }
 
@@ -488,17 +493,17 @@ dl_fail:
  * Public API
  * -------------------------------------------------------------------------- */
 hack_store_err_t hack_store_init(void) {
-    memset(&hs_status, 0, sizeof(hs_status));
-    if (hs_event_group == NULL) {
-        hs_event_group = xEventGroupCreate();
-        configASSERT(hs_event_group != NULL);
+    memset(&s_status, 0, sizeof(s_status));
+    if (s_event_group == NULL) {
+        s_event_group = xEventGroupCreate();
+        configASSERT(s_event_group != NULL);
     }
-    if (hs_mutex == NULL) {
-        hs_mutex = xSemaphoreCreateMutex();
+    if (s_mutex == NULL) {
+        s_mutex = xSemaphoreCreateMutex();
     }
-    configASSERT(hs_mutex != NULL);
+    configASSERT(s_mutex != NULL);
     _load_installed_id();
-    ESP_LOGI(TAG, "HackStore initialized. Installed ID: '%s'", hs_installed_id);
+    ESP_LOGI(TAG, "HackStore initialized. Installed ID: '%s'", s_installed_id);
     ESP_LOGI(TAG, "Catalog URL: %s", HS_CATALOG_URL);
     ESP_LOGI(TAG, "Free heap: %lu B, Free PSRAM: %lu B",
              (unsigned long)esp_get_free_heap_size(),
@@ -513,9 +518,9 @@ void hack_store_get_status(hack_store_status_t* out) {
 int hack_store_get_catalog(hack_entry_t* out, int max_count) {
     if (!out || max_count <= 0) return 0;
     _hs_lock();
-    int count = hs_catalog_count;
+    int count = s_catalog_count;
     if (count > max_count) count = max_count;
-    memcpy(out, hs_catalog, count * sizeof(hack_entry_t));
+    memcpy(out, s_catalog, count * sizeof(hack_entry_t));
     _hs_unlock();
     return count;
 }
@@ -523,9 +528,9 @@ int hack_store_get_catalog(hack_entry_t* out, int max_count) {
 bool hack_store_get_installed_id(char* id_out, size_t len) {
     if (!id_out || len == 0) return false;
     _hs_lock();
-    bool has_id = strlen(hs_installed_id) > 0;
+    bool has_id = strlen(s_installed_id) > 0;
     if (has_id) {
-        strncpy(id_out, hs_installed_id, len - 1);
+        strncpy(id_out, s_installed_id, len - 1);
         id_out[len - 1] = '\0';
     }
     _hs_unlock();
@@ -544,7 +549,7 @@ hack_store_err_t hack_store_refresh_catalog(void) {
     }
 
     ESP_LOGI(TAG, "refresh_catalog: starting fetch task...");
-    xEventGroupClearBits(hs_event_group, HS_EVT_CATALOG_DONE | HS_EVT_CATALOG_FAIL);
+    xEventGroupClearBits(s_event_group, HS_EVT_CATALOG_DONE | HS_EVT_CATALOG_FAIL);
     s_abort_requested = false;
     _hs_status_set_busy(true);
     _hs_status_set_error(HACK_STORE_ERR_OK);
@@ -581,7 +586,7 @@ hack_store_err_t hack_store_install(const char* id) {
     
     s_abort_requested = false;
     
-    char installed_id[sizeof(hs_installed_id)] = {0};
+    char installed_id[sizeof(s_installed_id)] = {0};
     bool is_installed = hack_store_get_installed_id(installed_id, sizeof(installed_id));
     if (is_installed && strcmp(installed_id, id) == 0) {
         const esp_partition_t *ota1 = esp_partition_find_first(
@@ -598,7 +603,7 @@ hack_store_err_t hack_store_install(const char* id) {
     if (status.is_busy) return HACK_STORE_ERR_ABORTED;
 
     ESP_LOGI(TAG, "install: starting OTA download for '%s'", id);
-    xEventGroupClearBits(hs_event_group, HS_EVT_DL_DONE | HS_EVT_DL_FAIL);
+    xEventGroupClearBits(s_event_group, HS_EVT_DL_DONE | HS_EVT_DL_FAIL);
     s_abort_requested = false;
     _hs_status_set_busy(true);
     _hs_status_reset_transfer(id);
@@ -610,7 +615,6 @@ hack_store_err_t hack_store_install(const char* id) {
      * go out of scope.
      */
     strncpy(s_ota_id_buf, id, sizeof(s_ota_id_buf) - 1);
-    s_ota_id_buf[sizeof(s_ota_id_buf) - 1] = '\0';
     s_ota_id_buf[sizeof(s_ota_id_buf) - 1] = '\0';
 
     /*

@@ -55,12 +55,18 @@ bool wifi_mgr_is_connected(void);
 
 /**
  * @brief Get current SSID if connected.
+ * @return Pointer to an internal static copy, overwritten by the next call
+ *         from any task. Single-consumer only — copy the string out
+ *         immediately if more than one consumer needs it. Returns "" if
+ *         not connected.
  */
 const char* wifi_mgr_get_connected_ssid(void);
 
 /**
  * @brief Get current STA IP address as a string (e.g. "192.168.1.42").
- * @return Pointer to static buffer. Returns "0.0.0.0" if not connected.
+ * @return Pointer to static buffer, overwritten by the next call from any
+ *         task. Single-consumer only — copy before reuse. Returns
+ *         "0.0.0.0" if not connected.
  */
 const char* wifi_mgr_get_ip(void);
 

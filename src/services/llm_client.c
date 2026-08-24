@@ -14,6 +14,8 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_heap_caps.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,6 +28,26 @@ static char s_api_key[128]  = {0};
 static char s_model[64]     = AI_LLM_MODEL_DEFAULT;
 static char s_line_buf[512];
 static char s_token_buf[128];
+
+/* WHY: _http_event() parses SSE data into the shared static buffers above,
+ * so two concurrent streams (UI task and web-server worker can both call
+ * llm_client_send) would corrupt each other. A statically-allocated mutex
+ * serializes whole send operations; it is created lazily under a portMUX
+ * critical section because the web-chat path may reach send() before
+ * App_AICode ever runs llm_client_init(). */
+static SemaphoreHandle_t s_send_mutex     = NULL;
+static StaticSemaphore_t s_send_mutex_mem;
+static portMUX_TYPE      s_send_mutex_mux = portMUX_INITIALIZER_UNLOCKED;
+
+static SemaphoreHandle_t _ensure_send_mutex(void) {
+    if (s_send_mutex) return s_send_mutex;
+    taskENTER_CRITICAL(&s_send_mutex_mux);
+    if (!s_send_mutex) {
+        s_send_mutex = xSemaphoreCreateMutexStatic(&s_send_mutex_mem);
+    }
+    taskEXIT_CRITICAL(&s_send_mutex_mux);
+    return s_send_mutex;
+}
 
 /* Per-request streaming context */
 typedef struct {
@@ -43,6 +65,8 @@ typedef struct {
 
 /* ── One-time init ─────────────────────────────────────────────────────── */
 void llm_client_init(void) {
+    _ensure_send_mutex(); /* Eager-create so the send path stays allocation-free */
+
     char key[128] = {0};
     if (llm_client_get_api_key(key, sizeof(key))) {
         strncpy(s_api_key, key, sizeof(s_api_key) - 1);
@@ -306,11 +330,20 @@ llm_err_t llm_client_send(const char* user_msg, llm_chunk_cb_t on_chunk, void* u
     if (!wifi_mgr_is_connected()) return LLM_ERR_WIFI;
     if (s_api_key[0] == '\0')     return LLM_ERR_HTTP;
 
+    /* WHY: one stream at a time — see mutex note above. Zero-wait acquire:
+     * a concurrent second caller gets a clean BUSY instead of blocking its
+     * task for the full multi-second stream duration. */
+    SemaphoreHandle_t send_lock = _ensure_send_mutex();
+    if (!send_lock || xSemaphoreTake(send_lock, pdMS_TO_TICKS(0)) != pdTRUE) {
+        ESP_LOGW(TAG, "Send rejected — another request is streaming");
+        return LLM_ERR_BUSY;
+    }
+
     char* payload = _build_payload(user_msg);
-    if (!payload) return LLM_ERR_OOM;
+    if (!payload) { xSemaphoreGive(send_lock); return LLM_ERR_OOM; }
 
     char* reply_buf = (char*)heap_caps_calloc(1, AI_STREAM_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!reply_buf) { heap_caps_free(payload); return LLM_ERR_OOM; }
+    if (!reply_buf) { heap_caps_free(payload); xSemaphoreGive(send_lock); return LLM_ERR_OOM; }
 
     stream_ctx_t ctx = {
         .cb = on_chunk, .user = user_ctx,
@@ -331,6 +364,13 @@ llm_err_t llm_client_send(const char* user_msg, llm_chunk_cb_t on_chunk, void* u
         .crt_bundle_attach    = esp_crt_bundle_attach,
     };
     esp_http_client_handle_t h = esp_http_client_init(&cfg);
+    if (!h) {
+        ESP_LOGE(TAG, "HTTP client init failed");
+        heap_caps_free(payload);
+        heap_caps_free(reply_buf);
+        xSemaphoreGive(send_lock); /* WHY: init failure is an early-return — must not leak the send lock */
+        return LLM_ERR_HTTP;
+    }
     esp_http_client_set_header(h, "Content-Type", "application/json");
     esp_http_client_set_header(h, "Authorization", auth_hdr);
     esp_http_client_set_post_field(h, payload, strlen(payload));
@@ -351,5 +391,6 @@ llm_err_t llm_client_send(const char* user_msg, llm_chunk_cb_t on_chunk, void* u
     }
 
     heap_caps_free(reply_buf);
+    xSemaphoreGive(send_lock);
     return result;
 }

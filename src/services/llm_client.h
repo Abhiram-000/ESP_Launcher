@@ -18,6 +18,7 @@ typedef enum {
     LLM_ERR_JSON    = 3,
     LLM_ERR_OOM     = 4,
     LLM_ERR_TIMEOUT = 5,
+    LLM_ERR_BUSY    = 6,
 } llm_err_t;
 
 /* Streamed chunk callback — called for each token as it arrives.
@@ -34,6 +35,8 @@ void llm_client_init(void);
 
 /* Send a user message with the current history context.
  * on_chunk is called for each streamed token.
+ * Serialized: only one stream may run at a time — a concurrent caller
+ * gets LLM_ERR_BUSY immediately instead of blocking its task.
  * Returns LLM_OK if the full response was received.                  */
 llm_err_t llm_client_send(const char* user_msg,
                            llm_chunk_cb_t on_chunk,

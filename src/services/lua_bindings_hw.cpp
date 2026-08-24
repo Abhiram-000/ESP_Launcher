@@ -35,10 +35,10 @@
 static const char* TAG = "LuaBind";
 
 // Blacklisted GPIO pins — the Lua sandbox cannot touch these
-static const int BLOCKED_PINS[] = { 6, 7, 8, 9, 10, 11, 12, 13 }; // QSPI flash
+static const int s_blocked_pins[] = { 6, 7, 8, 9, 10, 11, 12, 13 }; // QSPI flash
 static bool _pin_allowed(int pin) {
-    for (size_t i = 0; i < sizeof(BLOCKED_PINS)/sizeof(BLOCKED_PINS[0]); i++)
-        if (BLOCKED_PINS[i] == pin) return false;
+    for (size_t i = 0; i < sizeof(s_blocked_pins)/sizeof(s_blocked_pins[0]); i++)
+        if (s_blocked_pins[i] == pin) return false;
     return pin >= 0 && pin <= 48;
 }
 
@@ -74,6 +74,13 @@ void LuaEngine::_bind_gpio(lua_State* L) {
 
 static i2c_master_bus_handle_t s_i2c_bus[2] = {nullptr, nullptr};
 static uint32_t s_i2c_freq[2] = {400000, 400000};
+
+// WHY: i2c_master_transmit/receive take their timeout in MILLISECONDS and
+// treat -1 as "wait forever". An unbounded wait lets a stuck bus hang the
+// Lua worker until the 5s script watchdog kills the script mid-hardware-op;
+// 100ms bounds a failed transfer far inside that budget while still
+// tolerating slow clock-stretching devices.
+static constexpr int LUA_I2C_XFER_TIMEOUT_MS = 100;
 
 // ─── i2c.* ───────────────────────────────────────────────────────────────────
 static int l_i2c_setup(lua_State* L) {
@@ -116,7 +123,7 @@ static int l_i2c_write(lua_State* L) {
         lua_pushboolean(L, 0); return 1;
     }
     
-    esp_err_t e = i2c_master_transmit(dev_handle, (const uint8_t*)data, len, -1);
+    esp_err_t e = i2c_master_transmit(dev_handle, (const uint8_t*)data, len, LUA_I2C_XFER_TIMEOUT_MS);
     i2c_master_bus_rm_device(dev_handle);
     lua_pushboolean(L, e == ESP_OK); return 1;
 }
@@ -138,7 +145,7 @@ static int l_i2c_read(lua_State* L) {
     }
     
     uint8_t buf[128];
-    esp_err_t e = i2c_master_receive(dev_handle, buf, len, -1);
+    esp_err_t e = i2c_master_receive(dev_handle, buf, len, LUA_I2C_XFER_TIMEOUT_MS);
     i2c_master_bus_rm_device(dev_handle);
     
     if (e != ESP_OK) { lua_pushnil(L); return 1; }
@@ -162,7 +169,7 @@ static int l_i2c_probe(lua_State* L) {
     }
 
     uint8_t dummy = 0;
-    esp_err_t e = i2c_master_transmit(dev_handle, &dummy, 1, pdMS_TO_TICKS(50));
+    esp_err_t e = i2c_master_transmit(dev_handle, &dummy, 1, LUA_I2C_XFER_TIMEOUT_MS);
     i2c_master_bus_rm_device(dev_handle);
 
     lua_pushboolean(L, e == ESP_OK); return 1;
@@ -225,20 +232,36 @@ void LuaEngine::_bind_uart(lua_State* L) {
 }
 
 // ─── adc.* ───────────────────────────────────────────────────────────────────
+// WHY process-lifetime singleton: creating + deleting the ADC oneshot unit on
+// every adc.read() call is heavy churn for scripts that sample in loops. This
+// firmware claims ADC_UNIT_1 exclusively (no other module uses it), so the
+// handle is created lazily on first use and intentionally never torn down —
+// deleting it would buy nothing and risks racing an in-flight read. Bindings
+// execute only on the Lua worker task, so no lock guards the init flag.
+static adc_oneshot_unit_handle_t s_adc_unit = nullptr;
+
 static int l_adc_read(lua_State* L) {
     int ch = luaL_checkinteger(L, 1);
-    adc_oneshot_unit_handle_t hdl;
-    adc_oneshot_unit_init_cfg_t unit_cfg = {};
-    unit_cfg.unit_id = ADC_UNIT_1;
-    adc_oneshot_new_unit(&unit_cfg, &hdl);
+
+    if (!s_adc_unit) {
+        adc_oneshot_unit_init_cfg_t unit_cfg = {};
+        unit_cfg.unit_id = ADC_UNIT_1;
+        if (adc_oneshot_new_unit(&unit_cfg, &s_adc_unit) != ESP_OK) {
+            s_adc_unit = nullptr;
+            ESP_LOGE(TAG, "ADC unit init failed");
+            lua_pushnil(L); return 1;
+        }
+    }
+
     adc_oneshot_chan_cfg_t ch_cfg = {
         .atten   = ADC_ATTEN_DB_12,
         .bitwidth = ADC_BITWIDTH_DEFAULT
     };
-    adc_oneshot_config_channel(hdl, (adc_channel_t)ch, &ch_cfg);
     int raw = 0;
-    adc_oneshot_read(hdl, (adc_channel_t)ch, &raw);
-    adc_oneshot_del_unit(hdl);
+    if (adc_oneshot_config_channel(s_adc_unit, (adc_channel_t)ch, &ch_cfg) != ESP_OK ||
+        adc_oneshot_read(s_adc_unit, (adc_channel_t)ch, &raw) != ESP_OK) {
+        lua_pushnil(L); return 1;
+    }
     lua_pushinteger(L, raw); return 1;
 }
 

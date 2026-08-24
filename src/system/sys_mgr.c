@@ -35,8 +35,7 @@ void sys_mgr_send_ui_msg(ota_state_t state, float progress, float kbps, const ch
     ui_msg.kbps     = kbps;
 
     if (msg != NULL) {
-        strncpy(ui_msg.msg, msg, sizeof(ui_msg.msg) - 1);
-        ui_msg.msg[sizeof(ui_msg.msg) - 1] = '\0';
+        strlcpy(ui_msg.msg, msg, sizeof(ui_msg.msg));
     }
 
     if (xQueueSend(s_ui_queue, &ui_msg, 0) != pdTRUE) {

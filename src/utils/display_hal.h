@@ -40,8 +40,9 @@ extern "C" {
 
 /* ── Panel-specific SPI frequency ───────────────────────────────────────── */
 #if defined(LAUNCHER_DISPLAY_DRIVER) && \
-    (LAUNCHER_DISPLAY_DRIVER[0] == 'I' || LAUNCHER_DISPLAY_DRIVER[0] == 'S' && LAUNCHER_DISPLAY_DRIVER[2] == '7')
-/* ILI9341 or ST7789: 80MHz */
+    ((LAUNCHER_DISPLAY_DRIVER[0] == 'I') || \
+     (LAUNCHER_DISPLAY_DRIVER[0] == 'S' && LAUNCHER_DISPLAY_DRIVER[4] == '8'))
+/* ILI9341 or ST7789: 80MHz. [4] is the first differing char of "ST7735" vs "ST7789". */
 #define DISPLAY_SPI_FREQ_HZ     80000000
 #else
 /* ST7735S: 40MHz (reliable limit) */

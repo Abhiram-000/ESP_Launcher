@@ -96,6 +96,9 @@ ota_state_t ota_service_get_state(void);
 
 /**
  * @brief  Returns a human-readable status string for the current state.
+ * @return Pointer to an internal static copy, overwritten by the next call
+ *         or by any OTA state change. Single-consumer only — copy the
+ *         string before another task may call this function.
  */
 const char* ota_service_get_status_msg(void);
 

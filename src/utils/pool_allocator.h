@@ -1,3 +1,10 @@
+/*
+ * Fixed-block pool allocator over caller-provided memory.
+ *
+ * THREAD-SAFETY: a pool_allocator_t instance is not thread-safe. All calls
+ * on one instance (alloc/free/reset/stats) must come from a single task or
+ * be serialized externally by the owner — pool_allocator.c takes no locks.
+ */
 #pragma once
 
 #include <stdint.h>
