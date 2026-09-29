@@ -68,7 +68,6 @@ private:
     Mode            _current_mode;
     bool            _led_on;
     float           _pulse_size;
-    float           _orb_glow;
 
     /* ── Mode selector ────────────────────────────────────────────── */
     int32_t         _mode_cursor;

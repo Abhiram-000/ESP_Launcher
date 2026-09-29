@@ -10,6 +10,7 @@
  */
 #include "App_ClockWeather.h"
 #include "../../ui/theme_mgr.h"
+#include "../../config/sys_config.h"
 #include "../../platform/board.h"
 #include "../../services/ntp_service.h"
 #include "../../services/weather_service.h"
@@ -67,7 +68,7 @@ void App_ClockWeather::exit() {
 }
 
 void App_ClockWeather::loop() {
-    _anim_time += 0.05f;  // 40fps increment
+    _anim_time += UI_ANIM_TIME_STEP;  // 1.0 == 1s at 40fps
     
     // Breathing animation (slow sine wave)
     _breath_phase = 0.5f + 0.5f * sinf(_anim_time * 0.3f);

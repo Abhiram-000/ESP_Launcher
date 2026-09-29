@@ -1,5 +1,6 @@
 #include "App_Grid.h"
 #include "../theme_mgr.h"
+#include "../../config/sys_config.h"
 #include "../../platform/board.h"
 #include "../../managers/input_mgr.h"
 #include "../../utils/color_utils.h"
@@ -20,7 +21,7 @@ static bool _is_btn_physically_held(input_event_t btn) {
 
 App_Grid::App_Grid() : _app_count(0), _selected_index(0), _current_page(0),
     _current_scroll(0.0f), _target_scroll(0.0f),
-    _held_btn(BTN_NONE), _held_delay(0), _held_repeat(0), _move_pending(false),
+    _held_btn(BTN_NONE), _held_delay(0), _held_repeat(0),
     _launcher_theme(LAUNCHER_CAROUSEL) {
     memset(apps, 0, sizeof(apps));
     _anim_time = 0;
@@ -75,7 +76,6 @@ void App_Grid::init() {
     _held_btn = BTN_NONE;
     _held_delay = 0;
     _held_repeat = 0;
-    _move_pending = false;
     
     // Load launcher theme from NVS
     nvs_handle_t nvs_h;
@@ -193,7 +193,7 @@ void App_Grid::_move(input_event_t dir) {
 }
 
 void App_Grid::loop() {
-    _anim_time += 0.04f;
+    _anim_time += UI_ANIM_TIME_STEP;
     
     // Spring physics for scroll
     float diff = _target_scroll - _current_scroll;

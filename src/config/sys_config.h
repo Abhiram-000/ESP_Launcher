@@ -99,6 +99,15 @@ extern "C" {
 /* Depth of the inter-task UI message queue (OTA → UI task). */
 #define APP_UI_QUEUE_SIZE       10
 
+/* Per-frame animation clock increment. The UI task targets 40 fps, so 1/40 s
+ * makes 1.0 unit of animation time equal exactly one second (AGENTS.md §13).
+ * Apps previously used three different values — 0.025, 0.04 and 0.05 — so the
+ * same sinf() argument produced visibly different speeds per app and
+ * _anim_time was not seconds anywhere consistently. This is not only
+ * cosmetic: shared helpers such as theme_draw_wallpaper() consume this clock,
+ * so a shared background drifted at a different rate in every app. */
+#define UI_ANIM_TIME_STEP       0.025f
+
 /* --------------------------------------------------------------------------
  * NTP Time Service
  * -------------------------------------------------------------------------- */

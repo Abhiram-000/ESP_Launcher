@@ -2,7 +2,6 @@
 
 #include "IApp.h"
 
-#define MAX_APPS_PER_PAGE 6
 #define MAX_TOTAL_APPS 12
 
 struct AppEntry {
@@ -36,7 +35,6 @@ private:
     input_event_t _held_btn;
     int _held_delay;
     int _held_repeat;
-    bool _move_pending;
 
     launcher_theme_t _launcher_theme;
 

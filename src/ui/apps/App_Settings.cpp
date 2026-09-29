@@ -1,5 +1,6 @@
 #include "App_Settings.h"
 #include "../theme_mgr.h"
+#include "../../config/sys_config.h"
 #include "../../utils/color_utils.h"
 #include "../../services/idle_mgr.h"
 #include "../ui_task.h"
@@ -83,7 +84,7 @@ void App_Settings::init() {
 void App_Settings::exit() {}
 
 void App_Settings::loop() {
-    anim_time += 0.05f;
+    anim_time += UI_ANIM_TIME_STEP;
     if (current_state == STATE_SYS_INFO) {
         free_heap = esp_get_free_heap_size(); 
     }

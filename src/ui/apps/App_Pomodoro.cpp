@@ -5,6 +5,7 @@
 
 #include "App_Pomodoro.h"
 #include "../theme_mgr.h"
+#include "../../config/sys_config.h"
 #include "../../services/idle_mgr.h"
 #include "../../utils/color_utils.h"
 #include "../../platform/board.h"
@@ -126,7 +127,7 @@ void App_Pomodoro::_change_screen(Screen new_screen) {
 }
 
 void App_Pomodoro::_update_animations() {
-    _anim_time += 0.025f;
+    _anim_time += UI_ANIM_TIME_STEP;
     
     // Transition animation
     if (_transitioning) {

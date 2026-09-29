@@ -16,14 +16,18 @@ typedef struct {
     const char* name;
 } theme_palette_t;
 
-// LovyanGFX RGB565 palette table — columns: bg / panel / text / text_dim / accent / fail / name
+// LovyanGFX RGB565 palette table.
 // Only this table may contain raw RGB565 literals.  All app code MUST use theme_get_*() accessors.
+// Column order MUST match theme_palette_t above: { bg, accent, text, text_dim, success, fail, name }.
+// A previous revision of this comment read "bg / panel / text / text_dim / accent / fail",
+// which mislabels fields 2 and 5. The initialiser is positional, so anyone editing
+// this table by column name would have written accent into success, and vice versa.
 static const theme_palette_t s_themes[THEME_COUNT] = {
-    //  bg      panel   text    text_dim accent  fail    name
-    {0x0821, 0x03BF, 0xFFFF, 0x6398, 0x67E6, 0xF947, "Cyberpunk"},    // 0: Deep obsidian, cyan, neon pink
+    //    bg     accent  text    text_dim success  fail    name
+    {0x0821, 0x03BF, 0xFFFF, 0x6398, 0x67E6, 0xF947, "Cyberpunk"},    // 0: Deep obsidian, blue accent, neon pink
     {0xFFFF, 0x03FF, 0x0000, 0x8410, 0x24C6, 0xD000, "Light Minimal"}, // 1: Crisp white, deep ink
     {0x0000, 0x07E0, 0x07E0, 0x03E0, 0x07E0, 0xF800, "Matrix Hacker"}, // 2: Pitch black, terminal green
-    {0x1004, 0xFC00, 0xFFFF, 0xFC10, 0x07FF, 0xF800, "Outrun Retro"},  // 3: Sunset neon, purple, orange
+    {0x1004, 0xFC00, 0xFFFF, 0xFC10, 0x07FF, 0xF800, "Outrun Retro"},  // 3: Sunset neon, orange accent
     {0x0002, 0xFDE0, 0xFFFF, 0x7BEF, 0x07E0, 0xF800, "Deep Space"},   // 4: Dark blue, starlight gold
 };
 
@@ -151,8 +155,17 @@ void theme_draw_wallpaper(lgfx::v1::LGFX_Sprite* canvas, float time_offset) {
     static const float s_amps2[9]   = {8.0f, 12.0f, 6.0f, 14.0f, 10.0f, 5.0f, 13.0f, 7.0f, 11.0f};
 
     for (int i = 0; i < 9; i++) {
-        float base_y = (h * (i + 1)) / 10.0f;
-        float phase = s_phases[i];
+        /* WHY time_offset is added to the phase: adding a constant to the
+         * argument of sinf() shifts the wave along x, which reads as a
+         * travelling wave. The parameter was accepted but never used, so the
+         * wallpaper was byte-identical on every frame at all nine call sites
+         * despite each passing its own animation clock. The vertical term adds
+         * a slow independent drift so the motion does not read as one rigid
+         * translation. Speeds are deliberately low: this is a background and
+         * must not compete with foreground content. */
+        float base_y = (h * (i + 1)) / 10.0f
+                     + sinf(time_offset * 0.25f + s_phases[i]) * 2.5f;
+        float phase = s_phases[i] + time_offset;
         float f1 = s_freqs1[i];
         float f2 = s_freqs2[i];
         float a1 = s_amps1[i];
@@ -168,7 +181,7 @@ void theme_draw_wallpaper(lgfx::v1::LGFX_Sprite* canvas, float time_offset) {
             float fx = (float)x;
             int y = (int)(base_y
                 + sinf(fx * f1 + phase) * a1
-                + sinf(fx * f2 + phase * 1.7f) * a2);
+                + sinf(fx * f2 + phase * 1.7f + time_offset * 0.6f) * a2);
 
             canvas->drawLine(prev_x, prev_y, x, y, line_col);
             prev_x = x;

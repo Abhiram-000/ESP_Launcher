@@ -1,5 +1,6 @@
 #include "App_Torch.h"
 #include "../theme_mgr.h"
+#include "../../config/sys_config.h"
 #include "../../utils/color_utils.h"
 #include "../../services/led_service.h"
 #include "esp_log.h"
@@ -37,7 +38,6 @@ App_Torch::App_Torch() {
     _current_mode = MODE_WHITE;
     _led_on = false;
     _pulse_size = 1.0f;
-    _orb_glow = 0.0f;
     _mode_cursor = 0;
     _mode_scroll = 0;
     _brightness = 255;
@@ -63,7 +63,6 @@ void App_Torch::init() {
     _led_on = false;
     _anim_time = 0.0f;
     _pulse_size = 1.0f;
-    _orb_glow = 0.0f;
     _brightness = _settings.max_brightness;
     led_service_set_brightness(_brightness);
     _update_led();
@@ -301,9 +300,8 @@ void App_Torch::_load_custom_modes() {
 }
 
 void App_Torch::loop() {
-    _anim_time += 0.025f;
+    _anim_time += UI_ANIM_TIME_STEP;
     _pulse_size += (1.0f - _pulse_size) * 0.15f;
-    _orb_glow += (0.0f - _orb_glow) * 0.1f;
     
     if (_state == STATE_MODES && _led_on) {
         Mode preview_mode = (Mode)_mode_cursor;

@@ -1,4 +1,7 @@
-FILE(GLOB_RECURSE app_sources "*.c" "*.cpp")
+# CONFIGURE_DEPENDS: without it CMake evaluates the glob once at configure
+# time, so adding a new .c/.cpp later does not trigger a rebuild until the
+# build directory is reconfigured. That silently ships a stale image.
+file(GLOB_RECURSE app_sources CONFIGURE_DEPENDS "*.c" "*.cpp")
 idf_component_register(SRCS ${app_sources}
                     INCLUDE_DIRS "." "config" "system" "services" "ui" "hal" "utils"
                     REQUIRES nofrendo joltwallet__littlefs esp_http_client esp-tls driver bootloader_support bt)

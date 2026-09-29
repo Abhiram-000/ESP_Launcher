@@ -11,6 +11,7 @@
 
 #include "App_OTA.h"
 #include "../theme_mgr.h"
+#include "../../config/sys_config.h"
 #include "../../utils/color_utils.h"
 #include "esp_log.h"
 
@@ -113,7 +114,7 @@ void App_OTA::loop() {
         elapsed_ms = xTaskGetTickCount() * portTICK_PERIOD_MS - start_tick_ms;
     }
 
-    _anim_time += 0.05f;
+    _anim_time += UI_ANIM_TIME_STEP;
 }
 
 void App_OTA::handleInput(input_event_t event) {
