@@ -33,6 +33,16 @@ private:
         MODE_COUNT
     };
 
+    /* The modes list also carries three navigation pseudo-entries that lead to
+     * the settings screens. They were fully implemented but previously had no
+     * entry path — nothing in handleInput ever set those states, so the
+     * brightness screen, the custom-mode editor and the advanced settings
+     * were unreachable at runtime. Values >= MODE_COUNT denote these. */
+    static const int32_t MODE_ENTRY_BRIGHTNESS = MODE_COUNT + 0;
+    static const int32_t MODE_ENTRY_CUSTOM     = MODE_COUNT + 1;
+    static const int32_t MODE_ENTRY_ADVANCED   = MODE_COUNT + 2;
+    static const int32_t MODE_LIST_TOTAL       = MODE_COUNT + 3;
+
     /* ── Custom mode data ─────────────────────────────────────────── */
     struct custom_step_t {
         uint8_t  r;

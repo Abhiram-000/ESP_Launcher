@@ -303,7 +303,11 @@ void App_Torch::loop() {
     _anim_time += UI_ANIM_TIME_STEP;
     _pulse_size += (1.0f - _pulse_size) * 0.15f;
     
-    if (_state == STATE_MODES && _led_on) {
+    /* WHY the range check: _mode_cursor can also point at one of the three
+     * navigation pseudo-entries appended to this list, and those are not
+     * Modes. Casting such a value to Mode would fall through the switch's
+     * default and drive the LED black; preview the committed mode instead. */
+    if (_state == STATE_MODES && _led_on && _mode_cursor < MODE_COUNT) {
         Mode preview_mode = (Mode)_mode_cursor;
         uint8_t r = 0, g = 0, b = 0;
         float t = _anim_time;
@@ -456,16 +460,29 @@ void App_Torch::_handle_modes(input_event_t event) {
     switch (event) {
         case BTN_UP:
             _mode_cursor--;
-            if (_mode_cursor < 0) _mode_cursor = MODE_COUNT - 1;
+            if (_mode_cursor < 0) _mode_cursor = MODE_LIST_TOTAL - 1;
             break;
         case BTN_DOWN:
             _mode_cursor++;
-            if (_mode_cursor >= MODE_COUNT) _mode_cursor = 0;
+            if (_mode_cursor >= MODE_LIST_TOTAL) _mode_cursor = 0;
             break;
         case BTN_SELECT:
-            _current_mode = (Mode)_mode_cursor;
-            _state = STATE_MAIN;
-            _update_led();
+            /* Entries past the real modes navigate to the settings screens
+             * instead of picking a lighting mode. */
+            if (_mode_cursor == MODE_ENTRY_BRIGHTNESS) {
+                _brightness_preset = -1;
+                _state = STATE_BRIGHTNESS;
+            } else if (_mode_cursor == MODE_ENTRY_CUSTOM) {
+                _custom_cursor = 0;
+                _state = STATE_CUSTOM_LIST;
+            } else if (_mode_cursor == MODE_ENTRY_ADVANCED) {
+                _adv_cursor = 0;
+                _state = STATE_ADVANCED;
+            } else {
+                _current_mode = (Mode)_mode_cursor;
+                _state = STATE_MAIN;
+                _update_led();
+            }
             break;
         default: break;
     }

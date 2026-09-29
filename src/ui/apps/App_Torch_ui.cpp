@@ -199,17 +199,25 @@ void App_Torch::_render_modes(LGFX_Sprite* canvas) {
         canvas->drawString("^", CX, LIST_Y - 2 - bounce);
     }
 
-    uint16_t preview_color = _get_mode_color((Mode)_mode_cursor, _anim_time);
+    /* Navigation pseudo-entries are drawn with the accent colour; only real
+     * modes have a computed colour dot. */
+    static const char* MODE_EXTRA_NAMES[3] = { "BRIGHTNESS", "CUSTOM", "SETTINGS" };
+
+    uint16_t preview_color = (_mode_cursor < MODE_COUNT)
+        ? _get_mode_color((Mode)_mode_cursor, _anim_time)
+        : theme_get_accent();
 
     for (int32_t i = 0; i < MAX_VISIBLE; i++) {
         int32_t idx = _mode_scroll + i;
-        if (idx >= MODE_COUNT) break;
+        if (idx >= MODE_LIST_TOTAL) break;
 
         int32_t y = LIST_Y + i * ITEM_H;
         if (y + ITEM_H > LIST_BOT) break;
 
         bool sel = (idx == _mode_cursor);
-        uint16_t dot_color = _get_mode_color((Mode)idx, _anim_time);
+        bool is_extra = (idx >= MODE_COUNT);
+        uint16_t dot_color = is_extra ? theme_get_accent()
+                                      : _get_mode_color((Mode)idx, _anim_time);
 
         if (sel) {
             float pulse = 0.75f + 0.25f * sinf(_anim_time * 4.5f);
@@ -241,10 +249,12 @@ void App_Torch::_render_modes(LGFX_Sprite* canvas) {
                           sel ? theme_get_text() : theme_get_text_dim());
 
         canvas->setTextDatum(textdatum_t::middle_left);
-        canvas->drawString(MODE_NAMES[idx], MARGIN + 26, y + ITEM_H / 2);
+        canvas->drawString(is_extra ? MODE_EXTRA_NAMES[idx - MODE_COUNT]
+                                    : MODE_NAMES[idx],
+                           MARGIN + 26, y + ITEM_H / 2);
     }
 
-    if (_mode_scroll + MAX_VISIBLE < MODE_COUNT) {
+    if (_mode_scroll + MAX_VISIBLE < MODE_LIST_TOTAL) {
         canvas->setTextColor(theme_get_accent());
         canvas->setTextDatum(textdatum_t::bottom_center);
         int32_t bounce = (int32_t)(1.5f * sinf(_anim_time * 5.0f));
@@ -253,7 +263,7 @@ void App_Torch::_render_modes(LGFX_Sprite* canvas) {
 
     canvas->setTextColor(theme_get_text_dim());
     canvas->setTextDatum(textdatum_t::bottom_center);
-    canvas->drawString("SEL:Pick  L:Back", CX, H - 2);
+    canvas->drawString("SEL:Open  L:Back", CX, H - 2);
 }
 
 void App_Torch::_render_brightness(LGFX_Sprite* canvas) {
@@ -482,7 +492,9 @@ void App_Torch::_render_custom_edit(LGFX_Sprite* canvas) {
     /* Footer */
     canvas->setTextColor(theme_get_text_dim());
     canvas->setTextDatum(textdatum_t::bottom_center);
-    canvas->drawString("L/R:Val U/D:Row SEL:Edit", CX, H - 2);
+    /* LEFT is intercepted globally as "unwind/back", so it is not a value
+     * control here — the hint must not claim it is. */
+    canvas->drawString("R:Next U/D:Step SEL:Edit L:Back", CX, H - 2);
 }
 
 void App_Torch::_render_advanced(LGFX_Sprite* canvas) {
@@ -553,5 +565,6 @@ void App_Torch::_render_advanced(LGFX_Sprite* canvas) {
     /* Footer */
     canvas->setTextColor(theme_get_text_dim());
     canvas->setTextDatum(textdatum_t::bottom_center);
-    canvas->drawString("L/R:Change  SEL:Save", CX, H - 2);
+    /* LEFT is intercepted globally as "back to main" — only RIGHT changes. */
+    canvas->drawString("R:Change U/D:Row SEL:Save L:Back", CX, H - 2);
 }
