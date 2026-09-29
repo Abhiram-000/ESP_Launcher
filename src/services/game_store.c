@@ -721,6 +721,10 @@ static void _gs_download_task(void *pvParameters) {
     uint32_t size_bytes = 0;
     uint32_t crc32 = 0;
 
+    /* Copy everything needed out of the catalog under the lock. No pointer
+     * into s_local_catalog[] outlives this block — see the re-find at the
+     * end of this task for why that matters. */
+    bool entry_found = false;
     _gs_lock();
     game_entry_t *entry = _gs_local_catalog_find(id);
     if (entry) {
@@ -728,9 +732,10 @@ static void _gs_download_task(void *pvParameters) {
         url_buf[sizeof(url_buf) - 1] = '\0';
         size_bytes = entry->size_bytes;
         crc32 = entry->crc32;
+        entry_found = true;
     }
     _gs_unlock();
-    if (!entry) {
+    if (!entry_found) {
         _gs_status_set_error(GAME_STORE_ERR_BAD_METADATA);
         goto dl_abort;
     }
@@ -832,8 +837,28 @@ static void _gs_download_task(void *pvParameters) {
             goto dl_abort;
         }
 
+        /*
+         * Re-find the entry under the lock rather than reusing the pointer
+         * captured at the top of this task. WHY: that pointer was taken before
+         * the unlock and this line runs only after the whole download has
+         * finished — potentially minutes later. In that window
+         * _gs_cloud_fetch_task() can repopulate s_local_catalog, reordering or
+         * resizing the array, so the stale pointer can address a different
+         * game entirely. That would mark the wrong ROM as installed and then
+         * persist the mistake via _gs_local_catalog_save(). This is the same
+         * defect hack_store calls out in its own download task.
+         */
         _gs_lock();
-        entry->is_installed = true;
+        game_entry_t *fresh = _gs_local_catalog_find(id);
+        if (fresh) {
+            fresh->is_installed = true;
+        } else {
+            /* The catalog changed underneath us and no longer lists this id.
+             * The ROM itself is on disk, so this is a cache inconsistency,
+             * not a failed download — leave the error clear and let the next
+             * catalog refresh reconcile it. */
+            ESP_LOGW(TAG, "Downloaded '%s' but it vanished from the catalog", id);
+        }
         game_store_err_t save_err = _gs_local_catalog_save(s_local_catalog, s_local_catalog_count);
         _gs_unlock();
         if (save_err != GAME_STORE_ERR_OK) {

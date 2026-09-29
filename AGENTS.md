@@ -366,7 +366,7 @@ for (int i = _scroll; i < _count; i++) {
 
 ### 15. DISPLAY PORTING RULES
 
-All display-specific configuration is isolated to the LGFX config header and hardware pin header. App code is always display-agnostic. The only panel-specific offset allowed outside config files is the ST7735S `+4` canvas height — it exists only in the UI task and boot controller, nowhere else. Remove it for any other panel.
+All display-specific configuration is isolated to the LGFX config header and hardware pin header. App code is always display-agnostic. The only panel-specific offset is the ST7735S `cfg.offset_x = 4` in `include/LGFX_Config.h`, which corrects the panel's GRAM-vs-glass row mismatch. Because that value lives in the panel config, no compensating logic exists — or should exist — anywhere else in the codebase. See Critical Invariant #10.
 
 | Panel | Class | Resolution | SPI Freq | Invert |
 |-------|-------|-----------|----------|--------|
@@ -490,7 +490,9 @@ Breaking any of these without explicit discussion can brick hardware or corrupt 
 7. **Partition table requires full re-flash.** Any change to partition layout requires erasing the entire flash. Partial re-flash after a partition change causes silent, undetectable corruption.
 8. **App_NES is the only dynamic (heap-allocated) app.** `isDynamic()=true` triggers a different teardown lifecycle. Do not make other apps dynamic without understanding this contract.
 9. **Authentication state is intentional.** The current open-access design is deliberate for the development phase. Do not silently add or remove auth mechanisms.
-10. **The ST7735S `+4` canvas height offset** compensates for that panel's vertical alignment. It exists only in the UI task and boot controller. Remove it when porting to any other panel.
+10. **The ST7735S vertical offset lives in the panel config.** The ST7735S GRAM is 132×162 while the glass is 128×160. In rotation 1 LovyanGFX computes `_rowstart = memory_width - (panel_width + offset_x) = 132 - (128 + offset_x)`; with `offset_x = 0` that yields a 4px vertical shift where the top rows are black and the bottom rows wrap to the top. The fix is `cfg.offset_x = 4` in `include/LGFX_Config.h`, which zeroes `_rowstart` so the framebuffer maps 1:1 to the glass. Every consumer — `ui_task` and `boot_ctrl` alike — therefore pushes at `(0, 0)` with no Y compensation.
+
+    **Do not add a `+4` canvas-height compensation in `ui_task` or `boot_ctrl`.** An earlier revision of this document prescribed that, and it was superseded: the panel-config approach is correct because the geometry stays in the panel config where it belongs and automatically applies to every future consumer. Reintroducing a height offset on top of `offset_x = 4` would produce a double 4px shift. When porting to another panel, change `offset_x`/`offset_y` in `LGFX_Config.h` and nothing else.
 
 ---
 
