@@ -12,7 +12,6 @@
 #include "apps/App_OTA.h"
 #include "apps/App_Settings.h"
 #include "apps/App_Torch.h"
-#include "apps/App_AICode.h"
 #include "apps/App_GameStore.h"
 #include "apps/App_NES.h"
 #include "apps/App_HackStore.h"
@@ -30,7 +29,6 @@
 #include "../assets/icons/ota.h"
 #include "../assets/icons/settings.h"
 #include "../assets/icons/torch.h"
-#include "../assets/icons/aicode.h"
 #include "../assets/icons/games.h"
 #include "../assets/icons/app_store.h"
 #include "../assets/icons/weather.h"
@@ -70,7 +68,6 @@ static App_Grid         app_grid;
 static App_OTA          app_ota;
 static App_Settings     app_settings;
 static App_Torch        app_torch;
-static App_AICode       app_aicode;
 static App_GameStore    app_gamestore;
 static App_HackStore    app_hackstore;
 static App_ClockWeather app_clockweather;
@@ -217,7 +214,6 @@ static void ui_task_runner(void *arg) {
 
     app_grid.registerApp("OTA System",  icon_ota,       &app_ota,         "Firmware update via WiFi",            "System");
     app_grid.registerApp("Torch",       icon_torch,     &app_torch,       "Flashlight with adjustable modes",    "Tools");
-    app_grid.registerApp("AI Code",     icon_aicode,    &app_aicode,      "AI-powered code assistant",           "Development");
     app_grid.registerApp("Settings",    icon_settings,  &app_settings,    "System configuration and preferences", "System");
     app_grid.registerApp("Game Store",  icon_games,     &app_gamestore,   "Browse and download NES ROMs",        "Entertainment");
     app_grid.registerApp("Hack Store",  icon_app_store, &app_hackstore,   "Community scripts and extensions",    "Development");

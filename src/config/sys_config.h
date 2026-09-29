@@ -122,7 +122,7 @@ extern "C" {
 #define WEATHER_HTTP_TIMEOUT_MS     10000
 #define WEATHER_REFRESH_INTERVAL_S  1800        /* 30 minutes */
 #define WEATHER_STALE_THRESHOLD_S   7200        /* 2 hours */
-#define WEATHER_CONFIG_PATH         "/storage/ai/clock_weather.json"
+#define WEATHER_CONFIG_PATH         "/storage/clock_weather.json"
 #define WEATHER_IP_GEO_URL          "http://ip-api.com/json/?fields=status,city,lat,lon,timezone,offset,country"
 #define WEATHER_FORECAST_URL        "https://api.open-meteo.com/v1/forecast"
 #define WEATHER_GEOCODING_URL       "https://geocoding-api.open-meteo.com/v1/search"
@@ -130,50 +130,6 @@ extern "C" {
 #define WEATHER_TASK_STACK          8192
 #define WEATHER_TASK_PRIORITY       5
 #define WEATHER_TASK_CORE           0
-
-/* --------------------------------------------------------------------------
- * AI Assistant — Lua Engine, LLM Client, IDE
- * -------------------------------------------------------------------------- */
-
-/* LittleFS directory layout */
-#define AI_BASE_DIR             "/storage/ai"
-#define AI_SCRIPTS_DIR          "/storage/ai/scripts"
-#define AI_CONFIG_PATH          "/storage/ai/config.json"
-#define AI_HISTORY_PATH         "/storage/ai/history.jsonl"
-#define AI_SYSPROMPT_PATH       "/storage/ai/sys_prompt.txt"
-
-/* NVS namespace for sensitive config (API keys stored separately from LittleFS) */
-#define AI_NVS_NAMESPACE        "ai_cfg"
-#define AI_NVS_KEY_APIKEY       "api_key"
-#define AI_NVS_KEY_PROVIDER     "provider"
-
-/* LLM API defaults (overridden by NVS at runtime) */
-#define AI_LLM_DEFAULT_PROVIDER "cerebras"
-#define AI_LLM_OPENAI_URL       "https://api.cerebras.ai/v1/chat/completions"
-#define AI_LLM_MODEL_DEFAULT    "gpt-oss-120b"
-#define AI_LLM_DEFAULT_API_KEY  "csk-mj8mx8wjdpdmknwnpymhwtmv9dct5pk9dxhtdnj3e6re6fc6"
-#define AI_LLM_MAX_TOKENS       1024
-#define AI_LLM_TEMPERATURE      0.7f
-
-/* Token budget: trim history before exceeding this to avoid context overflow */
-#define AI_CONTEXT_MAX_CHARS    12000   /* ~3 000 tokens at 4 chars/token avg  */
-
-/* HTTP timeouts for LLM calls */
-#define AI_HTTP_CONNECT_TIMEOUT_MS  10000
-#define AI_HTTP_RX_TIMEOUT_MS       30000
-
-/* Streaming response chunk buffer in PSRAM */
-#define AI_STREAM_BUF_SIZE      (4 * 1024)
-
-/* Lua runtime safety */
-#define AI_LUA_TIMEOUT_MS       60000  /* Script force-aborted after 60 s       */
-#define AI_LUA_HOOK_INTERVAL    500    /* Instruction-count hook granularity    */
-#define AI_LUA_MAX_SCRIPT_BYTES (16 * 1024) /* Max .lua source size from LittleFS */
-
-/* FreeRTOS worker task (runs on Core 0, same as networking + NES emu) */
-#define AI_WORKER_TASK_STACK    (16 * 1024)
-#define AI_WORKER_TASK_PRIORITY 4
-#define AI_WORKER_TASK_CORE     0
 
 /* --------------------------------------------------------------------------
  * Display Utilities
@@ -201,24 +157,6 @@ extern "C" {
 
 /* Catalog fetch buffer size (16 KB in PSRAM) */
 #define HS_CATALOG_BUFFER_SIZE      (16 * 1024)
-
-/* --------------------------------------------------------------------------
- * Lua Tool Marketplace — Cloud script store for App_AICode
- * -------------------------------------------------------------------------- */
-#define LUA_TOOL_CATALOG_URL \
-    "https://raw.githubusercontent.com/Abhiram9641/ESP32_Store/main/lua_tools_catalog.json"
-
-#define LUA_TOOL_SCRIPTS_DIR     "/storage/ai/scripts"
-#define LUA_TOOL_CATALOG_LOCAL   "/storage/ai/lua_tools_catalog.json"
-#define LUA_TOOL_MAX_TOOLS       20
-#define LUA_TOOL_MAX_NAME        32
-#define LUA_TOOL_MAX_DESC        128
-#define LUA_TOOL_MAX_URL         192
-#define LUA_TOOL_MAX_AUTHOR      32
-#define LUA_TOOL_MAX_VERSION     12
-#define LUA_TOOL_DL_CHUNK_SIZE   (4 * 1024)
-#define LUA_TOOL_HTTP_TIMEOUT_MS 10000
-#define LUA_TOOL_MAX_SIZE        (16 * 1024)
 
 /* --------------------------------------------------------------------------
  * Pentest Service — WiFi/BLE Security Auditing Engine

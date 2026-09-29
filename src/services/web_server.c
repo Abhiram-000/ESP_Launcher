@@ -24,13 +24,9 @@
 #include "../config/sys_config.h"
 #include "../config/web_ui.h"
 #include "../config/web_remote_ui.h"
-#include "../config/web_chat_ui.h"
-#include "llm_client.h"
 #include "../system/sys_mgr.h"
 #include "../managers/input_mgr.h"
 #include "esp_http_server.h"
-#include <dirent.h>
-#include <sys/stat.h>
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_system.h"
@@ -40,7 +36,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <sys/param.h>
-#include <unistd.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -305,345 +300,6 @@ static esp_err_t remote_input_get_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
-extern void lua_engine_clear_logs(void);
-extern void lua_engine_append_log(const char* text);
-extern const char* lua_engine_get_logs(void);
-extern int lua_engine_run_file(const char* path, char* err_out, int max_err_len, uint32_t* elapsed_ms);
-
-/* --------------------------------------------------------------------------
- * GET /chat — Serve the Unified AI Chat & IDE Web UI
- * -------------------------------------------------------------------------- */
-static esp_err_t chat_get_handler(httpd_req_t *req) {
-    httpd_resp_set_type(req, "text/html; charset=utf-8");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    httpd_resp_send(req, WEB_CHAT_HTML, HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
-}
-
-/* ─── SSE Chunk callback ────────────────────────────────────────────────── */
-static bool _web_llm_chunk(const char* token, size_t len, void* user) {
-    httpd_req_t* req = (httpd_req_t*)user;
-    if (!token || len == 0) return true;
-
-    char* esc = (char*)heap_caps_malloc(len * 2 + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!esc) return false;
-    size_t j = 0;
-    for (size_t i = 0; i < len; i++) {
-        if (token[i] == '"' || token[i] == '\\') {
-            esc[j++] = '\\';
-            esc[j++] = token[i];
-        } else if (token[i] == '\n') {
-            esc[j++] = '\\';
-            esc[j++] = 'n';
-        } else if (token[i] == '\r') {
-            esc[j++] = '\\';
-            esc[j++] = 'r';
-        } else if (token[i] == '\t') {
-            esc[j++] = '\\';
-            esc[j++] = 't';
-        } else {
-            esc[j++] = token[i];
-        }
-    }
-    esc[j] = '\0';
-
-    char* chunk = heap_caps_malloc(1024, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!chunk) {
-        heap_caps_free(esc);
-        return false;
-    }
-    int n = snprintf(chunk, 1024, "data: {\"token\":\"%s\"}\n\n", esc);
-    heap_caps_free(esc);
-
-    esp_err_t err = httpd_resp_send_chunk(req, chunk, n);
-    heap_caps_free(chunk);
-    return err == ESP_OK;
-}
-
-/* --------------------------------------------------------------------------
- * GET /chat/send — Handles SSE streaming user message prompts
- * -------------------------------------------------------------------------- */
-static esp_err_t chat_send_get_handler(httpd_req_t *req) {
-    char query[512] = {};
-    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
-        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Missing query string");
-    }
-    char msg[256] = {};
-    if (httpd_query_key_value(query, "msg", msg, sizeof(msg)) != ESP_OK) {
-        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Missing msg parameter");
-    }
-
-    char decoded[256] = {};
-    size_t dj = 0;
-    size_t msg_len = strlen(msg);
-    for (size_t i = 0; msg[i]; i++) {
-        if (msg[i] == '%' && i + 2 < msg_len) {
-            char hex[3] = { msg[i+1], msg[i+2], '\0' };
-            decoded[dj++] = (char)strtol(hex, NULL, 16);
-            i += 2;
-        } else if (msg[i] == '+') {
-            decoded[dj++] = ' ';
-        } else {
-            decoded[dj++] = msg[i];
-        }
-        if (dj >= sizeof(decoded) - 1) break;
-    }
-    decoded[dj] = '\0';
-
-    httpd_resp_set_type(req, "text/event-stream; charset=utf-8");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
-    httpd_resp_set_hdr(req, "Connection", "keep-alive");
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-
-    llm_client_send(decoded, _web_llm_chunk, req);
-
-    httpd_resp_send_chunk(req, "data: [DONE]\n\n", 14);
-    httpd_resp_send_chunk(req, NULL, 0);
-    return ESP_OK;
-}
-
-/* --------------------------------------------------------------------------
- * GET /chat/ide/files — Lists all script files in the LittleFS scripts dir
- * -------------------------------------------------------------------------- */
-static esp_err_t chat_ide_files_get_handler(httpd_req_t *req) {
-    char* json = heap_caps_malloc(2048, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!json) {
-        ESP_LOGE(TAG, "PSRAM alloc failed: 2048 bytes");
-        return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
-    }
-    size_t pos = 0;
-    int n = snprintf(json, 2048, "{\"files\":[");
-    if (n > 0) pos += n;
-    DIR* d = opendir(AI_SCRIPTS_DIR);
-    if (d) {
-        struct dirent* e;
-        bool first = true;
-        while ((e = readdir(d))) {
-            if (strstr(e->d_name, ".lua")) {
-                if (!first) {
-                    if (pos < 2047) json[pos++] = ',';
-                }
-                size_t remaining = (pos < 2048) ? 2047 - pos : 0;
-                n = snprintf(json + pos, remaining, "\"%s\"", e->d_name);
-                if (n > 0) pos += n;
-                first = false;
-            }
-        }
-        closedir(d);
-    }
-    if (pos < 2048) json[pos++] = ']';
-    if (pos < 2048) json[pos++] = '}';
-    if (pos < 2048) json[pos] = '\0';
-    else json[2047] = '\0';
-
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    httpd_resp_sendstr(req, json);
-    heap_caps_free(json);
-    return ESP_OK;
-}
-
-/* --------------------------------------------------------------------------
- * GET /chat/ide/load — Loads content of a script file
- * -------------------------------------------------------------------------- */
-static esp_err_t chat_ide_load_get_handler(httpd_req_t *req) {
-    char query[256] = {};
-    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
-        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Missing query");
-    }
-    char file[64] = {};
-    if (httpd_query_key_value(query, "file", file, sizeof(file)) != ESP_OK) {
-        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Missing file parameter");
-    }
-    if (strstr(file, "..")) {
-        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Invalid file path");
-    }
-    char path[128];
-    snprintf(path, sizeof(path), "%s/%s", AI_SCRIPTS_DIR, file);
-
-    FILE* f = fopen(path, "r");
-    if (!f) {
-        return _send_json_error(req, HTTPD_404_NOT_FOUND, "File not found");
-    }
-
-    char* buf = heap_caps_malloc(4096, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!buf) {
-        ESP_LOGE(TAG, "PSRAM alloc failed: 4096 bytes");
-        fclose(f);
-        return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
-    }
-    size_t n = fread(buf, 1, 4095, f);
-    if (n == 0 && ferror(f)) {
-        ESP_LOGW(TAG, "fread failed for %s", path);
-    }
-    buf[n] = '\0';
-    fclose(f);
-
-    httpd_resp_set_type(req, "text/plain");
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    httpd_resp_send(req, buf, n);
-    heap_caps_free(buf);
-    return ESP_OK;
-}
-
-/* --------------------------------------------------------------------------
- * POST /chat/ide/save — Saves content of a script file
- * -------------------------------------------------------------------------- */
-static esp_err_t chat_ide_save_post_handler(httpd_req_t *req) {
-    int total_len = req->content_len;
-    char* buf = heap_caps_malloc(total_len + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!buf) {
-        return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
-    }
-    int received = 0;
-    while (received < total_len) {
-        int ret = httpd_req_recv(req, buf + received, total_len - received);
-        if (ret <= 0) {
-            if (ret == HTTPD_SOCK_ERR_TIMEOUT) continue;
-            heap_caps_free(buf);
-            return ESP_FAIL;
-        }
-        received += ret;
-    }
-    buf[total_len] = '\0';
-
-    char file[64] = {};
-    httpd_query_key_value(buf, "file", file, sizeof(file));
-
-    char* code_enc = heap_caps_malloc(total_len + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    char* code = heap_caps_malloc(total_len + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!code_enc || !code) {
-        heap_caps_free(code_enc);
-        heap_caps_free(code);
-        heap_caps_free(buf);
-        return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
-    }
-    code[0] = '\0';
-    if (httpd_query_key_value(buf, "code", code_enc, total_len) == ESP_OK) {
-        size_t j = 0;
-        size_t enc_len = strlen(code_enc);
-        for (size_t i = 0; code_enc[i]; i++) {
-            if (code_enc[i] == '%' && i + 2 < enc_len) {
-                char hex[3] = { code_enc[i+1], code_enc[i+2], '\0' };
-                code[j++] = (char)strtol(hex, NULL, 16);
-                i += 2;
-            } else if (code_enc[i] == '+') {
-                code[j++] = ' ';
-            } else {
-                code[j++] = code_enc[i];
-            }
-        }
-        code[j] = '\0';
-    }
-    heap_caps_free(code_enc);
-    heap_caps_free(buf);
-
-    if (!file[0]) {
-        heap_caps_free(code);
-        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Missing file parameter");
-    }
-    if (strstr(file, "..")) {
-        heap_caps_free(code);
-        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Invalid file path");
-    }
-
-    char path[128];
-    char tmp_path[136];
-    snprintf(path, sizeof(path), "%s/%s", AI_SCRIPTS_DIR, file);
-    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", path);
-    FILE* f = fopen(tmp_path, "w");
-    bool save_ok = false;
-    if (f) {
-        size_t code_len = strlen(code);
-        save_ok = (fwrite(code, 1, code_len, f) == code_len);
-        fclose(f);
-        if (save_ok) {
-            if (rename(tmp_path, path) != 0) {
-                ESP_LOGE(TAG, "rename %s -> %s failed", tmp_path, path);
-                unlink(tmp_path);
-                save_ok = false;
-            }
-        } else {
-            ESP_LOGE(TAG, "fwrite failed for %s", tmp_path);
-            unlink(tmp_path);
-        }
-    }
-    heap_caps_free(code);
-
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    if (!save_ok) {
-        return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "File write failed");
-    }
-    httpd_resp_sendstr(req, "{\"ok\":true}");
-    return ESP_OK;
-}
-
-/* --------------------------------------------------------------------------
- * GET /chat/ide/run — Executes a script file asynchronously & gets captured prints
- * -------------------------------------------------------------------------- */
-static esp_err_t chat_ide_run_get_handler(httpd_req_t *req) {
-    char query[256] = {};
-    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) {
-        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Missing query");
-    }
-    char file[64] = {};
-    if (httpd_query_key_value(query, "file", file, sizeof(file)) != ESP_OK) {
-        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Missing file parameter");
-    }
-    if (strstr(file, "..")) {
-        return _send_json_error(req, HTTPD_400_BAD_REQUEST, "Invalid file path");
-    }
-    char path[128];
-    snprintf(path, sizeof(path), "%s/%s", AI_SCRIPTS_DIR, file);
-
-    lua_engine_clear_logs();
-
-    char err[128] = {};
-    uint32_t elapsed = 0;
-    int status = lua_engine_run_file(path, err, sizeof(err), &elapsed);
-
-    const char* raw_logs = lua_engine_get_logs();
-    size_t logs_len = strlen(raw_logs);
-    char* esc_logs = heap_caps_malloc(logs_len * 2 + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!esc_logs) {
-        return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
-    }
-    size_t j = 0;
-    for (size_t i = 0; i < logs_len; i++) {
-        if (raw_logs[i] == '"' || raw_logs[i] == '\\') {
-            esc_logs[j++] = '\\';
-            esc_logs[j++] = raw_logs[i];
-        } else if (raw_logs[i] == '\n') {
-            esc_logs[j++] = '\\';
-            esc_logs[j++] = 'n';
-        } else if (raw_logs[i] == '\r') {
-            esc_logs[j++] = '\\';
-            esc_logs[j++] = 'r';
-        } else {
-            esc_logs[j++] = raw_logs[i];
-        }
-    }
-    esc_logs[j] = '\0';
-
-    char* json = heap_caps_malloc(logs_len * 2 + 512, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!json) {
-        heap_caps_free(esc_logs);
-        return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
-    }
-    snprintf(json, logs_len * 2 + 512,
-        "{\"ok\":%s,\"status\":%d,\"elapsed_ms\":%d,\"error\":\"%s\",\"logs\":\"%s\"}",
-        (status == 0) ? "true" : "false", status, (int)elapsed, err, esc_logs);
-
-    heap_caps_free(esc_logs);
-
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
-    httpd_resp_sendstr(req, json);
-    heap_caps_free(json);
-    return ESP_OK;
-}
-
 /* --------------------------------------------------------------------------
  * GET /error_404 — Captive Portal Redirection Handler for any unregistered URIs
  * -------------------------------------------------------------------------- */
@@ -651,7 +307,7 @@ static esp_err_t captive_portal_redirect_handler(httpd_req_t *req, httpd_err_cod
     ESP_LOGI(TAG, "Captive portal redirect: %s (error %d)", req->uri, error);
     httpd_resp_set_status(req, "302 Found");
     char location[64];
-    snprintf(location, sizeof(location), "http://%s/chat", s_captive_ip);
+    snprintf(location, sizeof(location), "http://%s/", s_captive_ip);
     httpd_resp_set_hdr(req, "Location", location);
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     
@@ -672,9 +328,9 @@ static esp_err_t captive_portal_redirect_handler(httpd_req_t *req, httpd_err_cod
         ".spinner{border:3px solid rgba(255,255,255,0.05);border-top:3px solid #00f2fe;border-radius:50%;"
         "width:32px;height:32px;animation:spin 1s linear infinite;margin:0 auto;box-shadow:0 0 15px rgba(0,242,254,0.2);}"
         "@keyframes spin{0%%{transform:rotate(0deg);}100%%{transform:rotate(360deg);}}"
-        "</style><meta http-equiv=\"refresh\" content=\"0; url=http://%s/chat\"></head>"
+        "</style><meta http-equiv=\"refresh\" content=\"0; url=http://%s/\"></head>"
         "<body><div class=\"container\"><h2>ESP32 PORTAL</h2><p>Initializing Wireless Interface...</p>"
-        "<div class=\"spinner\"></div></div><script>window.location.href=\"http://%s/chat\";</script>"
+        "<div class=\"spinner\"></div></div><script>window.location.href=\"http://%s/\";</script>"
         "</body></html>",
         s_captive_ip, s_captive_ip);
 
@@ -715,12 +371,6 @@ void web_server_init(void) {
         { .uri = "/upload",       .method = HTTP_POST, .handler = upload_post_handler },
         { .uri = "/remote",       .method = HTTP_GET,  .handler = remote_get_handler },
         { .uri = "/remote/input", .method = HTTP_GET,  .handler = remote_input_get_handler },
-        { .uri = "/chat",          .method = HTTP_GET,  .handler = chat_get_handler          },
-        { .uri = "/chat/send",     .method = HTTP_GET,  .handler = chat_send_get_handler     },
-        { .uri = "/chat/ide/files",.method = HTTP_GET,  .handler = chat_ide_files_get_handler},
-        { .uri = "/chat/ide/load", .method = HTTP_GET,  .handler = chat_ide_load_get_handler },
-        { .uri = "/chat/ide/save", .method = HTTP_POST, .handler = chat_ide_save_post_handler},
-        { .uri = "/chat/ide/run",  .method = HTTP_GET,  .handler = chat_ide_run_get_handler  },
     };
 
     for (int i = 0; i < (int)(sizeof(routes) / sizeof(routes[0])); i++) {
