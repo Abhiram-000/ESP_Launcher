@@ -34,12 +34,47 @@ App_Grid::~App_Grid() {
             apps[i].cached_icon32 = nullptr;
         }
     }
+    /* The icon sprites were previously never released — a 10 KB leak masked
+     * only by this being an immortal singleton. */
+    if (_sp64) { _sp64->deleteSprite(); delete _sp64; _sp64 = nullptr; }
+    if (_sp32) { _sp32->deleteSprite(); delete _sp32; _sp32 = nullptr; }
 }
 
 static void downsample_64_to_32(const uint16_t* src64, uint16_t* dst32) {
     for (int row = 0; row < 32; row++) {
         for (int col = 0; col < 32; col++) {
             dst32[row * 32 + col] = src64[(row * 2) * 64 + (col * 2)];
+        }
+    }
+}
+
+/* Single lazy-creation point for the icon scratch sprites.
+ * WHY one helper: this logic was previously spelled out three times inside
+ * render(), each a copy-paste of `new LGFX_Sprite(canvas); setPsram(true);
+ * createSprite(...)`. None of the three checked createSprite()'s return
+ * value — on a PSRAM shortfall createSprite() returns nullptr and the first
+ * pushImage() into it faults. Centralising means the check exists once.
+ * The null-guard makes allocation one-shot; the renderers already null-check
+ * before use. */
+void App_Grid::_ensure_sprites(LGFX_Sprite* canvas) {
+    if (!_sp64) {
+        _sp64 = new LGFX_Sprite(canvas);
+        _sp64->setPsram(true);
+        _sp64->setColorDepth(16);
+        if (!_sp64->createSprite(64, 64)) {
+            ESP_LOGE(TAG, "64x64 icon sprite alloc failed");
+            delete _sp64;
+            _sp64 = nullptr;
+        }
+    }
+    if (!_sp32) {
+        _sp32 = new LGFX_Sprite(canvas);
+        _sp32->setPsram(true);
+        _sp32->setColorDepth(16);
+        if (!_sp32->createSprite(32, 32)) {
+            ESP_LOGE(TAG, "32x32 icon sprite alloc failed");
+            delete _sp32;
+            _sp32 = nullptr;
         }
     }
 }
@@ -329,16 +364,7 @@ void App_Grid::_render_carousel(LGFX_Sprite* canvas) {
         }
     }
     
-    if (!_sp64) {
-        _sp64 = new LGFX_Sprite(canvas);
-        _sp64->setPsram(true);
-        _sp64->createSprite(64, 64);
-    }
-    if (!_sp32) {
-        _sp32 = new LGFX_Sprite(canvas);
-        _sp32->setPsram(true);
-        _sp32->createSprite(32, 32);
-    }
+    _ensure_sprites(canvas);
 
     auto apply_corners = [&](LGFX_Sprite* sp, int w, int h, int r, uint16_t color) {
         for (int y=0; y<r; y++) {
@@ -481,11 +507,7 @@ void App_Grid::_render_tile(LGFX_Sprite* canvas) {
         int icon_y = item_y + (ITEM_H - ICON_SIZE) / 2;
         
         if (apps[i].cached_icon32) {
-            if (!_sp32) {
-                _sp32 = new LGFX_Sprite(canvas);
-                _sp32->setPsram(true);
-                _sp32->createSprite(32, 32);
-            }
+            _ensure_sprites(canvas);
             
             if (_sp32) {
                 _sp32->pushImage(0, 0, 32, 32, apps[i].cached_icon32);
@@ -543,11 +565,7 @@ void App_Grid::_render_tile(LGFX_Sprite* canvas) {
         const int HERO_ICON = 42;
         
         if (app.icon_rgb565) {
-            if (!_sp64) {
-                _sp64 = new LGFX_Sprite(canvas);
-                _sp64->setPsram(true);
-                _sp64->createSprite(64, 64);
-            }
+            _ensure_sprites(canvas);
             
             if (_sp64) {
                 _sp64->pushImage(0, 0, 64, 64, app.icon_rgb565);
@@ -723,11 +741,7 @@ void App_Grid::_render_grid(LGFX_Sprite* canvas) {
         int icon_cy = cell_y + CELL_H / 2;  // Fully centered now
         
         if (apps[i].cached_icon32) {
-            if (!_sp32) {
-                _sp32 = new LGFX_Sprite(canvas);
-                _sp32->setPsram(true);
-                _sp32->createSprite(32, 32);
-            }
+            _ensure_sprites(canvas);
             
             if (_sp32) {
                 _sp32->pushImage(0, 0, 32, 32, apps[i].cached_icon32);

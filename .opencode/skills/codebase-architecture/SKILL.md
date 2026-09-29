@@ -19,7 +19,7 @@ Upper depends on lower. Lower NEVER calls upper. Exception: sys_mgr → ui_task 
 
 | Layer | Modules | Files |
 |-------|---------|-------|
-| HAL | GPIO, SPI, Display | `hal/hal_gpio.c`, `hal/hal_spi.c`, `hal/hal_display.c` |
+| HAL | GPIO, WiFi frame-bypass | `hal/hal_gpio.c`, `hal/wsl_bypass.c` |
 | Drivers | LED | `drivers/led_driver.c` |
 | Services | WiFi, OTA, Web, NTP, Weather, Games, HackStore, Lua, LLM, LED, Pomodoro | `services/*.c/cpp` |
 | System | Boot, SysMgr | `system/boot_ctrl.cpp`, `system/sys_mgr.c` |
@@ -36,7 +36,6 @@ Upper depends on lower. Lower NEVER calls upper. Exception: sys_mgr → ui_task 
 | App_HackStore | hack_store, ota_service, boot_ctrl |
 | App_ClockWeather | weather_service, ntp_service |
 | App_Pomodoro | pomodoro_service |
-| App_AICode | lua_engine, llm_client |
 | App_Torch | led_driver |
 | App_Settings | wifi_mgr, led_service, idle_mgr |
 

@@ -179,6 +179,11 @@ extern "C" {
 #define PENTEST_TASK_PRIORITY       5
 #define PENTEST_TASK_CORE           0
 
+/* Scan worker: lighter than the attack worker (one blocking
+ * esp_wifi_scan_start + record copy, no BLE stack), so it gets its own
+ * smaller budget instead of silently sharing the attack task's. */
+#define PENTEST_SCAN_TASK_STACK     (6 * 1024)
+
 /* AP target list capacity (static — no runtime allocation) */
 #define PENTEST_MAX_APS             16
 

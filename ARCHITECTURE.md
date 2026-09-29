@@ -11,8 +11,6 @@ src/
 ├── platform/          Hardware abstraction constants (board.h)
 ├── hal/               Thin ESP-IDF driver wrappers (Core 0)
 │   ├── hal_gpio.c/h
-│   ├── hal_spi.c/h
-│   └── hal_display.c/h
 ├── drivers/           Peripheral drivers (Core 0)
 │   └── led_driver.c/h
 ├── managers/          Input handling (Core 1)
@@ -29,10 +27,7 @@ src/
 │   ├── led_service.c/h
 │   ├── idle_mgr.c/h
 │   ├── pomodoro_service.c/h
-│   ├── lua_engine.cpp/h
-│   ├── lua_tool_store.h
-│   ├── lua_bindings_hw.cpp
-│   └── llm_client.c/h
+│   └── pentest_service.c/h
 ├── system/            Orchestration, boot, event routing
 │   ├── sys_mgr.c/h
 │   └── boot_ctrl.cpp/h
@@ -53,21 +48,17 @@ src/
 │       ├── App_Torch.cpp/h
 │       ├── App_ClockWeather.cpp/h
 │       ├── App_Pomodoro.cpp/h
-│       └── App_AICode.cpp/h
+│       └── App_Pentest.cpp/h
 ├── config/            All compile-time constants
 │   ├── sys_config.h   ← Master config
 │   ├── web_ui.h
-│   ├── web_chat_ui.h
-│   ├── web_remote_ui.h
-│   └── ai_sys_prompt.h
+│   └── web_remote_ui.h
 ├── utils/             Shared utilities
 │   ├── error_handling.h
 │   ├── color_utils.h
 │   ├── compile_checks.h
 │   ├── display_hal.h
-│   ├── perf_monitor.h
-│   ├── pool_allocator.c/h
-│   └── dirty_rect.c/h
+└── (removed: dirty_rect, pool_allocator, perf_monitor — dead code)
 └── assets/icons/      Generated icon C arrays
 ```
 
@@ -86,12 +77,12 @@ src/
 │  Orchestrates init, event routing                 │
 ├─────────────────────────────────────────────────┤
 │               SERVICES LAYER                     │
-│  wifi_mgr, ota_service, web_server, lua_engine,  │
-│  llm_client, ntp, weather, game_store, hack_store │
+│  wifi_mgr, ota_service, web_server, ntp, weather,│
+│  game_store, hack_store, pentest                  │
 │  Core 0 — business logic, network, storage        │
 ├─────────────────────────────────────────────────┤
 │                 HAL LAYER                        │
-│  hal_gpio, hal_spi, hal_display, led_driver      │
+│  hal_gpio, wsl_bypass, led_driver                │
 │  Thin wrappers over ESP-IDF drivers only          │
 └─────────────────────────────────────────────────┘
 ```
@@ -116,7 +107,6 @@ src/
 | App_Torch | led_driver |
 | App_ClockWeather | weather_service, ntp_service |
 | App_Pomodoro | pomodoro_service |
-| App_AICode | lua_engine, llm_client |
 
 ### Services → HAL
 
@@ -125,7 +115,7 @@ src/
 | wifi_mgr | (ESP-IDF WiFi API) |
 | ota_service | (ESP-IDF OTA API) |
 | web_server | wifi_mgr |
-| lua_engine | led_driver (GPIO access) |
+| pentest_service | esp_wifi direct (see wsl_bypass.c) |
 | led_service | led_driver |
 
 ### System → Everything
@@ -205,7 +195,7 @@ typedef enum {
 | Namespace | Keys | Owner |
 |-----------|------|-------|
 | `ntp_time` | `epoch`, `timer_us` | ntp_service |
-| `ai_cfg` | `api_key`, `provider` | llm_client |
+| `pentest` | `consent` | pentest_service |
 
 ---
 
@@ -216,11 +206,7 @@ typedef enum {
 ├── roms/              NES ROM files (game_store)
 ├── catalog.json       Game catalog cache
 ├── ai/
-│   ├── config.json    AI assistant config
-│   ├── history.jsonl  Chat history
-│   ├── sys_prompt.txt System prompt for LLM
-│   ├── scripts/       Lua scripts
-│   └── lua_tools_catalog.json  Tool marketplace cache
+└── clock_weather.json  Weather service cache
 ```
 
 ---

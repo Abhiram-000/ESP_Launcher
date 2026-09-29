@@ -39,6 +39,7 @@ private:
     launcher_theme_t _launcher_theme;
 
     void _move(input_event_t dir);
+    void _ensure_sprites(LGFX_Sprite* canvas);
     void _render_carousel(LGFX_Sprite* canvas);
     void _render_tile(LGFX_Sprite* canvas);
     void _render_grid(LGFX_Sprite* canvas);
