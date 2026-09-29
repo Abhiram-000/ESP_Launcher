@@ -4,6 +4,7 @@
 #include "hack_store.h"
 #include "../config/sys_config.h"
 #include "wifi_mgr.h"
+#include "idle_mgr.h"
 #include "esp_log.h"
 #include "esp_http_client.h"
 #include "esp_crt_bundle.h"
@@ -90,6 +91,18 @@ static void _hs_status_set_error(hack_store_err_t err) {
     _hs_lock();
     s_status.last_error = err;
     _hs_unlock();
+}
+
+/* Single funnel for every hack_store worker exit — same rationale as
+ * game_store's _gs_worker_exit(): the catalog task has three exits and the OTA
+ * task has more, so a single release point removes any chance of leaking the
+ * idle hold and leaving the device unable to sleep. */
+static void _hs_worker_exit(void) {
+    _hs_status_set_busy(false);
+    s_abort_requested = false;
+    s_current_task_handle = NULL;
+    idle_mgr_enable();
+    vTaskDelete(NULL);
 }
 
 static void _hs_status_reset_transfer(const char *id) {
@@ -345,19 +358,13 @@ static void _cloud_fetch_task(void *pvParameters) {
     cJSON_Delete(root);
 
     ESP_LOGI(TAG, "Catalog fetch successful. Total items: %d", catalog_count);
-    _hs_status_set_busy(false);
-    s_abort_requested = false;
-    s_current_task_handle = NULL;
     xEventGroupSetBits(s_event_group, HS_EVT_CATALOG_DONE);
-    vTaskDelete(NULL);
+    _hs_worker_exit();
     return;
 
 fetch_fail:
-    _hs_status_set_busy(false);
-    s_abort_requested = false;
-    s_current_task_handle = NULL;
     xEventGroupSetBits(s_event_group, HS_EVT_CATALOG_FAIL);
-    vTaskDelete(NULL);
+    _hs_worker_exit();
 }
 
 /* --------------------------------------------------------------------------
@@ -474,19 +481,17 @@ static void _ota_download_task(void *pvParameters) {
                 _save_installed_id(id);
                 ESP_LOGI(TAG, "OTA Success, restarting to new firmware");
                 _set_boot_allow_ota1_and_restart();
-                /* esp_restart() never returns — if it does, self-delete as fallback */
-                vTaskDelete(NULL);
+                /* esp_restart() never returns — if it does, self-delete as
+                 * fallback via the same funnel. */
+                _hs_worker_exit();
             }
         }
         _hs_status_set_error(HACK_STORE_ERR_FLASHING);
     }
 
 dl_fail:
-    _hs_status_set_busy(false);
-    s_abort_requested = false;
-    s_current_task_handle = NULL;
     xEventGroupSetBits(s_event_group, HS_EVT_DL_FAIL);
-    vTaskDelete(NULL);
+    _hs_worker_exit();
 }
 
 /* --------------------------------------------------------------------------
@@ -545,7 +550,7 @@ hack_store_err_t hack_store_refresh_catalog(void) {
     _hs_status_snapshot(&status);
     if (status.is_busy) {
         ESP_LOGW(TAG, "refresh_catalog: already busy, skipping");
-        return HACK_STORE_ERR_ABORTED;
+        return HACK_STORE_ERR_BUSY;
     }
 
     ESP_LOGI(TAG, "refresh_catalog: starting fetch task...");
@@ -553,6 +558,8 @@ hack_store_err_t hack_store_refresh_catalog(void) {
     s_abort_requested = false;
     _hs_status_set_busy(true);
     _hs_status_set_error(HACK_STORE_ERR_OK);
+    /* Catalog fetch is a full HTTPS transfer; hold sleep off for its duration. */
+    idle_mgr_disable();
 
     /*
      * Stack budget: TLS handshake (mbedtls) alone needs ~6KB. Add HTTP client
@@ -570,6 +577,7 @@ hack_store_err_t hack_store_refresh_catalog(void) {
         s_current_task_handle = NULL;
         _hs_status_set_busy(false);
         _hs_status_set_error(HACK_STORE_ERR_NETWORK);
+        idle_mgr_enable();
         return HACK_STORE_ERR_NETWORK;
     }
 
@@ -600,13 +608,16 @@ hack_store_err_t hack_store_install(const char* id) {
 
     hack_store_status_t status;
     _hs_status_snapshot(&status);
-    if (status.is_busy) return HACK_STORE_ERR_ABORTED;
+    if (status.is_busy) return HACK_STORE_ERR_BUSY;
 
     ESP_LOGI(TAG, "install: starting OTA download for '%s'", id);
     xEventGroupClearBits(s_event_group, HS_EVT_DL_DONE | HS_EVT_DL_FAIL);
     s_abort_requested = false;
     _hs_status_set_busy(true);
     _hs_status_reset_transfer(id);
+    /* A multi-MB firmware write with per-chunk flash erase far exceeds the
+     * 50 s idle window — sleeping here would strand the transfer mid-flash. */
+    idle_mgr_disable();
 
     /*
      * FIX: Copy id into a static buffer so the OTA task has a stable pointer.
@@ -632,6 +643,7 @@ hack_store_err_t hack_store_install(const char* id) {
         s_current_task_handle = NULL;
         _hs_status_set_busy(false);
         _hs_status_set_error(HACK_STORE_ERR_NETWORK);
+        idle_mgr_enable();
         return HACK_STORE_ERR_NETWORK;
     }
 

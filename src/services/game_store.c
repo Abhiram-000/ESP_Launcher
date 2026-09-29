@@ -1,6 +1,7 @@
 #include "game_store.h"
 #include "sys_config.h"
 #include "wifi_mgr.h"
+#include "idle_mgr.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_littlefs.h"
@@ -92,6 +93,22 @@ static void _gs_status_set_error(game_store_err_t err) {
     _gs_lock();
     s_gs_status.last_error = err;
     _gs_unlock();
+}
+
+/* Single funnel for every game_store worker exit.
+ * WHY: the catalog task has three exits and the download task has two. When
+ * each exit spelled out its own cleanup, adding the idle-hold release meant
+ * editing five sites and any one missed would leave the device permanently
+ * unable to sleep. Routing them all through one function makes omission
+ * impossible. */
+static void _gs_worker_exit(void) {
+    _gs_status_set_busy(false);
+    s_abort_requested = false;
+    s_current_task_handle = NULL;
+    /* Releases the hold taken in refresh_catalog()/install(). This is the last
+     * point the task is safe to touch shared state before self-deleting. */
+    idle_mgr_enable();
+    vTaskDelete(NULL);
 }
 
 /* --------------------------------------------------------------------------
@@ -496,10 +513,8 @@ static void _gs_cloud_fetch_task(void *pvParameters) {
     
     if (!wifi_mgr_is_connected()) {
         _gs_status_set_error(GAME_STORE_ERR_NO_WIFI);
-        _gs_status_set_busy(false);
-        s_current_task_handle = NULL;
         xEventGroupSetBits(s_gs_event_group, GS_EVT_CATALOG_FAIL);
-        vTaskDelete(NULL);
+        _gs_worker_exit();
         return;
     }
 
@@ -515,10 +530,8 @@ static void _gs_cloud_fetch_task(void *pvParameters) {
         ESP_LOGE(TAG, "Failed to allocate buffer for catalog");
         _gs_status_set_error(GAME_STORE_ERR_FS_ERROR);
         esp_http_client_cleanup(client);
-        _gs_status_set_busy(false);
-        s_current_task_handle = NULL;
         xEventGroupSetBits(s_gs_event_group, GS_EVT_CATALOG_FAIL);
-        vTaskDelete(NULL);
+        _gs_worker_exit();
         return;
     }
 
@@ -655,31 +668,32 @@ fetch_cleanup:
     heap_caps_free(buffer);
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
-    _gs_status_set_busy(false);
     game_store_status_t final_status;
     _gs_status_snapshot(&final_status);
     if (final_status.last_error != GAME_STORE_ERR_OK) {
         xEventGroupSetBits(s_gs_event_group, GS_EVT_CATALOG_FAIL);
     }
-    s_abort_requested = false;
-    s_current_task_handle = NULL;
-    vTaskDelete(NULL);
+    _gs_worker_exit();
 }
 
 game_store_err_t game_store_refresh_catalog(void) {
     game_store_status_t status;
     _gs_status_snapshot(&status);
-    if (status.is_busy) return GAME_STORE_ERR_ABORTED;
+    if (status.is_busy) return GAME_STORE_ERR_BUSY;
     
     xEventGroupClearBits(s_gs_event_group, GS_EVT_CATALOG_DONE | GS_EVT_CATALOG_FAIL);
     s_abort_requested = false;
     _gs_status_set_busy(true);
     _gs_status_set_error(GAME_STORE_ERR_OK);
+    /* A catalog fetch is a full HTTPS transfer and can outlive the 50 s idle
+     * window; hold sleep off for its duration. */
+    idle_mgr_disable();
     BaseType_t rc = xTaskCreatePinnedToCore(_gs_cloud_fetch_task, "gs_cat", 8192, NULL, 5, &s_current_task_handle, 0);
     if (rc != pdPASS) {
         s_current_task_handle = NULL;
         _gs_status_set_busy(false);
         _gs_status_set_error(GAME_STORE_ERR_NETWORK);
+        idle_mgr_enable();
         return GAME_STORE_ERR_NETWORK;
     }
     
@@ -827,36 +841,33 @@ static void _gs_download_task(void *pvParameters) {
             goto dl_abort;
         }
         xEventGroupSetBits(s_gs_event_group, GS_EVT_DL_DONE);
-        _gs_status_set_busy(false);
-        s_abort_requested = false;
-        s_current_task_handle = NULL;
-        vTaskDelete(NULL);
+        _gs_worker_exit();
         return;
     }
 
 dl_abort:
-    _gs_status_set_busy(false);
-    s_abort_requested = false;
     xEventGroupSetBits(s_gs_event_group, GS_EVT_DL_FAIL);
-    s_current_task_handle = NULL;
-    vTaskDelete(NULL);
+    _gs_worker_exit();
 }
 
 game_store_err_t game_store_install(const char* id) {
     if (!id || id[0] == '\0') return GAME_STORE_ERR_BAD_METADATA;
     game_store_status_t status;
     _gs_status_snapshot(&status);
-    if (status.is_busy) return GAME_STORE_ERR_ABORTED;
+    if (status.is_busy) return GAME_STORE_ERR_BUSY;
     
     xEventGroupClearBits(s_gs_event_group, GS_EVT_DL_DONE | GS_EVT_DL_FAIL);
     s_abort_requested = false;
     _gs_status_set_busy(true);
     _gs_status_reset_transfer(id);
+    /* A ROM can be up to 512 KB — well past the 50 s idle window. */
+    idle_mgr_disable();
     BaseType_t rc = xTaskCreatePinnedToCore(_gs_download_task, "gs_dl", 8192, (void*)id, 5, &s_current_task_handle, 0);
     if (rc != pdPASS) {
         s_current_task_handle = NULL;
         _gs_status_set_busy(false);
         _gs_status_set_error(GAME_STORE_ERR_NETWORK);
+        idle_mgr_enable();
         return GAME_STORE_ERR_NETWORK;
     }
     
@@ -877,7 +888,7 @@ game_store_err_t game_store_delete(const char* id) {
     if (!id || id[0] == '\0') return GAME_STORE_ERR_BAD_METADATA;
     game_store_status_t status;
     _gs_status_snapshot(&status);
-    if (status.is_busy) return GAME_STORE_ERR_ABORTED;
+    if (status.is_busy) return GAME_STORE_ERR_BUSY;
     
     _gs_lock();
     game_entry_t *entry = _gs_local_catalog_find(id);

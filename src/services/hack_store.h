@@ -18,7 +18,10 @@ typedef enum {
     HACK_STORE_ERR_BAD_METADATA,
     HACK_STORE_ERR_PARTITION,
     HACK_STORE_ERR_FLASHING,
-    HACK_STORE_ERR_ABORTED
+    HACK_STORE_ERR_ABORTED,
+    /* A transfer was already running. Distinct from ABORTED so a caller can
+     * tell "busy, try again" from "the user cancelled it". */
+    HACK_STORE_ERR_BUSY
 } hack_store_err_t;
 
 typedef struct {

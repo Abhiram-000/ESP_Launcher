@@ -208,6 +208,14 @@ extern "C" {
 #define PENTEST_NVS_KEY_CONSENT         "consent"
 
 /* --------------------------------------------------------------------------
+ * Idle Manager — Automatic Deep Sleep
+ * -------------------------------------------------------------------------- */
+/* Inactivity before the sleep countdown begins. */
+#define IDLE_MGR_TIMEOUT_MS          50000
+/* Countdown shown to the user before deep sleep engages. */
+#define IDLE_MGR_COUNTDOWN_MS        10000
+
+/* --------------------------------------------------------------------------
  * Input Manager — Button Debounce
  * -------------------------------------------------------------------------- */
 /* Depth of the ISR→task button event queue (input_event_t elements). */

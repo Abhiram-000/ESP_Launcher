@@ -11,6 +11,7 @@
 #include "weather_service.h"
 #include "wifi_mgr.h"
 #include "ntp_service.h"
+#include "idle_mgr.h"
 #include "../config/sys_config.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
@@ -610,6 +611,10 @@ cleanup:
     
     s_abort_requested = false;
     s_worker_task = NULL;
+    /* WHY: every worker exit funnels through this label, so this is the one
+     * place the idle hold taken in weather_service_refresh() can be released.
+     * Without it the device would never sleep again after one refresh. */
+    idle_mgr_enable();
     ESP_LOGI(TAG, "Weather worker task completed");
     vTaskDelete(NULL);
 }
@@ -672,6 +677,11 @@ weather_err_t weather_service_refresh(void) {
     s_status.is_busy = true;
     UNLOCK();
 
+    /* WHY: a refresh can take up to 3 sequential HTTP calls at 10 s each.
+     * The idle timer fires at 50 s, so without this hold the device would
+     * deep-sleep mid-fetch and silently discard the result. */
+    idle_mgr_disable();
+
     s_abort_requested = false;
 
     BaseType_t ret = xTaskCreatePinnedToCore(
@@ -691,6 +701,8 @@ weather_err_t weather_service_refresh(void) {
         strncpy(s_status.status_msg, "Refresh failed to start", sizeof(s_status.status_msg) - 1);
         s_status.status_msg[sizeof(s_status.status_msg) - 1] = '\0';
         UNLOCK();
+        /* Balance the hold taken above — no worker exists to release it. */
+        idle_mgr_enable();
         return WEATHER_ERR_NETWORK;
     }
 

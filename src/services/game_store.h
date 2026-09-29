@@ -19,6 +19,9 @@ typedef enum {
     GAME_STORE_ERR_VERSION_SAME,
     GAME_STORE_ERR_FS_ERROR,
     GAME_STORE_ERR_ABORTED,
+    /* A transfer was already running. Distinct from ABORTED so a caller can
+     * tell "busy, try again" from "the user cancelled it". */
+    GAME_STORE_ERR_BUSY,
 } game_store_err_t;
 
 typedef struct {

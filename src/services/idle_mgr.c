@@ -4,6 +4,7 @@
  */
 
 #include "idle_mgr.h"
+#include "ntp_service.h"
 #include "esp_timer.h"
 #include "esp_sleep.h"
 #include "esp_log.h"
@@ -17,14 +18,23 @@
 
 static const char *TAG = "IDLE_MGR";
 
-#define IDLE_TIMEOUT_MS      50000  /* 50 seconds */
-#define COUNTDOWN_TIMEOUT_MS 10000  /* 10 seconds */
+/* Timing constants live in the central config header (AGENTS.md §9) so they can
+ * be tuned without touching implementation files. */
+#define IDLE_TIMEOUT_MS      IDLE_MGR_TIMEOUT_MS
+#define COUNTDOWN_TIMEOUT_MS IDLE_MGR_COUNTDOWN_MS
 #define WAKE_GPIO            LAUNCHER_PIN_SELECT
 
 static uint64_t s_last_activity_ms = 0;
 static idle_state_t s_state = IDLE_STATE_ACTIVE;
 static SemaphoreHandle_t s_mutex = NULL;
-static bool s_idle_disabled = false;
+
+/* WHY a count and not a bool: a plain flag let any single caller re-enable
+ * sleep for every other holder. App_ClockWeather and App_Pomodoro both take a
+ * hold, so whichever exited first would clear the flag and the other app could
+ * still be mid-interaction when the device slept. A count makes release
+ * symmetric with acquire, so the last holder out is the only one that
+ * restores normal behaviour. */
+static uint8_t s_hold_count = 0;
 
 static uint64_t get_now_ms(void) {
     return esp_timer_get_time() / 1000;
@@ -59,20 +69,26 @@ static void enter_deep_sleep(void) {
     if (werr != ESP_OK) ESP_LOGW(TAG, "WiFi stop: %s", esp_err_to_name(werr));
     esp_wifi_deinit();
     
-    // 2. Commit NVS
-    nvs_flash_deinit();
+    /* 2. Persist the clock before tearing down NVS.
+     * WHY: the SNTP callback only saves on an actual sync, which happens
+     * hourly. Without this the next cold boot restores a timestamp up to an
+     * hour stale. nvs_flash_deinit() below closes the partition, so the save
+     * must happen first. */
+    ntp_service_save_to_nvs();
 
+    // 3. Commit NVS
+    nvs_flash_deinit();
     ESP_LOGI(TAG, "Entering Deep Sleep... Wake source: SELECT button (GPIO %d)", WAKE_GPIO);
     
-    // 3. Configure Wake Source: SELECT button (LOW trigger)
+    // 4. Configure Wake Source: SELECT button (LOW trigger)
     esp_err_t serr = esp_sleep_enable_ext0_wakeup((gpio_num_t)WAKE_GPIO, 0);
     if (serr != ESP_OK) ESP_LOGE(TAG, "Sleep config failed: %s", esp_err_to_name(serr));
     
-    // 4. Ensure internal pull-up remains active during sleep
+    // 5. Ensure internal pull-up remains active during sleep
     rtc_gpio_pullup_en((gpio_num_t)WAKE_GPIO);
     rtc_gpio_pulldown_dis((gpio_num_t)WAKE_GPIO);
 
-    // 5. Go to sleep
+    // 6. Go to sleep
     esp_deep_sleep_start();
 }
 
@@ -82,8 +98,8 @@ void idle_mgr_process(void) {
         return;
     }
     
-    // If idle is disabled, keep feeding the timer and stay active
-    if (s_idle_disabled) {
+    // While any holder holds the idle lock, keep feeding the timer and stay active
+    if (s_hold_count > 0) {
         s_last_activity_ms = get_now_ms();
         s_state = IDLE_STATE_ACTIVE;
         xSemaphoreGive(s_mutex);
@@ -150,12 +166,12 @@ void idle_mgr_disable(void) {
         ESP_LOGW(TAG, "Mutex timeout");
         return;
     }
-    if (!s_idle_disabled) {
-        ESP_LOGI(TAG, "Idle timeout DISABLED (sleep prevention active)");
-        s_idle_disabled = true;
-        s_last_activity_ms = get_now_ms();
-        s_state = IDLE_STATE_ACTIVE;
-    }
+    /* Saturating increment — a runaway holder must not wrap to 0 and
+     * accidentally re-enable sleep while callers believe it is still held. */
+    if (s_hold_count < 0xFF) s_hold_count++;
+    s_last_activity_ms = get_now_ms();
+    s_state = IDLE_STATE_ACTIVE;
+    ESP_LOGI(TAG, "Idle hold acquired (count=%u)", s_hold_count);
     xSemaphoreGive(s_mutex);
 }
 
@@ -164,11 +180,15 @@ void idle_mgr_enable(void) {
         ESP_LOGW(TAG, "Mutex timeout");
         return;
     }
-    if (s_idle_disabled) {
-        ESP_LOGI(TAG, "Idle timeout ENABLED (normal sleep behavior restored)");
-        s_idle_disabled = false;
+    if (s_hold_count > 0) {
+        s_hold_count--;
         s_last_activity_ms = get_now_ms();
         s_state = IDLE_STATE_ACTIVE;
+    } else {
+        /* Unbalanced release. Log rather than clamp silently — it means a
+         * caller enabled without a matching disable. */
+        ESP_LOGW(TAG, "idle_mgr_enable() with no hold held — ignoring");
     }
+    ESP_LOGI(TAG, "Idle hold released (count=%u)", s_hold_count);
     xSemaphoreGive(s_mutex);
 }

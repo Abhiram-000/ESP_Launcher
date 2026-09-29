@@ -21,6 +21,7 @@
 #include "web_server.h"
 #include "ota_service.h"
 #include "wifi_mgr.h"
+#include "idle_mgr.h"
 #include "../config/sys_config.h"
 #include "../config/web_ui.h"
 #include "../config/web_remote_ui.h"
@@ -194,7 +195,14 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
                                 "OTA initialisation failed");
     }
 
-    /* --- Streaming receive + write loop --- */
+    /* WHY: a 4 MB flash takes minutes — far past the 50 s idle window. Deep
+     * sleep here would strand the upload and leave ota_1 half-written.
+     * Paired with the release at the single exit point below. */
+    idle_mgr_disable();
+
+    /* --- Streaming receive + write loop ---
+     * Every exit below funnels through upload_done so the idle hold taken
+     * before the loop is released exactly once. */
     int remaining = total_len;
     int timeout_retries = 0;
     const int MAX_TIMEOUT_RETRIES = 200;  /* 200 × 50 ms = 10 s max stall */
@@ -207,8 +215,7 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
             if (++timeout_retries > MAX_TIMEOUT_RETRIES) {
                 ESP_LOGE(TAG, "Upload stalled — too many timeouts");
                 ota_service_abort();
-                return _send_json_error(req, HTTPD_408_REQ_TIMEOUT,
-                                        "Upload timed out");
+                goto upload_done;
             }
             vTaskDelay(pdMS_TO_TICKS(50));
             continue;
@@ -219,8 +226,7 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
             ESP_LOGE(TAG, "Receive error (%d) after %d bytes",
                      received, total_len - remaining);
             ota_service_abort();
-            return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-                                    "Connection lost during upload");
+            goto upload_done;
         }
 
         err = ota_service_write(s_recv_buf, (size_t)received);
@@ -228,8 +234,7 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
             ESP_LOGE(TAG, "Flash write failed after %d bytes written",
                      total_len - remaining);
             ota_service_abort();
-            return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-                                    "Flash write error — check serial monitor");
+            goto upload_done;
         }
 
         remaining -= received;
@@ -240,8 +245,7 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
     err = ota_service_end();
 
     if (err != ESP_OK) {
-        return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR,
-                                "Firmware validation failed");
+        goto upload_done;
     }
 
     /* Send success JSON before rebooting */
@@ -255,9 +259,22 @@ static esp_err_t upload_post_handler(httpd_req_t *req) {
     /* Let the response flush before restarting */
     vTaskDelay(pdMS_TO_TICKS(APP_OTA_REBOOT_DELAY_MS));
     ESP_LOGI(TAG, "Rebooting...");
+    idle_mgr_enable();   /* Balance the hold — esp_restart() bypasses the label */
     esp_restart();
 
     return ESP_OK;  /* Unreachable — satisfies compiler */
+
+upload_done:
+    /* Releases the hold acquired before the receive loop. Reached on every
+     * error path above; the success path restarts and never arrives here. */
+    idle_mgr_enable();
+    if (err == ESP_ERR_INVALID_STATE) {
+        /* ota_service_end() rejected the image — the client needs the reason. */
+        return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                                "Firmware validation failed");
+    }
+    return _send_json_error(req, HTTPD_500_INTERNAL_SERVER_ERROR,
+                            "Upload failed");
 }
 
 /* --------------------------------------------------------------------------
