@@ -23,21 +23,54 @@ void UI_WifiScanner::begin(std::function<void(bool)> on_complete) {
     _list_scroll = 0;
     _connect_success = false;
     _connect_start_ms = 0;
+    _scan_start_ms = 0;
+    _fail_reason = nullptr;
     memset(_selected_ssid, 0, sizeof(_selected_ssid));
     memset(_password, 0, sizeof(_password));
-    
+
     wifi_mgr_scan_start();
+}
+
+/* Map a driver disconnect reason to user-facing text, or nullptr when the
+ * code is not a definitive connect failure (transient codes must not abort
+ * a still-running attempt). */
+static const char* _reason_to_text(wifi_err_reason_t r) {
+    switch (r) {
+        case WIFI_REASON_NO_AP_FOUND:            return "Network not in range";
+        case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT: return "Wrong password";
+        case WIFI_REASON_AUTH_FAIL:
+        case WIFI_REASON_HANDSHAKE_TIMEOUT:      return "Auth failed";
+        case WIFI_REASON_AUTH_EXPIRE:            return "Auth expired";
+        case WIFI_REASON_ASSOC_FAIL:
+        case WIFI_REASON_ASSOC_EXPIRE:
+        case WIFI_REASON_CONNECTION_FAIL:        return "Join failed";
+        default: return nullptr;
+    }
 }
 
 void UI_WifiScanner::loop() {
     if (!_active) return;
-    _anim_time += 0.05f;
+    _anim_time += UI_ANIM_TIME_STEP;
     _spinner_angle += 0.15f;
-    
+
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+
     if (_state == State::Scanning) {
         if (wifi_mgr_is_scan_done()) {
             _network_count = wifi_mgr_get_scan_results(_networks, MAX_WIFI_NETWORKS);
             _state = State::List;
+        } else {
+            /* WHY the timeout: wifi_mgr now guarantees a done-marker even
+             * when the scan cannot start, but this belt-and-braces bound
+             * means the list can never spin forever regardless of what the
+             * radio layer does. It did exactly that before — no timeout
+             * existed on this state at all. */
+            if (_scan_start_ms == 0) _scan_start_ms = now_ms;
+            if ((now_ms - _scan_start_ms) >= WIFI_SCANNER_SCAN_TIMEOUT_MS) {
+                ESP_LOGW(TAG, "scan timeout — showing empty list");
+                _network_count = 0;
+                _state = State::List;
+            }
         }
     }
     else if (_state == State::Connecting) {
@@ -45,12 +78,20 @@ void UI_WifiScanner::loop() {
             _connect_success = true;
             _state = State::Done;
         } else {
-            uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
-            if (_connect_start_ms == 0) _connect_start_ms = now_ms;
-            if ((now_ms - _connect_start_ms) >= WIFI_SCANNER_CONNECT_TIMEOUT_MS) {
-                ESP_LOGW(TAG, "connect timeout for %s", _selected_ssid);
-                _connect_success = false;
-                _state = State::Done;
+            /* Fail fast on a definitive reason instead of burning the whole
+             * timeout — a wrong password is known within ~2s, not 10. */
+            const char* why = _reason_to_text(wifi_mgr_get_last_fail_reason());
+            if (why) {
+                ESP_LOGW(TAG, "connect failed fast: %s", why);
+                _fail_reason = why;
+                _state = State::Failed;
+            } else {
+                if (_connect_start_ms == 0) _connect_start_ms = now_ms;
+                if ((now_ms - _connect_start_ms) >= WIFI_SCANNER_CONNECT_TIMEOUT_MS) {
+                    ESP_LOGW(TAG, "connect timeout for %s", _selected_ssid);
+                    _fail_reason = "Timed out";
+                    _state = State::Failed;
+                }
             }
         }
     }
@@ -83,6 +124,7 @@ void UI_WifiScanner::handleInput(input_event_t ev) {
         }
         else if (ev == BTN_RIGHT) {
             _state = State::Scanning;
+            _scan_start_ms = 0;
             wifi_mgr_scan_start();
         }
         else if (ev == BTN_SELECT) {
@@ -114,6 +156,21 @@ void UI_WifiScanner::handleInput(input_event_t ev) {
             _state = State::Done;
         }
     }
+    else if (_state == State::Failed) {
+        if (ev == BTN_LEFT) {
+            _connect_success = false;
+            _state = State::Done;
+        }
+        else if (ev == BTN_SELECT || ev == BTN_RIGHT) {
+            /* Retry the same SSID/password — a fresh attempt with the failure
+             * reason cleared and the timeout restarted. */
+            _fail_reason = nullptr;
+            _connect_start_ms = 0;
+            wifi_mgr_connect(_selected_ssid, _password);
+            _connect_start_ms = (uint32_t)(esp_timer_get_time() / 1000);
+            _state = State::Connecting;
+        }
+    }
 }
 
 void UI_WifiScanner::_draw_header(LGFX_Sprite* c, const char* title, uint16_t accent) {
@@ -141,6 +198,10 @@ void UI_WifiScanner::render(LGFX_Sprite* c) {
     if (_state == State::Scanning) {
         _draw_header(c, "SCANNING WI-FI", theme_get_accent());
         _draw_spinner(c, c->width()/2, c->height()/2, 18);
+        c->setTextDatum(textdatum_t::bottom_center);
+        c->setFont(&fonts::Font0);
+        c->setTextColor(theme_get_text_dim());
+        c->drawString("L=Cancel", c->width()/2, c->height()-2);
     }
     else if (_state == State::Connecting) {
         _draw_header(c, "CONNECTING...", theme_get_accent());
@@ -149,6 +210,25 @@ void UI_WifiScanner::render(LGFX_Sprite* c) {
         c->setFont(&fonts::Font0);
         c->setTextColor(theme_get_text_dim());
         c->drawString(_selected_ssid, c->width()/2, c->height() * 3/4);
+        c->setTextDatum(textdatum_t::bottom_center);
+        c->drawString("L=Cancel", c->width()/2, c->height()-2);
+    }
+    else if (_state == State::Failed) {
+        _draw_header(c, "CONNECT FAILED", theme_get_fail());
+
+        c->setTextDatum(textdatum_t::middle_center);
+        c->setFont(&fonts::Font2);
+        c->setTextColor(theme_get_fail());
+        c->drawString(_fail_reason ? _fail_reason : "Failed",
+                      c->width()/2, c->height()/2 - 10);
+
+        c->setFont(&fonts::Font0);
+        c->setTextColor(theme_get_text_dim());
+        c->drawString(_selected_ssid, c->width()/2, c->height()/2 + 6);
+
+        c->setTextColor(theme_get_text_dim());
+        c->setTextDatum(textdatum_t::bottom_center);
+        c->drawString("SEL=Retry  L=Back", c->width()/2, c->height()-2);
     }
     else if (_state == State::List) {
         _draw_header(c, "SELECT NETWORK", theme_get_accent());

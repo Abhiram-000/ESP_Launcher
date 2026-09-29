@@ -15,6 +15,7 @@ public:
         List,
         Password,
         Connecting,
+        Failed,     /* connect attempt ended with a specific cause */
         Done
     };
 
@@ -43,6 +44,8 @@ private:
     char _password[64];
     bool _connect_success;
     uint32_t _connect_start_ms;
+    uint32_t _scan_start_ms;      /* guards the scan against a lost event */
+    const char* _fail_reason;     /* human text for the Failed screen     */
 
     UI_Keyboard _keyboard;
     std::function<void(bool)> _on_complete;

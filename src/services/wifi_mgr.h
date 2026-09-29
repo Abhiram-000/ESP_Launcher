@@ -76,6 +76,16 @@ const char* wifi_mgr_get_ip(void);
  */
 int8_t wifi_mgr_get_rssi(void);
 
+/**
+ * @brief Reason code from the most recent STA disconnect event.
+ *
+ * Set on every WIFI_EVENT_STA_DISCONNECTED and cleared when a new
+ * connect attempt is issued. Lets a caller fail fast with a specific
+ * cause ("wrong password") instead of waiting out a generic timeout.
+ * WIFI_REASON_UNSPECIFIED (0) means no failure has been recorded.
+ */
+wifi_err_reason_t wifi_mgr_get_last_fail_reason(void);
+
 #ifdef __cplusplus
 }
 #endif

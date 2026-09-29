@@ -25,6 +25,23 @@ extern "C" {
 #define APP_WIFI_CONN_TIMEOUT_MS    15000
 #define MAX_WIFI_NETWORKS           12
 
+/* ── Auto-reconnect policy ─────────────────────────────────────────────
+ * A restored/dropped link is retried with exponential backoff (table in
+ * wifi_mgr.c) capped at WIFI_MGR_RECONNECT_MAX_DELAY_MS. WIFI_MGR_AUTO_BLOCK_MS
+ * suppresses auto-reconnect after a deliberate esp_wifi_disconnect() abort so
+ * the abort's own DISCONNECTED event cannot immediately re-connect and
+ * re-block the scan or user connect that requested the abort. */
+#define WIFI_MGR_AUTO_BLOCK_MS          2000
+#define WIFI_MGR_RECONNECT_MAX_DELAY_MS 60000
+
+/* ── Scan-start retry policy ────────────────────────────────────────────
+ * esp_wifi_scan_start() fails with ESP_ERR_WIFI_STATE while the STA is
+ * mid-connect. wifi_mgr aborts the connect and retries the scan on this
+ * cadence; WIFI_MGR_SCAN_RETRY_MAX × WIFI_MGR_SCAN_RETRY_MS bounds the whole
+ * convergence (3.6 s worst case) before the scan is reported done-empty. */
+#define WIFI_MGR_SCAN_RETRY_MS          300
+#define WIFI_MGR_SCAN_RETRY_MAX         12
+
 /* --------------------------------------------------------------------------
  * HTTP Server
  * -------------------------------------------------------------------------- */
@@ -159,6 +176,10 @@ extern "C" {
 
 /* Wi-Fi connect timeout (loop ticks in UI_WifiScanner at ~50 ms/tick). */
 #define WIFI_SCANNER_CONNECT_TIMEOUT_MS  10000
+/* Hard ceiling on the SCANNING state. wifi_mgr already guarantees a
+ * done-marker even when the scan never starts; this is the second line of
+ * defence so the network list can never spin forever. */
+#define WIFI_SCANNER_SCAN_TIMEOUT_MS     12000
 
 /* Hack Store cloud catalog URL */
 #define HS_CATALOG_URL \
