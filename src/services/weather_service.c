@@ -39,10 +39,37 @@ static volatile bool s_abort_requested = false;
 static bool s_has_manual_location = false;
 static weather_location_t s_manual_location = {0};
 
-// HTTP response buffer (PSRAM)
+/* HTTP response receive context.
+ * WHY per-call instead of a file-scope global: four helpers used to share one
+ * static buffer. weather_service_set_city() runs on the UI task (Core 1) while
+ * the worker fetches on Core 0, so both could heap_caps_free() the same
+ * pointer — a double free / use-after-free on a device with no MMU. Each
+ * caller now owns a stack-local context passed to esp_http_client through
+ * config.user_data, which makes the whole fetch path reentrant with no lock. */
 #define HTTP_RECV_BUF_SIZE 4096
-static char* s_http_buffer = NULL;
-static int s_http_buffer_len = 0;
+typedef struct {
+    char* buf;
+    int   len;
+} http_rx_t;
+
+static bool _http_rx_init(http_rx_t* rx) {
+    rx->buf = heap_caps_malloc(HTTP_RECV_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!rx->buf) {
+        ESP_LOGE(TAG, "HTTP buffer alloc failed (%d bytes)", HTTP_RECV_BUF_SIZE);
+        return false;
+    }
+    rx->len = 0;
+    memset(rx->buf, 0, HTTP_RECV_BUF_SIZE);
+    return true;
+}
+
+static void _http_rx_free(http_rx_t* rx) {
+    if (rx->buf) {
+        heap_caps_free(rx->buf);
+        rx->buf = NULL;
+    }
+    rx->len = 0;
+}
 
 // Helper macros
 #define LOCK()   do { if (s_mutex && xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) != pdTRUE) { ESP_LOGW(TAG, "Mutex timeout"); } } while(0)
@@ -114,12 +141,16 @@ static const char* _iana_to_posix(const char* iana) {
 }
 
 static esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
-    if (evt->event_id == HTTP_EVENT_ON_DATA) {
-        if (s_http_buffer_len + evt->data_len < HTTP_RECV_BUF_SIZE) {
-            memcpy(s_http_buffer + s_http_buffer_len, evt->data, evt->data_len);
-            s_http_buffer_len += evt->data_len;
-            s_http_buffer[s_http_buffer_len] = '\0';
-        }
+    if (evt->event_id != HTTP_EVENT_ON_DATA) return ESP_OK;
+
+    http_rx_t* rx = (http_rx_t*)evt->user_data;
+    if (!rx || !rx->buf) return ESP_OK;
+
+    /* Reserve one byte for the NUL terminator so cJSON always sees a string. */
+    if (rx->len + evt->data_len < HTTP_RECV_BUF_SIZE) {
+        memcpy(rx->buf + rx->len, evt->data, evt->data_len);
+        rx->len += evt->data_len;
+        rx->buf[rx->len] = '\0';
     }
     return ESP_OK;
 }
@@ -129,24 +160,13 @@ static weather_err_t _fetch_ip_geolocation(weather_location_t* loc) {
     
     ESP_LOGI(TAG, "Fetching IP geolocation from ip-api.com");
     
-    if (s_http_buffer != NULL) {
-        ESP_LOGW(TAG, "HTTP buffer already allocated, freeing first");
-        heap_caps_free(s_http_buffer);
-        s_http_buffer = NULL;
-    }
-    
-    s_http_buffer = heap_caps_malloc(HTTP_RECV_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!s_http_buffer) {
-        ESP_LOGE(TAG, "Failed to allocate HTTP buffer");
-        return WEATHER_ERR_NETWORK;
-    }
-    
-    s_http_buffer_len = 0;
-    memset(s_http_buffer, 0, HTTP_RECV_BUF_SIZE);
+    http_rx_t rx = {0};
+    if (!_http_rx_init(&rx)) return WEATHER_ERR_NETWORK;
     
     esp_http_client_config_t config = {
         .url = WEATHER_IP_GEO_URL,
         .event_handler = _http_event_handler,
+        .user_data = &rx,
         .timeout_ms = WEATHER_HTTP_TIMEOUT_MS,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .buffer_size = 2048,
@@ -159,17 +179,15 @@ static weather_err_t _fetch_ip_geolocation(weather_location_t* loc) {
     
     if (err != ESP_OK || status != 200) {
         ESP_LOGE(TAG, "IP geolocation failed: %s, status=%d", esp_err_to_name(err), status);
-        heap_caps_free(s_http_buffer);
-        s_http_buffer = NULL;
+        _http_rx_free(&rx);
         return WEATHER_ERR_NETWORK;
     }
     
     // Parse JSON
-    cJSON* root = cJSON_Parse(s_http_buffer);
+    cJSON* root = cJSON_Parse(rx.buf);
     if (!root) {
         ESP_LOGE(TAG, "JSON parse failed");
-        heap_caps_free(s_http_buffer);
-        s_http_buffer = NULL;
+        _http_rx_free(&rx);
         return WEATHER_ERR_PARSE;
     }
     
@@ -177,8 +195,7 @@ static weather_err_t _fetch_ip_geolocation(weather_location_t* loc) {
     if (!cJSON_IsString(status_field) || strcmp(status_field->valuestring, "success") != 0) {
         cJSON_Delete(root);
         ESP_LOGE(TAG, "Geolocation API returned error");
-        heap_caps_free(s_http_buffer);
-        s_http_buffer = NULL;
+        _http_rx_free(&rx);
         return WEATHER_ERR_PARSE;
     }
     
@@ -210,14 +227,12 @@ static weather_err_t _fetch_ip_geolocation(weather_location_t* loc) {
                  loc->timezone_iana, loc->timezone_posix);
     } else {
         cJSON_Delete(root);
-        heap_caps_free(s_http_buffer);
-        s_http_buffer = NULL;
+        _http_rx_free(&rx);
         return WEATHER_ERR_PARSE;
     }
     
     cJSON_Delete(root);
-    heap_caps_free(s_http_buffer);
-    s_http_buffer = NULL;
+    _http_rx_free(&rx);
     return WEATHER_ERR_OK;
 }
 
@@ -236,23 +251,13 @@ static weather_err_t _reverse_geocode_city(weather_location_t* loc) {
     
     ESP_LOGI(TAG, "Reverse geocoding for (%.4f, %.4f)", loc->latitude, loc->longitude);
     
-    if (s_http_buffer != NULL) {
-        heap_caps_free(s_http_buffer);
-        s_http_buffer = NULL;
-    }
-    
-    s_http_buffer = heap_caps_malloc(HTTP_RECV_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!s_http_buffer) {
-        ESP_LOGE(TAG, "Failed to allocate HTTP buffer for reverse geocode");
-        return WEATHER_ERR_NETWORK;
-    }
-    
-    s_http_buffer_len = 0;
-    memset(s_http_buffer, 0, HTTP_RECV_BUF_SIZE);
+    http_rx_t rx = {0};
+    if (!_http_rx_init(&rx)) return WEATHER_ERR_NETWORK;
     
     esp_http_client_config_t config = {
         .url = url,
         .event_handler = _http_event_handler,
+        .user_data = &rx,
         .timeout_ms = WEATHER_HTTP_TIMEOUT_MS,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .buffer_size = 2048,
@@ -267,16 +272,14 @@ static weather_err_t _reverse_geocode_city(weather_location_t* loc) {
     
     if (err != ESP_OK || status != 200) {
         ESP_LOGW(TAG, "Reverse geocode failed: %s, status=%d — keeping IP city", esp_err_to_name(err), status);
-        heap_caps_free(s_http_buffer);
-        s_http_buffer = NULL;
+        _http_rx_free(&rx);
         return WEATHER_ERR_NETWORK;
     }
     
-    cJSON* root = cJSON_Parse(s_http_buffer);
+    cJSON* root = cJSON_Parse(rx.buf);
     if (!root) {
         ESP_LOGW(TAG, "Reverse geocode JSON parse failed");
-        heap_caps_free(s_http_buffer);
-        s_http_buffer = NULL;
+        _http_rx_free(&rx);
         return WEATHER_ERR_PARSE;
     }
     
@@ -301,8 +304,7 @@ static weather_err_t _reverse_geocode_city(weather_location_t* loc) {
     }
     
     cJSON_Delete(root);
-    heap_caps_free(s_http_buffer);
-    s_http_buffer = NULL;
+    _http_rx_free(&rx);
     return WEATHER_ERR_OK;
 }
 
@@ -318,24 +320,13 @@ static weather_err_t _fetch_weather(const weather_location_t* loc, weather_curre
     
     ESP_LOGI(TAG, "Fetching weather from Open-Meteo");
     
-    if (s_http_buffer != NULL) {
-        ESP_LOGW(TAG, "HTTP buffer already allocated, freeing first");
-        heap_caps_free(s_http_buffer);
-        s_http_buffer = NULL;
-    }
-    
-    s_http_buffer = heap_caps_malloc(HTTP_RECV_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!s_http_buffer) {
-        ESP_LOGE(TAG, "Failed to allocate HTTP buffer");
-        return WEATHER_ERR_NETWORK;
-    }
-    
-    s_http_buffer_len = 0;
-    memset(s_http_buffer, 0, HTTP_RECV_BUF_SIZE);
+    http_rx_t rx = {0};
+    if (!_http_rx_init(&rx)) return WEATHER_ERR_NETWORK;
     
     esp_http_client_config_t config = {
         .url = url,
         .event_handler = _http_event_handler,
+        .user_data = &rx,
         .timeout_ms = WEATHER_HTTP_TIMEOUT_MS,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .buffer_size = 2048,
@@ -348,25 +339,22 @@ static weather_err_t _fetch_weather(const weather_location_t* loc, weather_curre
     
     if (err != ESP_OK || status != 200) {
         ESP_LOGE(TAG, "Weather fetch failed: %s, status=%d", esp_err_to_name(err), status);
-        heap_caps_free(s_http_buffer);
-        s_http_buffer = NULL;
+        _http_rx_free(&rx);
         return WEATHER_ERR_NETWORK;
     }
     
     // Parse JSON
-    cJSON* root = cJSON_Parse(s_http_buffer);
+    cJSON* root = cJSON_Parse(rx.buf);
     if (!root) {
         ESP_LOGE(TAG, "Weather JSON parse failed");
-        heap_caps_free(s_http_buffer);
-        s_http_buffer = NULL;
+        _http_rx_free(&rx);
         return WEATHER_ERR_PARSE;
     }
     
     cJSON* current = cJSON_GetObjectItem(root, "current");
     if (!current) {
         cJSON_Delete(root);
-        heap_caps_free(s_http_buffer);
-        s_http_buffer = NULL;
+        _http_rx_free(&rx);
         return WEATHER_ERR_PARSE;
     }
     
@@ -387,14 +375,12 @@ static weather_err_t _fetch_weather(const weather_location_t* loc, weather_curre
                  wx->temperature, wx->humidity, wx->wind_speed, wx->weather_code);
     } else {
         cJSON_Delete(root);
-        heap_caps_free(s_http_buffer);
-        s_http_buffer = NULL;
+        _http_rx_free(&rx);
         return WEATHER_ERR_PARSE;
     }
     
     cJSON_Delete(root);
-    heap_caps_free(s_http_buffer);
-    s_http_buffer = NULL;
+    _http_rx_free(&rx);
     return WEATHER_ERR_OK;
 }
 
@@ -640,15 +626,6 @@ weather_err_t weather_service_init(void) {
         }
     }
     
-    // Allocate HTTP buffer in PSRAM
-    if (!s_http_buffer) {
-        s_http_buffer = heap_caps_malloc(HTTP_RECV_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!s_http_buffer) {
-            ESP_LOGE(TAG, "Failed to allocate HTTP buffer");
-            return WEATHER_ERR_NETWORK;
-        }
-    }
-    
     // Initialize status
     memset(&s_status, 0, sizeof(s_status));
     strncpy(s_status.status_msg, "Not updated", sizeof(s_status.status_msg) - 1);
@@ -679,11 +656,24 @@ weather_err_t weather_service_init(void) {
 }
 
 weather_err_t weather_service_refresh(void) {
-    if (s_status.is_busy) return WEATHER_ERR_BUSY;
     if (!wifi_mgr_is_connected()) return WEATHER_ERR_NO_WIFI;
-    
+
+    /* WHY the busy flag is claimed under the mutex *before* the task is
+     * created: previously is_busy was read unlocked and only set once the new
+     * worker had already started, so two rapid callers could both pass the
+     * check and both call xTaskCreatePinnedToCore(). The second creation
+     * overwrote s_worker_task, orphaning the first handle and leaving two
+     * workers racing on the same status struct. */
+    LOCK();
+    if (s_status.is_busy) {
+        UNLOCK();
+        return WEATHER_ERR_BUSY;
+    }
+    s_status.is_busy = true;
+    UNLOCK();
+
     s_abort_requested = false;
-    
+
     BaseType_t ret = xTaskCreatePinnedToCore(
         _worker_task,
         "weather_worker",
@@ -693,16 +683,28 @@ weather_err_t weather_service_refresh(void) {
         &s_worker_task,
         WEATHER_TASK_CORE
     );
-    
+
     if (ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create worker task");
+        LOCK();
+        s_status.is_busy = false;
+        strncpy(s_status.status_msg, "Refresh failed to start", sizeof(s_status.status_msg) - 1);
+        s_status.status_msg[sizeof(s_status.status_msg) - 1] = '\0';
+        UNLOCK();
         return WEATHER_ERR_NETWORK;
     }
-    
+
     return WEATHER_ERR_OK;
 }
 
 weather_err_t weather_service_set_location(const char* city_name, float lat, float lon, const char* tz_iana) {
+    /* WHY: callers pass through from App_ClockWeather; a NULL here would reach
+     * strncpy() and fault the CPU outright on a no-MMU target. */
+    if (!city_name || !tz_iana) {
+        ESP_LOGE(TAG, "set_location: city_name or tz_iana is NULL");
+        return WEATHER_ERR_PARSE;
+    }
+
     LOCK();
     strncpy(s_status.location.city_name, city_name, sizeof(s_status.location.city_name) - 1);
     s_status.location.city_name[sizeof(s_status.location.city_name) - 1] = '\0';
@@ -745,7 +747,14 @@ weather_err_t weather_service_clear_manual_location(void) {
 }
 
 bool weather_service_has_manual_location(void) {
-    return s_has_manual_location;
+    /* WHY locked: s_has_manual_location is written under s_mutex by
+     * set_location()/clear_manual_location() (Core 0) and read here from the
+     * UI task on Core 1. */
+    bool has;
+    LOCK();
+    has = s_has_manual_location;
+    UNLOCK();
+    return has;
 }
 
 weather_err_t weather_service_set_city(const char* city_name) {
@@ -760,20 +769,13 @@ weather_err_t weather_service_set_city(const char* city_name) {
     
     ESP_LOGI(TAG, "Geocoding city: %s", city_name);
     
-    if (s_http_buffer != NULL) {
-        heap_caps_free(s_http_buffer);
-        s_http_buffer = NULL;
-    }
-    
-    s_http_buffer = heap_caps_malloc(HTTP_RECV_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!s_http_buffer) return WEATHER_ERR_NETWORK;
-    
-    s_http_buffer_len = 0;
-    memset(s_http_buffer, 0, HTTP_RECV_BUF_SIZE);
+    http_rx_t rx = {0};
+    if (!_http_rx_init(&rx)) return WEATHER_ERR_NETWORK;
     
     esp_http_client_config_t config = {
         .url = url,
         .event_handler = _http_event_handler,
+        .user_data = &rx,
         .timeout_ms = WEATHER_HTTP_TIMEOUT_MS,
         .crt_bundle_attach = esp_crt_bundle_attach,
         .buffer_size = 2048,
@@ -786,15 +788,13 @@ weather_err_t weather_service_set_city(const char* city_name) {
     
     if (err != ESP_OK || status != 200) {
         ESP_LOGE(TAG, "Geocoding failed: %s, status=%d", esp_err_to_name(err), status);
-        heap_caps_free(s_http_buffer);
-        s_http_buffer = NULL;
+        _http_rx_free(&rx);
         return WEATHER_ERR_NETWORK;
     }
     
-    cJSON* root = cJSON_Parse(s_http_buffer);
+    cJSON* root = cJSON_Parse(rx.buf);
     if (!root) {
-        heap_caps_free(s_http_buffer);
-        s_http_buffer = NULL;
+        _http_rx_free(&rx);
         return WEATHER_ERR_PARSE;
     }
     
@@ -802,8 +802,7 @@ weather_err_t weather_service_set_city(const char* city_name) {
     if (!results || !cJSON_IsArray(results) || cJSON_GetArraySize(results) == 0) {
         ESP_LOGW(TAG, "No geocoding results for '%s'", city_name);
         cJSON_Delete(root);
-        heap_caps_free(s_http_buffer);
-        s_http_buffer = NULL;
+        _http_rx_free(&rx);
         return WEATHER_ERR_PARSE;
     }
     
@@ -818,18 +817,24 @@ weather_err_t weather_service_set_city(const char* city_name) {
         float longitude = (float)lon->valuedouble;
         const char* display_name = cJSON_IsString(name) ? name->valuestring : city_name;
         const char* timezone = (tz && cJSON_IsString(tz)) ? tz->valuestring : "UTC";
-        
-        weather_service_set_location(display_name, latitude, longitude, timezone);
+
+        weather_err_t set_err = weather_service_set_location(display_name, latitude, longitude, timezone);
         ESP_LOGI(TAG, "Geocoded '%s' → %s (%.4f, %.4f), TZ: %s",
                  city_name, display_name, latitude, longitude, timezone);
+
+        cJSON_Delete(root);
+        _http_rx_free(&rx);
+        /* WHY propagate: the caller must be able to tell that the city was
+         * actually applied. Returning OK on a rejected lookup would leave the
+         * UI showing an unchanged location with no error indication. */
+        return set_err;
     } else {
         ESP_LOGW(TAG, "Geocoding response missing fields for '%s'", city_name);
     }
     
     cJSON_Delete(root);
-    heap_caps_free(s_http_buffer);
-    s_http_buffer = NULL;
-    return WEATHER_ERR_OK;
+    _http_rx_free(&rx);
+    return WEATHER_ERR_PARSE;
 }
 
 weather_err_t weather_service_get_location(weather_location_t* out) {
@@ -856,8 +861,33 @@ bool weather_service_is_busy(void) {
 }
 
 weather_err_t weather_service_abort(void) {
+    if (!s_abort_requested && !s_worker_task) {
+        return WEATHER_ERR_OK; /* nothing in flight */
+    }
+
     s_abort_requested = true;
-    ESP_LOGI(TAG, "Abort requested");
+    ESP_LOGI(TAG, "Abort requested — waiting for worker to self-terminate");
+
+    /* WHY the bounded wait: the worker clears s_worker_task immediately before
+     * vTaskDelete(NULL). Blocking here guarantees that when this returns, no
+     * worker can still be mutating s_status — without it, an immediate
+     * refresh() would race the dying worker. Bounded because the worker may be
+     * parked inside a blocking esp_http_client_perform() (up to
+     * WEATHER_HTTP_TIMEOUT_MS) and cannot be force-killed. */
+    const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(WEATHER_ABORT_WAIT_MS);
+    while (s_worker_task != NULL && xTaskGetTickCount() < deadline) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    if (s_worker_task != NULL) {
+        /* Honest failure: the caller must know the worker is still alive, or it
+         * may assume the network stack has quiesced when it has not. */
+        ESP_LOGW(TAG, "Worker still alive after %d ms — abort is pending",
+                 WEATHER_ABORT_WAIT_MS);
+        return WEATHER_ERR_BUSY;
+    }
+
+    ESP_LOGI(TAG, "Worker terminated cleanly");
     return WEATHER_ERR_OK;
 }
 

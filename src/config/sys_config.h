@@ -130,6 +130,10 @@ extern "C" {
 #define WEATHER_TASK_STACK          8192
 #define WEATHER_TASK_PRIORITY       5
 #define WEATHER_TASK_CORE           0
+/* Bounded wait for the worker to honour a cooperative abort and self-delete.
+ * Longer than the worker's longest inter-poll gap (WEATHER_STALE_THRESHOLD
+ * aside, the abort flag is re-checked at every HTTP step boundary). */
+#define WEATHER_ABORT_WAIT_MS       600
 
 /* --------------------------------------------------------------------------
  * Display Utilities
