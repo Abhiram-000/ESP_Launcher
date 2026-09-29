@@ -302,7 +302,6 @@ static void ui_task_runner(void *arg) {
             }
 
             int text_x = bar_x + bar_w + 8;
-            int content_width = bw - (text_x - bx) - 6;
 
             canvas.setTextDatum(textdatum_t::middle_left);
             canvas.setFont(&fonts::Font2);

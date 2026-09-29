@@ -26,11 +26,28 @@ void test_nes_stack_size(void) {
     TEST_ASSERT_EQUAL(48 * 1024, NES_EMU_TASK_STACK);
 }
 
-void test_ai_constants(void) {
-    TEST_ASSERT_GREATER_THAN(0, AI_LUA_TIMEOUT_MS);
-    TEST_ASSERT_GREATER_THAN(0, AI_LUA_HOOK_INTERVAL);
-    TEST_ASSERT_GREATER_THAN(0, AI_LUA_MAX_SCRIPT_BYTES);
-    TEST_ASSERT_GREATER_THAN(0, AI_STREAM_BUF_SIZE);
+/* The AI/Lua constants this suite used to assert on were removed with the
+ * AI subsystem. Replaced with coverage for the constants that remain, so the
+ * suite still guards the values it is meant to protect. */
+void test_idle_manager_constants(void) {
+    TEST_ASSERT_GREATER_THAN(0, IDLE_MGR_TIMEOUT_MS);
+    TEST_ASSERT_GREATER_THAN(0, IDLE_MGR_COUNTDOWN_MS);
+    /* The user must get a warning period before sleep, so the countdown has
+     * to be shorter than the idle window that precedes it.
+     * Unity semantics: TEST_ASSERT_LESS_THAN(threshold, actual) asserts
+     * actual < threshold, so this checks COUNTDOWN < TIMEOUT. */
+    TEST_ASSERT_LESS_THAN(IDLE_MGR_TIMEOUT_MS, IDLE_MGR_COUNTDOWN_MS);
+}
+
+void test_weather_abort_wait(void) {
+    TEST_ASSERT_GREATER_THAN(0, WEATHER_ABORT_WAIT_MS);
+}
+
+void test_pentest_task_constants(void) {
+    TEST_ASSERT_GREATER_THAN(0, PENTEST_TASK_STACK);
+    TEST_ASSERT_GREATER_THAN(0, PENTEST_TASK_PRIORITY);
+    TEST_ASSERT_GREATER_THAN(0, PENTEST_MAX_APS);
+    TEST_ASSERT_GREATER_THAN(0, PENTEST_MAX_CLIENTS);
 }
 
 void test_game_store_limits(void) {
@@ -69,7 +86,9 @@ int main(void) {
     RUN_TEST(test_ota_magic_byte);
     RUN_TEST(test_ota_size_limits);
     RUN_TEST(test_nes_stack_size);
-    RUN_TEST(test_ai_constants);
+    RUN_TEST(test_idle_manager_constants);
+    RUN_TEST(test_weather_abort_wait);
+    RUN_TEST(test_pentest_task_constants);
     RUN_TEST(test_game_store_limits);
     RUN_TEST(test_boot_magic_constants);
     RUN_TEST(test_ntp_epoch_bounds);

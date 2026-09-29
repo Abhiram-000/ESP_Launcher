@@ -7,7 +7,6 @@
 #include <string.h>
 #include <stdio.h>
 
-static const char* TAG = "APP_GAME";
 
 #include "../ui_task.h"
 

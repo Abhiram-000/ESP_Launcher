@@ -122,9 +122,16 @@ void App_Grid::_move(input_event_t dir) {
                 // Move up in same column
                 _selected_index -= COLS;
             } else if (current_page > 0) {
-                // Jump to previous page, same column
-                _selected_index -= APPS_PER_PAGE;
-                if (_selected_index < 0) _selected_index = 0;
+                // Jump to previous page, same column.
+                // WHY the signed temporary: _selected_index is uint8_t, so the
+                // unsigned subtraction wraps (2 - 6 -> 252) and the previous
+                // `if (_selected_index < 0)` guard could never fire, because an
+                // unsigned value is never < 0. That left apps[] indexed far
+                // past its 12 entries. Compute in a signed int and clamp.
+                int next = (int)_selected_index - APPS_PER_PAGE;
+                if (next < 0) next = 0;
+                if (next >= (int)_app_count) next = (int)_app_count - 1;
+                _selected_index = (uint8_t)next;
             }
         }
         else if (dir == BTN_DOWN) {
@@ -132,9 +139,13 @@ void App_Grid::_move(input_event_t dir) {
                 // Move down in same column
                 _selected_index += COLS;
             } else if ((current_page + 1) * APPS_PER_PAGE < _app_count) {
-                // Jump to next page, same column
-                _selected_index += APPS_PER_PAGE;
-                if (_selected_index >= _app_count) _selected_index = _app_count - 1;
+                // Jump to next page, same column. Same signed-arithmetic
+                // reasoning as the UP case — the unsigned result is clamped
+                // here too so it cannot wrap past _app_count.
+                int next = (int)_selected_index + APPS_PER_PAGE;
+                if (next >= (int)_app_count) next = (int)_app_count - 1;
+                if (next < 0) next = 0;
+                _selected_index = (uint8_t)next;
             }
         }
         else if (dir == BTN_LEFT) {

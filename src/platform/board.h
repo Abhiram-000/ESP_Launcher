@@ -5,7 +5,14 @@ extern "C" {
 #endif
 
 // Display Settings
-#define LAUNCHER_DISPLAY_DRIVER  "ST7735"
+/* LAUNCHER_PANEL_ST7735 etc. are bare preprocessor tokens so config headers
+ * can branch on them with #if. A string literal ("ST7735") cannot appear in a
+ * preprocessor expression — that is a hard compile error, not a warning. */
+#define LAUNCHER_PANEL_ST7735     1
+#define LAUNCHER_PANEL_ILI9341    2
+#define LAUNCHER_PANEL_ST7789     3
+
+#define LAUNCHER_DISPLAY_DRIVER  LAUNCHER_PANEL_ST7735
 #define LAUNCHER_DISPLAY_W       160
 #define LAUNCHER_DISPLAY_H       128
 

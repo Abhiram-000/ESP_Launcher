@@ -6,9 +6,12 @@
  *          board.h and this header. App code NEVER touches panel internals.
  *
  * Supported panels (set LAUNCHER_DISPLAY_DRIVER in board.h):
- *   "ST7735"  — 160x128, 40MHz SPI, no inversion
- *   "ILI9341" — 320x240, 80MHz SPI, no inversion
- *   "ST7789"  — 240x240/320, 80MHz SPI, inversion=true
+ *   LAUNCHER_PANEL_ST7735  — 160x128, 40MHz SPI, no inversion
+ *   LAUNCHER_PANEL_ILI9341 — 320x240, 80MHz SPI, no inversion
+ *   LAUNCHER_PANEL_ST7789  — 240x240/320, 80MHz SPI, inversion=true
+ *
+ * LAUNCHER_DISPLAY_DRIVER must be one of the LAUNCHER_PANEL_* tokens above —
+ * it is compared with #if, so a string literal will not compile.
  *
  * To port to a new panel:
  *   1. Update board.h: LAUNCHER_DISPLAY_DRIVER, _W, _H, pin assignments
@@ -40,13 +43,15 @@ extern "C" {
 
 /* ── Panel-specific SPI frequency ───────────────────────────────────────── */
 #if defined(LAUNCHER_DISPLAY_DRIVER) && \
-    ((LAUNCHER_DISPLAY_DRIVER[0] == 'I') || \
-     (LAUNCHER_DISPLAY_DRIVER[0] == 'S' && LAUNCHER_DISPLAY_DRIVER[4] == '8'))
-/* ILI9341 or ST7789: 80MHz. [4] is the first differing char of "ST7735" vs "ST7789". */
+    (LAUNCHER_DISPLAY_DRIVER == LAUNCHER_PANEL_ILI9341 || \
+     LAUNCHER_DISPLAY_DRIVER == LAUNCHER_PANEL_ST7789)
+/* ILI9341 / ST7789: 80MHz. */
 #define DISPLAY_SPI_FREQ_HZ     80000000
-#else
+#elif defined(LAUNCHER_DISPLAY_DRIVER) && (LAUNCHER_DISPLAY_DRIVER == LAUNCHER_PANEL_ST7735)
 /* ST7735S: 40MHz (reliable limit) */
 #define DISPLAY_SPI_FREQ_HZ     40000000
+#else
+#error "LAUNCHER_DISPLAY_DRIVER in board.h is not a recognised LAUNCHER_PANEL_* token"
 #endif
 
 /* ── Performance budgets ────────────────────────────────────────────────── */

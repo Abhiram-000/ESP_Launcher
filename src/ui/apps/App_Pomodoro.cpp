@@ -482,10 +482,13 @@ void App_Pomodoro::_draw_mode_card(LGFX_Sprite* canvas, pomo_mode_t mode, int x,
     canvas->setTextDatum(textdatum_t::middle_center);
     canvas->setTextColor(theme_get_text_dim());
     
-    char info[24];
+    /* Buffer sized for the widest possible output: three 2-digit values plus
+     * separators, a bullet, and a 1-digit cycle count. The previous 24-byte
+     * buffer could truncate the tail for 3-digit settings. */
+    char info[32];
     snprintf(info, sizeof(info), "%u/%u/%u • %ux",
-             cfg.focus_minutes, cfg.short_break_minutes, 
-             cfg.long_break_minutes, cfg.cycles_until_long_break);
+             (unsigned)cfg.focus_minutes, (unsigned)cfg.short_break_minutes,
+             (unsigned)cfg.long_break_minutes, (unsigned)cfg.cycles_until_long_break);
     canvas->drawString(info, x + w/2, y + h - 10);
 }
 

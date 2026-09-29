@@ -14,7 +14,6 @@
 #include "../../utils/color_utils.h"
 #include "esp_log.h"
 
-static const char* TAG = "APP_OTA";
 #include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"

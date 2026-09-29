@@ -2,6 +2,12 @@
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 #include "platform/board.h"
+/* Panel frequency lives in display_hal.h so it is derived from
+ * LAUNCHER_DISPLAY_DRIVER rather than restated here. It used to be hardcoded
+ * to 40 MHz in this file while display_hal.h independently computed the same
+ * value, so porting to ILI9341/ST7789 would have changed one and not the other
+ * and the panel would silently keep running at 40 MHz. */
+#include "utils/display_hal.h"
 
 class LGFX_ESP32S3_ST7735 : public lgfx::LGFX_Device {
   lgfx::Panel_ST7735S _panel_instance;
@@ -14,8 +20,8 @@ public:
       auto cfg = _bus_instance.config();
       cfg.spi_host = SPI2_HOST;     
       cfg.spi_mode = 0;
-      cfg.freq_write = 40000000;    // Increased from 27MHz to 40MHz for ST7735S
-      cfg.freq_read = 16000000;
+      cfg.freq_write = DISPLAY_SPI_FREQ_HZ;   // derived from LAUNCHER_DISPLAY_DRIVER
+      cfg.freq_read  = DISPLAY_SPI_FREQ_HZ / 2;
       cfg.pin_sclk = LAUNCHER_PIN_SCLK;
       cfg.pin_mosi = LAUNCHER_PIN_MOSI;
       cfg.pin_miso = -1;

@@ -10,7 +10,6 @@
 #include <string.h>
 #include <stdio.h>
 
-static const char* TAG = "APP_TORCH_UI";
 
 extern const char* MODE_NAMES[];
 

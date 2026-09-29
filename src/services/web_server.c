@@ -342,7 +342,11 @@ static esp_err_t captive_portal_redirect_handler(httpd_req_t *req, httpd_err_cod
         "border-radius:16px;padding:32px;box-shadow:0 8px 32px 0 rgba(0,0,0,0.37);backdrop-filter:blur(8px);width:280px;}"
         "h2{color:#00f2fe;margin:0 0 8px;font-weight:600;letter-spacing:1px;text-shadow:0 0 10px rgba(0,242,254,0.3);}"
         "p{color:#8a99ad;font-size:13px;margin:0 0 24px;}"
-        ".spinner{border:3px solid rgba(255,255,255,0.05);border-top:3px solid #00f2fe;border-radius:50%;"
+        /* WHY %% and not %: this whole block is an snprintf format string, so a
+         * literal percent must be doubled. The bare "%" in "50%;" was consumed
+         * as a conversion specifier, which is what produced the
+         * -Wformat warning and emitted a stray character into the CSS. */
+        ".spinner{border:3px solid rgba(255,255,255,0.05);border-top:3px solid #00f2fe;border-radius:50%%;"
         "width:32px;height:32px;animation:spin 1s linear infinite;margin:0 auto;box-shadow:0 0 15px rgba(0,242,254,0.2);}"
         "@keyframes spin{0%%{transform:rotate(0deg);}100%%{transform:rotate(360deg);}}"
         "</style><meta http-equiv=\"refresh\" content=\"0; url=http://%s/\"></head>"

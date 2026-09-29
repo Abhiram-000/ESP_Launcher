@@ -5,7 +5,6 @@
 #include "esp_log.h"
 #include <string.h>
 
-static const char* TAG = "UI_KBD";
 
 // ── Letter rows ───────────────────────────────────────────────────────────
 // Only the 3 alpha rows live here; the 4th row is the function row, drawn
